@@ -29,6 +29,5 @@ dumps/
 .idea/
 .vscode/
 
-# uv
-uv.lock
+# uv (uv.lock коммитится намеренно: CI должен собираться воспроизводимо)
 .python-version
