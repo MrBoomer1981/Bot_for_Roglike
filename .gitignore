@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+dist/
+build/
+
+# Инструменты
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Данные, извлечённые из игры (не распространяем ассеты/код игры)
+data/game_extract/
+*.love
+
+# Локальные дампы состояния и логи
+dumps/
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.idea/
+.vscode/
