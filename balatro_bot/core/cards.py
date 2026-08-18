@@ -91,6 +91,8 @@ class Edition(Enum):
     FOIL = "foil"
     HOLOGRAPHIC = "holographic"
     POLYCHROME = "polychrome"
+    NEGATIVE = "negative"
+    """Встречается только у джокеров и расходников: даёт дополнительный слот."""
 
 
 class Seal(Enum):

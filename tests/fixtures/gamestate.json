@@ -1,0 +1,89 @@
+{
+  "state": "SELECTING_HAND",
+  "round_num": 2,
+  "ante_num": 1,
+  "money": 12,
+  "deck": "RED",
+  "stake": "WHITE",
+  "seed": "TESTSEED",
+  "won": false,
+  "round": {
+    "hands_left": 3,
+    "hands_played": 1,
+    "discards_left": 2,
+    "discards_used": 1,
+    "reroll_cost": 5,
+    "chips": 0
+  },
+  "blinds": {
+    "small": {"type": "SMALL", "status": "DEFEATED", "name": "Small Blind", "effect": "", "score": 300},
+    "big": {"type": "BIG", "status": "CURRENT", "name": "Big Blind", "effect": "No special effect", "score": 450},
+    "boss": {"type": "BOSS", "status": "UPCOMING", "name": "The Wall", "effect": "Extra large blind", "score": 900}
+  },
+  "hands": {
+    "High Card": {"order": 1, "level": 1, "chips": 5, "mult": 1, "played": 3, "played_this_round": 0},
+    "Pair": {"order": 2, "level": 2, "chips": 25, "mult": 3, "played": 7, "played_this_round": 1},
+    "Flush": {"order": 6, "level": 1, "chips": 35, "mult": 4, "played": 0, "played_this_round": 0},
+    "Three of a Kind": {"order": 4, "level": 1, "chips": 30, "mult": 3, "played": 1, "played_this_round": 0}
+  },
+  "jokers": {
+    "count": 2,
+    "limit": 5,
+    "cards": [
+      {
+        "id": 101, "key": "j_joker", "set": "JOKER", "label": "Joker",
+        "value": {"effect": "+4 Mult"},
+        "modifier": {"seal": null, "edition": null, "enhancement": null, "eternal": false, "perishable": null, "rental": false},
+        "state": {"debuff": false, "hidden": false, "highlight": false},
+        "cost": {"sell": 2, "buy": 4}
+      },
+      {
+        "id": 102, "key": "j_blueprint", "set": "JOKER", "label": "Blueprint",
+        "value": {"effect": "Copies ability of Joker to the right"},
+        "modifier": {"seal": null, "edition": "HOLO", "enhancement": null, "eternal": true, "perishable": null, "rental": false},
+        "state": {"debuff": false, "hidden": false, "highlight": false},
+        "cost": {"sell": 5, "buy": 10}
+      }
+    ]
+  },
+  "hand": {
+    "count": 8,
+    "limit": 8,
+    "highlighted_limit": 5,
+    "cards": [
+      {"id": 1, "key": "H_A", "set": "DEFAULT", "label": "Ace of Hearts",
+       "value": {"suit": "H", "rank": "A"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 2, "key": "H_K", "set": "DEFAULT", "label": "King of Hearts",
+       "value": {"suit": "H", "rank": "K"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 3, "key": "H_Q", "set": "DEFAULT", "label": "Queen of Hearts",
+       "value": {"suit": "H", "rank": "Q"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 4, "key": "C_7", "set": "DEFAULT", "label": "7 of Clubs",
+       "value": {"suit": "C", "rank": "7"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 5, "key": "D_7", "set": "ENHANCED", "label": "7 of Diamonds",
+       "value": {"suit": "D", "rank": "7"},
+       "modifier": {"seal": "RED", "edition": "FOIL", "enhancement": "BONUS"},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 6, "key": "S_3", "set": "DEFAULT", "label": "3 of Spades",
+       "value": {"suit": "S", "rank": "3"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": false, "hidden": false, "highlight": false}},
+      {"id": 7, "key": "S_2", "set": "DEFAULT", "label": "2 of Spades",
+       "value": {"suit": "S", "rank": "2"},
+       "modifier": {"seal": null, "edition": null, "enhancement": null},
+       "state": {"debuff": true, "hidden": false, "highlight": false}},
+      {"id": 8, "key": "D_T", "set": "ENHANCED", "label": "10 of Diamonds",
+       "value": {"suit": "D", "rank": "T"},
+       "modifier": {"seal": null, "edition": null, "enhancement": "STONE"},
+       "state": {"debuff": false, "hidden": false, "highlight": false}}
+    ]
+  },
+  "consumables": {"count": 0, "limit": 2, "cards": []}
+}
