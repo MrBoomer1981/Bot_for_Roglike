@@ -28,3 +28,7 @@ dumps/
 # IDE
 .idea/
 .vscode/
+
+# uv
+uv.lock
+.python-version
