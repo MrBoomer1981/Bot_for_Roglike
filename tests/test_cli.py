@@ -141,3 +141,102 @@ class TestAdvise:
     def test_без_игры_предлагает_ручной_режим(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert cli.main(["--port", "1", "advise"]) == 1
         assert "--hand" in capsys.readouterr().out
+
+
+class TestInstall:
+    """Установщик через командную строку.
+
+    Сети нет, поэтому закачка подменяется теми же поддельными архивами,
+    что и в тестах самого установщика.
+    """
+
+    @staticmethod
+    def _подготовить(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch, *, с_закачкой: bool = True
+    ) -> Path:
+        from tests.test_install import ПоддельнаяЗакачка, сделать_дом, собрать_архивы
+
+        home = сделать_дом(tmp_path)
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: home))
+        if с_закачкой:
+            архивы = собрать_архивы(tmp_path)
+            monkeypatch.setattr(
+                "balatro_bot.cli.UrlFetcher", lambda *a, **k: ПоддельнаяЗакачка(архивы)
+            )
+        return home
+
+    def test_проверка_сообщает_чего_не_хватает(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        self._подготовить(tmp_path, monkeypatch, с_закачкой=False)
+        assert cli.main(["install", "--check", "--force"]) == 1
+        out = capsys.readouterr().out
+        assert "НЕТ" in out
+        assert "balatro-bot install" in out
+
+    def test_показ_плана_ничего_не_меняет(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = self._подготовить(tmp_path, monkeypatch)
+        assert cli.main(["install", "--dry-run", "--force"]) == 0
+        out = capsys.readouterr().out
+        assert "будет скачано" in out
+        assert "ничего не скачано" in out
+        assert not (home / "Library/Application Support/Balatro/Mods").exists()
+
+    def test_план_называет_адреса_и_назначение(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Установка трогает чужую машину, поэтому список источников
+        # показывается до, а не после.
+        self._подготовить(tmp_path, monkeypatch)
+        cli.main(["install", "--dry-run", "--force"])
+        out = capsys.readouterr().out
+        assert "откуда:" in out
+        assert "зачем:" in out
+
+    def test_установка_раскладывает_файлы(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = self._подготовить(tmp_path, monkeypatch)
+        assert cli.main(["install", "--force", "--yes"]) == 0
+
+        моды = home / "Library/Application Support/Balatro/Mods"
+        assert (моды / "smods").is_dir()
+        assert (моды / "balatrobot" / "balatrobot.lua").is_file()
+        assert "uvx balatrobot serve" in capsys.readouterr().out
+
+    def test_без_подтверждения_отменяется(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        home = self._подготовить(tmp_path, monkeypatch)
+        monkeypatch.setattr("builtins.input", lambda *_: "n")
+
+        assert cli.main(["install", "--force"]) == 1
+        assert "отменено" in capsys.readouterr().out
+        assert not (home / "Library/Application Support/Balatro/Mods").exists()
+
+    def test_подтверждение_принимается(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        home = self._подготовить(tmp_path, monkeypatch)
+        monkeypatch.setattr("builtins.input", lambda *_: "да")
+
+        assert cli.main(["install", "--force"]) == 0
+        assert (home / "Library/Application Support/Balatro/Mods" / "smods").is_dir()
+
+    def test_не_на_маке_без_force_отказывается(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        monkeypatch.setattr("platform.system", lambda: "Linux")
+        assert cli.main(["install"]) == 2
+        assert "--force" in capsys.readouterr().out
+
+    def test_без_игры_объясняет_как_быть(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        пусто = tmp_path / "пусто"
+        пусто.mkdir()
+        monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: пусто))
+        assert cli.main(["install", "--check", "--force"]) == 1
+        assert "--game-dir" in capsys.readouterr().out

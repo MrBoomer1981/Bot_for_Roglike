@@ -2,6 +2,7 @@
 
 Пока здесь только то, что нужно для первого запуска рядом с игрой:
 
+    balatro-bot install         поставить мод-стек одной командой
     balatro-bot advise          посоветовать ход: из игры или по набранной руке
     balatro-bot doctor          проверить, что мод отвечает, и показать состояние
     balatro-bot record ИМЯ      записать текущее состояние как эталонный случай
@@ -14,6 +15,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import platform
+import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
@@ -22,6 +25,17 @@ from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import DEFAULT_HOST, DEFAULT_PORT, ModBridge, ModBridgeError
 from balatro_bot.core.cards import Card, Enhancement
 from balatro_bot.core.state import GameState
+from balatro_bot.install import (
+    InstallError,
+    Paths,
+    UrlFetcher,
+    architecture,
+    clear_quarantine,
+    install,
+    plan,
+    resolve_paths,
+    verify,
+)
 from balatro_bot.solver.play import Advice, Candidate, advise
 
 GOLDEN_DIR = Path("tests/golden")
@@ -137,6 +151,97 @@ def _explain(candidate: Candidate) -> None:
     print(f"  {'итог':<12} {'':<38} {_number(outcome.expected):>8}")
 
 
+def _install(args: argparse.Namespace) -> int:
+    """Поставить мод-стек: Lovely, Steamodded и мод BalatroBot."""
+    if platform.system() != "Darwin" and not args.force:
+        print(f"установщик написан под macOS, а здесь {platform.system()}.")
+        print("Продолжить всё равно: --force")
+        return 2
+
+    home = Path.home()
+    try:
+        paths = resolve_paths(home, Path(args.game_dir) if args.game_dir else None)
+    except InstallError as error:
+        print(f"НЕ ВЫШЛО: {error}")
+        return 1
+
+    print(f"игра:  {paths.game}")
+    print(f"моды:  {paths.mods}")
+
+    if args.check:
+        return _print_check(paths)
+
+    arch = architecture()
+    print(f"процессор: {arch}\n")
+
+    fetcher = UrlFetcher()
+    try:
+        steps = plan(fetcher, arch)
+    except InstallError as error:
+        print(f"НЕ ВЫШЛО: {error}")
+        return 1
+
+    print("будет скачано:")
+    for step in steps:
+        print(f"  {step.component.name} {step.tag}")
+        print(f"      зачем: {step.component.purpose}")
+        print(f"      откуда: {step.url}")
+
+    if args.dry_run:
+        print("\nэто был показ плана, ничего не скачано и не изменено")
+        return 0
+
+    if not args.yes:
+        print("\nБудет изменён каталог игры и каталог модов.")
+        try:
+            ответ = input("Продолжить? [y/N] ").strip().lower()
+        except EOFError:
+            ответ = ""
+        if ответ not in {"y", "yes", "д", "да"}:
+            print("отменено")
+            return 1
+
+    print()
+    with tempfile.TemporaryDirectory(prefix="balatro-bot-") as tmp:
+        try:
+            result = install(paths, fetcher, Path(tmp), arch)
+        except InstallError as error:
+            print(f"НЕ ВЫШЛО: {error}")
+            return 1
+        except OSError as error:
+            print(f"НЕ ВЫШЛО при записи: {error}")
+            return 1
+
+    if clear_quarantine(paths.game / "liblovely.dylib"):
+        print("снят карантин macOS с liblovely.dylib")
+
+    for step in result.steps:
+        print(f"поставлено: {step.component.name} {step.tag}")
+
+    print()
+    if not result.ok:
+        return _print_check(paths)
+
+    print("всё на месте. Дальше:")
+    print("  1. запусти игру:      uvx balatrobot serve")
+    print("  2. начни ран и дойди до выбора карт")
+    print("  3. проверь связь:     balatro-bot doctor")
+    return 0
+
+
+def _print_check(paths: Paths) -> int:
+    """Показать, что стоит, а чего не хватает."""
+    report = verify(paths)
+    print()
+    for target, есть in report.items():
+        print(f"  {'есть   ' if есть else 'НЕТ    '} {target}")
+    if all(report.values()):
+        print("\nвсё на месте")
+        return 0
+    print("\nчего-то не хватает — поставить: balatro-bot install")
+    return 1
+
+
 def _advise(bridge: ModBridge, args: argparse.Namespace) -> int:
     """Посоветовать ход по руке из игры или с клавиатуры."""
     if args.hand:
@@ -213,6 +318,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     commands = parser.add_subparsers(dest="command", required=True)
 
+    setup = commands.add_parser("install", help="поставить мод-стек")
+    setup.add_argument("--dry-run", action="store_true", help="показать план и выйти")
+    setup.add_argument("--check", action="store_true", help="только проверить, что уже стоит")
+    setup.add_argument("--yes", action="store_true", help="не спрашивать подтверждения")
+    setup.add_argument("--game-dir", help="каталог игры, если он в нестандартном месте")
+    setup.add_argument("--force", action="store_true", help="запустить не на macOS")
+
     tip = commands.add_parser("advise", help="посоветовать ход")
     tip.add_argument("--hand", help='рука с клавиатуры, например "AH KH QH JH 9H 7C 7D 2S"')
     tip.add_argument("--jokers", help="джокеры через запятую, слева направо")
@@ -231,6 +343,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     bridge = ModBridge(host=args.host, port=args.port)
 
+    if args.command == "install":
+        return _install(args)
     if args.command == "advise":
         return _advise(bridge, args)
     if args.command == "record":
