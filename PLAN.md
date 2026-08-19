@@ -118,7 +118,9 @@ Balatro — это LÖVE 2D + Lua, всё состояние живёт в гл�
 
 Стек на macOS:
 - [Lovely Injector](https://github.com/ethangreen-dev/lovely-injector) — рантайм-инжектор Lua
-  (для M-серии нужен билд `lovely-aarch64-apple-darwin`), запуск игры через `run_lovely_macos.sh`.
+  (для M-серии нужен билд `lovely-aarch64-apple-darwin`). Нужен только сам `liblovely.dylib`:
+  CLI мода подставляет его через `DYLD_INSERT_LIBRARIES` сам, скрипт запуска не требуется.
+  Запускать игру через Steam на macOS нельзя — этому мешает баг клиента.
 - [Steamodded](https://github.com/Steamodded/smods) — фреймворк модов, моды кладутся в
   `~/Library/Application Support/Balatro/Mods`.
 
