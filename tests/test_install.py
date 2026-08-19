@@ -298,3 +298,21 @@ class TestРегрессииУстановщика:
 
         with pytest.raises(InstallError, match="поставь вручную"):
             plan(Мусор(собрать_архивы(tmp_path)), "arm64")
+
+    def test_берётся_ближайший_к_корню_каталог(self, tmp_path: Path) -> None:
+        # В архиве может оказаться вложенный каталог с тем же именем.
+        # Брать первый попавшийся от обхода — значит зависеть от порядка файлов.
+        архивы = собрать_архивы(tmp_path)
+        подмена = tmp_path / "releases" / "balatrobot.zip"
+        with zipfile.ZipFile(подмена, "w") as zipped:
+            zipped.writestr("coder-balatrobot-def456/vendor/deep/lua/чужое.lua", "-- не то")
+            zipped.writestr("coder-balatrobot-def456/balatrobot.json", "{}")
+            zipped.writestr("coder-balatrobot-def456/balatrobot.lua", "-- точка входа")
+            zipped.writestr("coder-balatrobot-def456/src/lua/core/server.lua", "-- сервер")
+        архивы["balatrobot"] = подмена
+
+        home = сделать_дом(tmp_path)
+        paths = resolve_paths(home)
+        install(paths, ПоддельнаяЗакачка(архивы), tmp_path / "work", "arm64")
+
+        assert (paths.mods / "balatrobot" / "src" / "lua" / "core" / "server.lua").is_file()

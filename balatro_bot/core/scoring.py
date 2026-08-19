@@ -516,8 +516,21 @@ def score_play(
     mods = modifiers if modifiers is not None else modifiers_from(active)
 
     played_tuple = tuple(played)
+
+    # Оставшиеся в руке ищутся по тождеству объектов, поэтому сыграть можно
+    # только карты из самой руки. Иначе карта посчиталась бы дважды — и как
+    # сыгранная, и как оставшаяся, — и Steel молча завысил бы счёт.
+    hand_ids = {id(card) for card in state.hand}
+    посторонние = [card for card in played_tuple if id(card) not in hand_ids]
+    if посторонние:
+        raise ValueError(
+            f"эти карты не из руки состояния: {посторонние}. "
+            "Передавай именно объекты из `state.hand`"
+        )
+
     result = evaluate(played_tuple, mods)
-    held = tuple(card for card in state.hand if not any(card is other for other in played_tuple))
+    played_ids = {id(card) for card in played_tuple}
+    held = tuple(card for card in state.hand if id(card) not in played_ids)
 
     # Первый проход заодно показывает, где возникает случайность. Если её нет,
     # он же и есть окончательный расчёт — второй раз считать незачем.
@@ -550,6 +563,11 @@ def score_play(
         picker = _ScriptedPicker(choices=indices)
         ctx = _run_once(state, played_tuple, held, active, mods, result, picker)
         total = ctx.chips * ctx.mult
+
+        if len(picker.seen) != len(chance_points):
+            # Набор случайных точек зависит от исхода: сумма вероятностей
+            # перестаёт быть единицей, и границам верить нельзя.
+            ctx.mark_unknown("состав случайных эффектов зависит от их же исхода")
 
         probability = 1.0
         for outcomes, index in zip(picker.seen, indices, strict=False):

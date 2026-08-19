@@ -183,11 +183,17 @@ def _unpack(archive: Path, into: Path) -> Path:
 
 
 def _find(root: Path, name: str) -> Path:
-    """Найти файл или каталог по имени в распакованном архиве."""
+    """Найти файл или каталог по имени в распакованном архиве.
+
+    Из нескольких совпадений берётся ближайшее к корню: в архиве может
+    оказаться и вложенный каталог с тем же именем, и брать первый попавшийся
+    от обхода — значит зависеть от порядка файлов в архиве.
+    """
     if (direct := root / name).exists():
         return direct
-    for candidate in root.rglob(name):
-        return candidate
+    candidates = sorted(root.rglob(name), key=lambda path: len(path.parts))
+    if candidates:
+        return candidates[0]
     raise InstallError(f"в архиве нет {name}")
 
 

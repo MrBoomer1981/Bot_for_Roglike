@@ -327,3 +327,23 @@ class TestРегрессии:
         сыграть(parse_cards("AH AD"), [0, 1])
 
         assert прогоны == 1
+
+    def test_чужие_карты_отвергаются(self) -> None:
+        # Оставшиеся в руке ищутся по тождеству объектов. Карта «со стороны»
+        # считалась и сыгранной, и оставшейся: Steel молча давал ×1.5 лишний раз.
+        from balatro_bot.core.scoring import score_play
+
+        steel = карта(enhancement=Enhancement.STEEL)
+        state = GameState(hand=(steel, *parse_cards("AD KH")))
+        двойник = карта(enhancement=Enhancement.STEEL)
+
+        with pytest.raises(ValueError, match="не из руки"):
+            score_play(state, [двойник, state.hand[1]])
+
+    def test_свои_карты_проходят(self) -> None:
+        from balatro_bot.core.scoring import score_play
+
+        steel = карта(enhancement=Enhancement.STEEL)
+        state = GameState(hand=(steel, *parse_cards("AD KH")))
+        # Steel сыгран, значит в руке его нет и множителя он не даёт.
+        assert score_play(state, list(state.hand[:2])).expected == 64
