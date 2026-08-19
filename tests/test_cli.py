@@ -84,3 +84,60 @@ class TestRecord:
         monkeypatch.setattr(cli, "GOLDEN_DIR", tmp_path / "golden")
         assert cli.main(["--port", "1", "record", "проба"]) == 1
         assert not (tmp_path / "golden").exists()
+
+
+class TestAdvise:
+    def test_ручная_рука_считается_без_игры(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli.main(["advise", "--hand", "AH KH QH JH 9H"]) == 0
+        assert "flush" in capsys.readouterr().out
+
+    def test_показывает_ранжированный_список(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "AH KH QH JH 9H 7C 7D 2S", "--top", "3"])
+        строки = [s for s in capsys.readouterr().out.splitlines() if s.startswith("  ")]
+        assert len([s for s in строки if s.strip()[0].isdigit()]) == 3
+
+    def test_отмечает_достаточные_ходы(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "8H 8D 8C 2S 3D", "--blind", "50"])
+        out = capsys.readouterr().out
+        assert "нужно набрать: 50" in out
+        assert "хватает" in out
+
+    def test_предлагает_экономный_вариант(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "8H 8D 8C 2S 3D", "--blind", "50"])
+        assert "хватит и меньшего" in capsys.readouterr().out
+
+    def test_сообщает_если_не_хватает(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "2H 3D 4C 5S 7D", "--blind", "999999"])
+        assert "ни один ход не перебивает" in capsys.readouterr().out
+
+    def test_джокеры_учитываются(self, capsys: pytest.CaptureFixture[str]) -> None:
+        без = cli.main(["advise", "--hand", "AH AD", "--top", "1"])
+        первый = capsys.readouterr().out
+        с_джокером = cli.main(["advise", "--hand", "AH AD", "--jokers", "joker", "--top", "1"])
+        второй = capsys.readouterr().out
+        assert без == с_джокером == 0
+        assert первый != второй
+
+    def test_опечатка_в_джокере_подсказывает(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli.main(["advise", "--hand", "AH AD", "--jokers", "bluprint"]) == 2
+        assert "blueprint" in capsys.readouterr().out
+
+    def test_разбор_по_флагу(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "AH AD", "--jokers", "scholar", "--explain"])
+        out = capsys.readouterr().out
+        assert "разбор варианта" in out
+        assert "scholar" in out
+
+    def test_предупреждает_о_неточности(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli.main(["advise", "--hand", "AH AD", "--jokers", "cavendish"])
+        assert "НЕТОЧНЫЕ" in capsys.readouterr().out
+
+    def test_берёт_руку_из_игры(
+        self, fake_mod_port: int, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        assert cli.main(["--port", str(fake_mod_port), "advise", "--top", "2"]) == 0
+        assert "AH KH QH" in capsys.readouterr().out
+
+    def test_без_игры_предлагает_ручной_режим(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli.main(["--port", "1", "advise"]) == 1
+        assert "--hand" in capsys.readouterr().out
