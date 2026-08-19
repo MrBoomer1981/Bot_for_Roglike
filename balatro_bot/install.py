@@ -215,7 +215,10 @@ class Component:
     """Раскладка распакованного архива. Возвращает созданные пути."""
 
     expect: tuple[str, ...] = ()
-    """Что должно появиться после установки, относительно своего каталога."""
+    """Что должно появиться после установки, относительно `expect_root`."""
+
+    expect_root: str = "mods"
+    """Куда смотреть при проверке: `game` — каталог игры, `mods` — каталог модов."""
 
     asset: Callable[[Sequence[dict[str, Any]], str], tuple[str, str]] | None = None
     """Как выбрать файл релиза. `None` — брать автоматический архив исходников."""
@@ -284,6 +287,7 @@ def components() -> tuple[Component, ...]:
             place=_place_lovely,
             asset=_lovely_asset,
             expect=("liblovely.dylib",),
+            expect_root="game",
         ),
         Component(
             name="Steamodded",
@@ -330,12 +334,14 @@ def plan(fetcher: Fetcher, arch: str, chosen: Sequence[Component] | None = None)
         url = f"https://api.github.com/repos/{component.repo}/releases/latest"
         try:
             release = fetcher.json(url)
-        except OSError as error:
+        except (OSError, ValueError) as error:
             raise InstallError(
                 f"не удалось узнать последний релиз {component.name}: {error}. "
                 f"Проверь сеть или поставь вручную: https://github.com/{component.repo}/releases"
             ) from error
 
+        if not isinstance(release, dict):
+            raise InstallError(f"GitHub вернул неожиданный ответ про {component.name}")
         tag = str(release.get("tag_name", "?"))
         if component.asset is None:
             zipball = release.get("zipball_url")
@@ -353,7 +359,7 @@ def verify(paths: Paths, chosen: Sequence[Component] | None = None) -> dict[str,
     report: dict[str, bool] = {}
     for component in chosen if chosen is not None else components():
         for relative in component.expect:
-            root = paths.game if relative.endswith(".dylib") else paths.mods
+            root = paths.game if component.expect_root == "game" else paths.mods
             target = root / relative
             report[str(target)] = target.exists()
     return report

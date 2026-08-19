@@ -237,14 +237,30 @@ def _group_of_size(
 
 
 def _find_flush(cards: list[Card], mods: HandModifiers) -> tuple[Card, ...] | None:
-    """Наибольшая группа карт одной масти, если её хватает на флеш."""
+    """Наибольшая группа карт одной масти, если её хватает на флеш.
+
+    Раскладка идёт за один проход по картам, а не по одному проходу на масть:
+    флеш ищется для каждого из 218 подмножеств руки, и лишние обращения
+    к `effective_suits` заметны в профиле.
+    """
     needed = 4 if mods.four_fingers else 5
-    best: list[Card] = []
-    for suit in Suit:
-        group = [card for card in cards if suit in effective_suits(card, smeared=mods.smeared)]
-        if len(group) >= needed and len(group) > len(best):
-            best = group
-    return tuple(best) if best else None
+    if len(cards) < needed:
+        return None
+
+    groups: dict[Suit, list[Card]] = {}
+    if not mods.smeared and not any(card.is_wild or card.is_stone for card in cards):
+        # Обычный случай: у карты ровно одна масть, спрашивать не о чем.
+        for card in cards:
+            groups.setdefault(card.suit, []).append(card)
+    else:
+        for card in cards:
+            for suit in effective_suits(card, smeared=mods.smeared):
+                groups.setdefault(suit, []).append(card)
+
+    if not groups:
+        return None
+    best = max(groups.values(), key=len)
+    return tuple(best) if len(best) >= needed else None
 
 
 def _find_straight(cards: Sequence[Card], mods: HandModifiers) -> tuple[Card, ...] | None:

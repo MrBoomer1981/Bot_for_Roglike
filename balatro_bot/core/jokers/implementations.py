@@ -296,14 +296,23 @@ class _Copycat(BaseJoker):
 
     def react(self, event: Event, ctx: ScoreContext) -> Iterable[Effect]:
         target = self.target(ctx)
-        if target is None:
+        if target is None or any(item is self for item in ctx.copying):
+            # Мы уже в цепочке копирования: дальше идти нельзя, иначе
+            # Blueprint и Brainstorm, поставленные рядом, зациклятся.
             return ()
         if isinstance(event, JokerTurn):
             if event.joker is not self:
                 return ()
             # Подменяем очередь на очередь цели, иначе она себя не узнает.
             event = JokerTurn(target)
-        return target.react(event, ctx)
+
+        ctx.copying.append(self)
+        try:
+            # Список, а не генератор: иначе цель отработает уже после того,
+            # как защита снимется.
+            return list(target.react(event, ctx))
+        finally:
+            ctx.copying.pop()
 
 
 @register("j_blueprint")

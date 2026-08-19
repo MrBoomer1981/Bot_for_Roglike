@@ -236,6 +236,13 @@ class _ScriptedPicker:
         return outcomes[index][0]
 
 
+class _LikeliestPicker:
+    """Берёт самый вероятный исход. Нужен, когда ветвей слишком много для перебора."""
+
+    def pick(self, outcomes: Sequence[tuple[float, float]]) -> float:
+        return max(outcomes, key=lambda outcome: outcome[1])[0]
+
+
 @dataclass
 class ScoreContext:
     """Состояние подсчёта: аккумулятор, разбор и справки для джокеров."""
@@ -253,6 +260,14 @@ class ScoreContext:
     trace: list[TraceStep] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     picker: ChancePicker | None = None
+
+    copying: list[Joker] = field(default_factory=list)
+    """Цепочка копирующих джокеров, раскручиваемая прямо сейчас.
+
+    Blueprint копирует соседа справа, Brainstorm — самого левого. Поставленные
+    рядом, они начинают копировать друг друга по кругу. Список обрывает цикл:
+    джокер, уже находящийся в цепочке, второй раз не срабатывает.
+    """
 
     # -- применение эффектов --------------------------------------------
 
@@ -504,13 +519,13 @@ def score_play(
     result = evaluate(played_tuple, mods)
     held = tuple(card for card in state.hand if not any(card is other for other in played_tuple))
 
-    # Первый проход: узнаём, где именно возникает случайность.
+    # Первый проход заодно показывает, где возникает случайность. Если её нет,
+    # он же и есть окончательный расчёт — второй раз считать незачем.
     probe = _ScriptedPicker()
-    _run_once(state, played_tuple, held, active, mods, result, probe)
+    ctx = _run_once(state, played_tuple, held, active, mods, result, probe)
     chance_points = list(probe.seen)
 
     if not chance_points:
-        ctx = _run_once(state, played_tuple, held, active, mods, result, None)
         total = ctx.chips * ctx.mult
         return _outcome(result, ctx, total, total, total)
 
@@ -518,9 +533,9 @@ def score_play(
     for outcomes in chance_points:
         branches *= len(outcomes)
     if branches > MAX_CHANCE_BRANCHES:
-        # Слишком много ветвей: считаем по самому вероятному исходу и честно
-        # признаём, что границы неизвестны.
-        ctx = _run_once(state, played_tuple, held, active, mods, result, None)
+        # Слишком много ветвей для точного перебора: считаем по самому вероятному
+        # исходу и честно признаём, что границы неизвестны.
+        ctx = _run_once(state, played_tuple, held, active, mods, result, _LikeliestPicker())
         total = ctx.chips * ctx.mult
         ctx.mark_unknown("слишком много случайных эффектов для точного перебора")
         return _outcome(result, ctx, total, total, total)
@@ -557,7 +572,10 @@ def _outcome(
     lowest: float,
     highest: float,
 ) -> ScoreOutcome:
-    unknown = tuple(ctx.unknown) + ctx.state.unknown_jokers
+    # Про неопознанных джокеров уже сообщил `UnimplementedJoker`, поэтому из
+    # состояния берём только остальное: улучшения, издания, типы рук.
+    from_state = tuple(key for key in ctx.state.unknown_keys if not key.startswith("joker:"))
+    unknown = tuple(dict.fromkeys(tuple(ctx.unknown) + from_state))
     if not ctx.state.has_authoritative_hand_values:
         unknown += ("значения рук взяты из провизорной таблицы",)
     return ScoreOutcome(

@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Any
 
 import pytest
 
@@ -286,3 +287,43 @@ class TestЧестность:
         outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_joker"], hand_info=info)
         assert outcome.exact
         assert outcome.unknown == ()
+
+
+class TestРегрессии:
+    """Дефекты, которые уже случались. Пусть не возвращаются."""
+
+    def test_копирующие_джокеры_не_зацикливаются(self) -> None:
+        # Blueprint копирует соседа справа, Brainstorm — самого левого.
+        # Поставленные рядом, они копировали друг друга до переполнения стека.
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_blueprint", "j_brainstorm"])
+        assert outcome.expected == 64
+
+    def test_цикл_не_ломает_остальных_джокеров(self) -> None:
+        # Обрыв цикла не должен глушить джокера, стоящего рядом.
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_blueprint", "j_brainstorm", "j_joker"])
+        assert outcome.expected > 64
+
+    def test_причина_неточности_не_дублируется(self) -> None:
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_cavendish"])
+        про_джокера = [reason for reason in outcome.unknown if "cavendish" in reason]
+        assert len(про_джокера) == 1
+
+    def test_детерминированная_рука_считается_один_раз(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Раньше конвейер прогонялся дважды: сначала на разведку случайностей,
+        # потом набело. Для руки без случайностей это была двойная работа.
+        import balatro_bot.core.scoring as модуль
+
+        прогоны = 0
+        исходный = модуль._run_once
+
+        def счётчик(*args: Any, **kwargs: Any) -> Any:
+            nonlocal прогоны
+            прогоны += 1
+            return исходный(*args, **kwargs)
+
+        monkeypatch.setattr(модуль, "_run_once", счётчик)
+        сыграть(parse_cards("AH AD"), [0, 1])
+
+        assert прогоны == 1

@@ -240,3 +240,20 @@ class TestInstall:
         monkeypatch.setattr("pathlib.Path.home", staticmethod(lambda: пусто))
         assert cli.main(["install", "--check", "--force"]) == 1
         assert "--game-dir" in capsys.readouterr().out
+
+
+class TestРегрессииВыводе:
+    """Мелочи, на которых вывод уже ломался."""
+
+    def test_steel_и_stone_различаются(self) -> None:
+        # Обе начинаются на «s», и раньше обе печатались как (S). Путать их
+        # нельзя: одно работает в руке, другое при розыгрыше.
+        from balatro_bot.core.cards import Card, Enhancement, Rank, Suit
+
+        steel = cli._format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STEEL))
+        stone = cli._format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STONE))
+        assert steel != stone
+
+    def test_нулевой_top_не_роняет(self, capsys: pytest.CaptureFixture[str]) -> None:
+        assert cli.main(["advise", "--hand", "AH AD", "--top", "0"]) == 0
+        assert "pair" in capsys.readouterr().out

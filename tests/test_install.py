@@ -280,3 +280,21 @@ class TestБезопасность:
         for component in components():
             assert component.purpose
             assert component.expect
+
+
+class TestРегрессииУстановщика:
+    def test_неожиданный_ответ_github_не_роняет(self, tmp_path: Path) -> None:
+        class ЧужойОтвет(ПоддельнаяЗакачка):
+            def json(self, url: str) -> Any:
+                return {"message": "API rate limit exceeded"}
+
+        with pytest.raises(InstallError):
+            plan(ЧужойОтвет(собрать_архивы(tmp_path)), "arm64")
+
+    def test_не_json_не_роняет(self, tmp_path: Path) -> None:
+        class Мусор(ПоддельнаяЗакачка):
+            def json(self, url: str) -> Any:
+                raise ValueError("Expecting value: line 1 column 1")
+
+        with pytest.raises(InstallError, match="поставь вручную"):
+            plan(Мусор(собрать_архивы(tmp_path)), "arm64")

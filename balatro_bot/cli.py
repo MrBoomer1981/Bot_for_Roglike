@@ -20,6 +20,7 @@ import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Final
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import DEFAULT_HOST, DEFAULT_PORT, ModBridge, ModBridgeError
@@ -51,12 +52,25 @@ NOT_RUNNING_HINT = """
 """
 
 
+#: Однобуквенные пометки улучшений. Steel и Stone нарочно разведены:
+#: первая буква у них общая, а путать их нельзя — одно работает в руке,
+#: другое при розыгрыше.
+_ENHANCEMENT_MARKS: Final[dict[Enhancement, str]] = {
+    Enhancement.BONUS: "B",
+    Enhancement.MULT: "M",
+    Enhancement.WILD: "W",
+    Enhancement.GLASS: "G",
+    Enhancement.STEEL: "T",
+    Enhancement.STONE: "S",
+    Enhancement.GOLD: "$",
+    Enhancement.LUCKY: "L",
+}
+
+
 def _format_card(card: Card) -> str:
     """Компактная запись карты с пометками, если она не обычная."""
     text = f"{card.rank.value}{card.suit.value}"
-    marks = ""
-    if card.enhancement is not Enhancement.NONE:
-        marks += card.enhancement.value[0].upper()
+    marks = _ENHANCEMENT_MARKS.get(card.enhancement, "")
     if card.debuffed:
         marks += "x"
     return f"{text}({marks})" if marks else text
@@ -115,8 +129,9 @@ def _show_advice(advice: Advice, top: int, explain: bool) -> None:
         )
         print(f"нужно набрать: {_number(remaining)}{добрано}\n")
 
-    ширина = max(len(_cards(item.cards)) for item in advice.candidates[:top])
-    for позиция, item in enumerate(advice.candidates[:top], start=1):
+    показать = advice.candidates[: max(top, 1)]
+    ширина = max(len(_cards(item.cards)) for item in показать)
+    for позиция, item in enumerate(показать, start=1):
         отметка = ""
         if remaining is not None:
             отметка = "  хватает" if item.beats(remaining) else ""
