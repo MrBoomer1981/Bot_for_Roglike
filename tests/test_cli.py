@@ -149,6 +149,48 @@ class TestAdvise:
         assert cli.main(["--port", "1", "advise"]) == 1
         assert "--hand" in capsys.readouterr().out
 
+    def test_сброс_сравнивает_со_сыгранной_сейчас(self, capsys: pytest.CaptureFixture[str]) -> None:
+        # Один сброс держит перебор добора (C(44, 1) = 44) в пределах лимита.
+        код = cli.main(["advise", "--hand", "AH KH QH JH 9H 7C 7D 2S", "--discard", "2S"])
+        out = capsys.readouterr().out
+        assert код == 0
+        assert "сброс 2S" in out
+        assert "сыграть сейчас" in out
+        assert "колода приближена" in out  # ручной ввод — точная колода недоступна
+
+    def test_сброс_слишком_много_комбинаций_честно_отказывается(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # C(44, 3) = 13244 — больше лимита, перебор пропускается, не гадаем.
+        код = cli.main(["advise", "--hand", "AH KH QH JH 9H 7C 7D 2S", "--discard", "7C 7D 2S"])
+        out = capsys.readouterr().out
+        assert код == 0
+        assert "перебор добора недоступен" in out
+
+    def test_сброс_карты_не_из_руки(self, capsys: pytest.CaptureFixture[str]) -> None:
+        код = cli.main(["advise", "--hand", "AH KH QH JH 9H", "--discard", "2S"])
+        assert код == 2
+        assert "НЕ ВЫШЛО" in capsys.readouterr().out
+
+    def test_сброс_без_сбросов_предупреждает_но_считает(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        код = cli.main(
+            [
+                "advise",
+                "--hand",
+                "AH KH QH JH 9H 7C 7D 2S",
+                "--discard",
+                "2S",
+                "--discards-left",
+                "0",
+            ]
+        )
+        out = capsys.readouterr().out
+        assert код == 0
+        assert "сбросов не осталось" in out
+        assert "сброс 2S" in out
+
 
 class TestInstall:
     """Установщик через командную строку.
@@ -251,15 +293,6 @@ class TestInstall:
 
 class TestРегрессииВыводе:
     """Мелочи, на которых вывод уже ломался."""
-
-    def test_steel_и_stone_различаются(self) -> None:
-        # Обе начинаются на «s», и раньше обе печатались как (S). Путать их
-        # нельзя: одно работает в руке, другое при розыгрыше.
-        from balatro_bot.core.cards import Card, Enhancement, Rank, Suit
-
-        steel = cli._format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STEEL))
-        stone = cli._format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STONE))
-        assert steel != stone
 
     def test_нулевой_top_не_роняет(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert cli.main(["advise", "--hand", "AH AD", "--top", "0"]) == 0

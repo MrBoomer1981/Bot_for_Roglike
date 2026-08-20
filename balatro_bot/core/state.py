@@ -33,6 +33,9 @@ class PokerHandInfo:
     chips: int
     mult: int
     played: int = 0
+    played_this_round: int = 0
+    """Сколько раз этот тип руки уже сыгран в текущем раунде — нужно
+    `Card Sharp` (`j_card_sharp`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +46,9 @@ class JokerCard:
     label: str = ""
     edition: Edition = Edition.BASE
     eternal: bool = False
+    sell_value: int | None = None
+    """Цена продажи. Нужна `Swashbuckler` (`j_swashbuckler`); `None`, если
+    источник состояния её не прислал (например, ручной ввод)."""
 
     @property
     def is_known(self) -> bool:
@@ -74,9 +80,47 @@ class GameState:
     hand_info: Mapping[HandType, PokerHandInfo] = field(default_factory=dict)
     blind: BlindInfo | None = None
 
+    deck_type: str | None = None
+    """Выбранная колода рана (`RED`, `ABANDONED`, …) — не путать с `deck`
+    (оставшиеся для добора карты). Нужна только для того, чтобы узнать
+    стартовый размер колоды (`j_erosion`): у большинства колод он 52 карты,
+    но, например, `ABANDONED` начинает без картинок — 40."""
+
+    deck: tuple[Card, ...] | None = None
+    """Оставшаяся колода — карты, которые ещё можно добрать при сбросе.
+
+    Известна точно только через мост к моду (Фаза 5): он присылает область
+    `cards`, и `hand.count + cards.count` совпадает с размером всей колоды —
+    то есть это буквально то, что осталось добирать прямо сейчас. При ручном
+    вводе колода неизвестна: `solver/discard.py` сам подставляет вместо неё
+    приближение (`core.cards.standard_deck`) и честно помечает результат
+    неточным.
+    """
+
+    full_deck: tuple[Card, ...] | None = None
+    """Весь набор карт в колоде: не то, что осталось добирать (`deck`), а все
+    карты, которыми игрок владеет в этом ране. Нужен джокерам вида «X за
+    каждую стальную/каменную карту в колоде» (`j_steel_joker`, `j_stone`,
+    `j_drivers_license`).
+
+    В спецификации мода (`openrpc.json`) отдельного поля для полного состава
+    нет — область `cards` документирована именно как «Cards remaining in
+    deck». Собрать полный список из одного снимка состояния получается
+    только в узком случае: `hand ∪ cards` совпадает со всей колодой, только
+    пока за раунд ничего не сыграно и не сброшено (`mod_bridge.py` строит
+    это поле именно при этом условии, иначе оставляет `None` — часть карт,
+    сыгранных или сброшенных этим раундом, до конца раунда лежит в стопке,
+    которую мод не показывает ни в одной области состояния)."""
+
     hands_left: int = 0
     discards_left: int = 0
+    hands_played: int = 0
+    """Сколько рук уже сыграно в этом раунде — нужно `Ice Cream` (`j_ice_cream`)."""
     chips_scored: int = 0
+
+    joker_slots: int | None = None
+    """Вместимость слотов джокеров. Нужна `Joker Stencil` (`j_stencil`);
+    `None`, если источник состояния её не прислал."""
 
     unknown_keys: tuple[str, ...] = ()
     """Всё, что не удалось опознать, в виде `вид:ключ`."""

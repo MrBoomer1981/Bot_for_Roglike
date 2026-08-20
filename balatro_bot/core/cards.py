@@ -21,6 +21,7 @@ __all__ = [
     "effective_suits",
     "parse_card",
     "parse_cards",
+    "standard_deck",
 ]
 
 
@@ -241,3 +242,13 @@ def parse_card(text: str) -> Card:
 def parse_cards(text: str) -> tuple[Card, ...]:
     """Разобрать строку карт через пробел: `AH KH QH 7C 7D`."""
     return tuple(parse_card(token) for token in text.split())
+
+
+def standard_deck() -> tuple[Card, ...]:
+    """52 базовые карты без улучшений — приближение колоды при ручном вводе.
+
+    Настоящая колода за ран меняется (карты добавляются, улучшаются,
+    уничтожаются), а история ходов при ручном вводе не отслеживается.
+    Это заведомо неточный запасной путь для `solver/discard.py`, не факт.
+    """
+    return tuple(Card(rank, suit) for suit in Suit for rank in Rank)

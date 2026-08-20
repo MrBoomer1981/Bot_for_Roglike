@@ -128,6 +128,10 @@ def modifiers_from(jokers: Iterable[Joker]) -> HandModifiers:
         four_fingers="j_four_fingers" in keys,
         shortcut="j_shortcut" in keys,
         smeared="j_smeared" in keys,
+        splash="j_splash" in keys,
+        pareidolia="j_pareidolia" in keys,
+        chicot="j_chicot" in keys,
+        oops="j_oops" in keys,
     )
 
 

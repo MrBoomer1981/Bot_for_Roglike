@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**balatro-bot** — advisory bot for the roguelike deck-builder Balatro. It reads the current game state and ranks all possible card plays with exact score breakdowns. Brute-forces all 2¹⁸ hand subsets (~20ms), never uses ML/heuristics. Code comments and documentation are in Russian.
+**balatro-bot** — advisory bot for the roguelike deck-builder Balatro. It reads the current game state and ranks all possible card plays with exact score breakdowns. Brute-forces all 218 hand subsets (~20ms), never uses ML/heuristics. Code comments and documentation are in Russian.
 
 `PLAN.md` is the authoritative design doc: game-choice rationale, the exact score-computation order to replicate, the phased roadmap, and a running list of open assumptions/defects (section 8.3) and fixed ones (8.4). Check it before making architectural changes.
 
@@ -21,6 +21,7 @@ uv run balatro-bot advise --hand "AH KH QH JH 9H 7C 7D 2S" --jokers "joker,droll
 uv run balatro-bot install          # one-shot installer for the macOS mod stack; --dry-run to preview
 uvx balatrobot serve                # launch Balatro with the mod's JSON-RPC server (not via Steam)
 uv run balatro-bot doctor           # check the connection and dump current game state
+uv run balatro-bot watch            # live terminal advisor: polls and redraws while you play
 uv run balatro-bot record NAME      # snapshot live state into tests/golden/ for a golden test
 
 # Test
@@ -59,9 +60,13 @@ tests/fake_mod.py       test fixture ─┘                     │
 
 **`core/catalogue.py`** — Auto-generated from the BalatroBot mod's `enums.lua`. **Do not edit manually.**
 
-**`solver/play.py`** — `rank_plays()` brute-forces all hand subsets; `advise()` returns ranked `Candidate` list.
+**`solver/play.py`** — `rank_plays()` brute-forces all hand subsets; `advise()` returns ranked `Candidate` list. `rank_joker_orders()` (CLI: `advise --joker-order`) brute-forces joker permutations too — order matters because `Blueprint`/`Brainstorm` copy neighbors and `AddMult`/`XMult` don't commute; capped at `MAX_JOKERS_FOR_ORDER_SEARCH = 6` (720 permutations), returning `None` above that instead of guessing.
 
-**`adapters/mod_bridge.py`** — JSON-RPC client connecting to the mod server at `127.0.0.1:12346`.
+**`solver/discard.py`** — `discard_outcome()` (CLI: `advise --discard "cards"`) computes the exact EV of discarding one *caller-specified* set of hand cards: brute-forces every possible draw from the remaining deck (no sampling) and averages the best `advise()` score per draw. Deliberately doesn't search over *which* cards to discard — combined with the deck-draw search, that's what PLAN.md section 8.3 assumption #9 flags as too slow even for Monte Carlo. Capped at `MAX_DRAW_COMBINATIONS = 2000` draws, returning `None` above that — same honest-refusal pattern as `rank_joker_orders`. Deck knowledge comes from `GameState.deck`: exact when the mod bridge parsed it from the mod's `cards` area (confirmed against golden dumps to be the literal remaining draw pile — `hand.count + cards.count` equals the full deck size), approximated as a standard 52-card deck minus the current hand otherwise (manual input), with the result honestly flagged either way. `rank_single_discards()` is the one exception to "don't search which cards" — single-card discards have at most 8 candidates and a cheap enumeration each, so it's the only discard size cheap enough to brute-force automatically; `watch` calls it on every redraw (`--no-discard-tips` to skip it) to show the best card(s) to discard, but 2+ card discards are still left to `--discard` because a candidate of size 2 alone can already mean ~950 draws × 28 candidates.
+
+**`adapters/mod_bridge.py`** — JSON-RPC client connecting to the mod server at `127.0.0.1:12346`. Read-only in practice: `play()`/`discard()` exist on the client, but nothing in the bot calls them — no autoplay is a deliberate product rule (PLAN.md section 2), not just an unfinished feature.
+
+**`ui/render.py`** — terminal formatting shared by `advise`/`doctor`/`watch`, so the three commands can't drift into inconsistent output. **`ui/tui.py`** — `watch()` polls `ModBridge.game_state()` on an interval and only clears/redraws when the returned `GameState` compares unequal to the last one (frozen dataclasses give this for free), so an idle screen doesn't flicker. No dependency on `textual`/`rich` despite PLAN.md's original stack section — plain ANSI (`\x1b[2J\x1b[H`) instead, to keep the zero-dependency rule intact.
 
 **`install.py`** — one-shot installer for the macOS mod stack (Lovely Injector, Steamodded, the BalatroBot mod). Locates Steam libraries (including ones on secondary drives via `libraryfolders.vdf`), downloads the latest GitHub release of each component behind a `Fetcher` protocol, and unpacks defensively (rejects archive members with absolute or `..` paths). Driven by the `install`/`doctor`/`record` subcommands in `cli.py`; manual step-by-step fallback lives in `docs/mac-setup.md`.
 
@@ -79,8 +84,9 @@ tests/fake_mod.py       test fixture ─┘                     │
 
 1. Look up the joker key in `core/catalogue.py` (e.g. `j_joker`).
 2. Implement in `core/jokers/implementations.py` using `BaseJoker` and the `@register("j_key")` decorator.
-3. Override `react(self, event: Event, ctx: ScoreContext) -> Iterable[Effect]` and `isinstance`-check for the event(s) you care about (`JokerTurn`, `CardScored`, `CardHeld`, `RetriggerQuery`) — there is no per-event method name to hook into. For the common "fires once on this joker's own turn" shape, subclass `_OwnTurn` and override `on_turn(self, ctx)` instead; most existing jokers do this.
-4. Add tests in `tests/test_scoring.py`.
+3. Override `react(self, event: Event, ctx: ScoreContext) -> Iterable[Effect]` and `isinstance`-check for the event(s) you care about (`JokerTurn`, `CardScored`, `CardHeld`, `RetriggerQuery`) — there is no per-event method name to hook into. For the common "fires once on this joker's own turn" shape, subclass `_OwnTurn` and override `on_turn(self, ctx)` instead; most existing jokers do this. Reusable family base classes already exist for common shapes: `_ConditionalJoker`/`_conditional(...)` for "if the hand contains X, add chips/mult/xmult"; `_SuitBonus`/`_suit_joker(...)` for "cards of suit X give +chips/+mult when scored"; `_PerScoredCard` for "react to each qualifying scored card"; `_RuleChanger` for jokers whose only effect is a `HandModifiers` flag (checked in `modifiers_from()`, e.g. `four_fingers`, `splash`, `pareidolia`, `chicot`, `oops`); `_FullDeckJoker` for "X per card of type Y in your full deck" (`j_steel_joker`, `j_stone`, `j_drivers_license`, `j_erosion`) — backed by `GameState.full_deck`, which the mod bridge can only fill in exactly when nothing has been played or discarded yet this round (the mod's `openrpc.json` has no field for the full deck, only the remaining draw pile — see PLAN.md section 8.2 for why), so treat it as `None`-checked optional data like `GameState.deck`, never as always-present. For a probabilistic joker/enhancement with a "no luck / bonus" two-outcome table (Lucky, `j_bloodstone`), route it through `core.scoring.double_chance(outcomes)` gated on `ctx.modifiers.oops` so `j_oops` (Oops! All 6s) doubles it automatically — don't hand-roll a second doubling formula.
+4. If the joker's real effect is a permanent accumulator ("gains X per Y", "(Currently +N)") built up from events the game state doesn't expose a history of (past discards, past sells, past rerolls, etc.), don't guess a number — leave it as `UnimplementedJoker`. If the joker's effect provably never touches chips/mult for the play being scored (pure economy, consumable creation, shop/meta effects, or a passive already reflected in the observed state like hand size or discards left), register it as a bare `BaseJoker` with a docstring quoting the catalogue text and a short comment explaining why it's a real zero, not a shortcut — see the "Известны, но на счёт розыгрыша не влияют" section at the bottom of `implementations.py` for the established pattern and precedent.
+5. Add tests in `tests/test_scoring.py`.
 
 ## Testing Infrastructure
 

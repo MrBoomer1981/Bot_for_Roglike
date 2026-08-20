@@ -52,6 +52,7 @@ __all__ = [
     "ScoreOutcome",
     "TraceStep",
     "XMult",
+    "double_chance",
     "score_play",
 ]
 
@@ -350,6 +351,10 @@ class ScoreContext:
         return any(count >= 3 for count in self.rank_counts().values())
 
     @property
+    def contains_four(self) -> bool:
+        return any(count >= 4 for count in self.rank_counts().values())
+
+    @property
     def contains_straight(self) -> bool:
         return self.hand_type in _STRAIGHT_HANDS
 
@@ -358,7 +363,9 @@ class ScoreContext:
         return self.hand_type in _FLUSH_HANDS
 
     def is_face(self, card: Card) -> bool:
-        """Картинка ли это: валет, дама, король."""
+        """Картинка ли это: валет, дама, король — или любая карта при `Pareidolia`."""
+        if self.modifiers.pareidolia:
+            return not card.is_stone
         return not card.is_stone and card.rank in _FACE_RANKS
 
     def first_face_index(self) -> int | None:
@@ -402,6 +409,27 @@ _EDITION_XMULT: dict[Edition, float] = {Edition.POLYCHROME: 1.5}
 _LUCKY_OUTCOMES: tuple[tuple[float, float], ...] = ((0.0, 0.8), (20.0, 0.2))
 
 
+def double_chance(
+    outcomes: tuple[tuple[float, float], ...],
+) -> tuple[tuple[float, float], ...]:
+    """Удвоить вероятность исхода — эффект `Oops! All 6s` (`j_oops`).
+
+    Рассчитан на двухвариантные таблицы «не повезло / бонус» (Lucky,
+    Bloodstone) — ровно так устроены все вероятностные эффекты в проекте,
+    кроме Misprint, у которого не «шанс», а равномерный разброс, удваивать
+    там нечего. Первая пара — база, вторая — бонус; вероятность бонуса
+    удваивается и не может превысить единицу. Если удвоение достаёт до
+    единицы, исход схлопывается в единственный — иначе мёртвая ветка с
+    нулевой вероятностью всё равно попала бы в перебор и портила бы
+    `minimum`/`maximum`, хотя реально они больше не расходятся.
+    """
+    (base_value, _base_p), (bonus_value, bonus_p) = outcomes
+    doubled_p = min(bonus_p * 2, 1.0)
+    if doubled_p >= 1.0:
+        return ((bonus_value, 1.0),)
+    return ((base_value, 1 - doubled_p), (bonus_value, doubled_p))
+
+
 def _score_card(card: Card, ctx: ScoreContext) -> None:
     """Собственный вклад карты: очки ранга, улучшение, издание."""
     name = f"{card.rank.value}{card.suit.value}"
@@ -416,7 +444,8 @@ def _score_card(card: Card, ctx: ScoreContext) -> None:
     if card.enhancement is Enhancement.GLASS:
         ctx.apply(XMult(2.0), name, "×2 множителя (glass)")
     if card.enhancement is Enhancement.LUCKY:
-        bonus = ctx.chance(_LUCKY_OUTCOMES)
+        outcomes = double_chance(_LUCKY_OUTCOMES) if ctx.modifiers.oops else _LUCKY_OUTCOMES
+        bonus = ctx.chance(outcomes)
         if bonus:
             ctx.apply(AddMult(bonus), name, f"+{bonus:g} множителя (lucky, повезло)")
 
@@ -476,7 +505,7 @@ def _run_once(
 
     # 3. Сыгранные карты слева направо, с учётом ретриггеров.
     for index, card in enumerate(result.scoring_cards):
-        if card.debuffed:
+        if card.debuffed and not modifiers.chicot:
             name = f"{card.rank.value}{card.suit.value}"
             ctx.trace.append(TraceStep(name, "отключена боссом", ctx.chips, ctx.mult))
             continue
@@ -487,7 +516,7 @@ def _run_once(
 
     # 4. Карты, оставшиеся в руке.
     for card in held:
-        if card.debuffed:
+        if card.debuffed and not modifiers.chicot:
             continue
         triggers = 1 + ctx.ask_retriggers(card, in_hand=True)
         for repeat in range(triggers):

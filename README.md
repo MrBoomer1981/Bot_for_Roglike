@@ -28,6 +28,7 @@ Mac — это ближайший шаг. Установка мод-стека �
 uv run balatro-bot install     # покажет, что скачает, и спросит подтверждения
 uvx balatrobot serve           # запустить игру
 uv run balatro-bot doctor      # проверить связь
+uv run balatro-bot watch       # советы обновляются сами, пока играешь
 ```
 
 Подробности и ручной путь — [docs/mac-setup.md](docs/mac-setup.md).

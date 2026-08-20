@@ -15,7 +15,16 @@ from typing import Any
 
 import pytest
 
-from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, parse_cards
+from balatro_bot.core.cards import (
+    Card,
+    Edition,
+    Enhancement,
+    Rank,
+    Seal,
+    Suit,
+    parse_cards,
+    standard_deck,
+)
 from balatro_bot.core.hands import HandType
 from balatro_bot.core.scoring import ScoreOutcome, score_play
 from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo
@@ -154,6 +163,17 @@ class TestРетриггеры:
         hand = [карта(), карта(Rank.KING, Suit.SPADES, enhancement=Enhancement.STEEL)]
         assert сыграть(hand, [0], ["j_mime"]).expected == 36
 
+    def test_selzer_ретригерит_все_сыгранные(self) -> None:
+        # Туз засчитан дважды: (5 + 11 + 11) × 1
+        assert сыграть(parse_cards("AH"), [0], ["j_selzer"]).expected == 27
+
+    def test_sock_and_buskin_ретригерит_картинки(self) -> None:
+        # Король засчитан дважды: (5 + 10 + 10) × 1
+        assert сыграть(parse_cards("KH"), [0], ["j_sock_and_buskin"]).expected == 25
+
+    def test_sock_and_buskin_молчит_на_обычной_карте(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_sock_and_buskin"]).expected == 16
+
 
 class TestДжокерыНаКарты:
     def test_масть_даёт_множитель(self) -> None:
@@ -180,6 +200,91 @@ class TestДжокерыНаКарты:
         # Король остался в руке: (5 + 11) × (1 × 1.5)
         assert сыграть(parse_cards("AH KD"), [0], ["j_baron"]).expected == 24
 
+    def test_arrowhead_на_пиках(self) -> None:
+        # Пара семёрок, одна пиковая: (10 + 14 + 50) × 2
+        assert сыграть(parse_cards("7S 7H"), [0, 1], ["j_arrowhead"]).expected == 148
+
+    def test_onyx_agate_на_трефах(self) -> None:
+        # Пара семёрок, одна трефовая: (10 + 14) × (2 + 7)
+        assert сыграть(parse_cards("7C 7H"), [0, 1], ["j_onyx_agate"]).expected == 216
+
+    def test_scary_face_на_картинках(self) -> None:
+        # Пара королей, обе картинки: (10 + 20 + 60) × 2
+        assert сыграть(parse_cards("KH KD"), [0, 1], ["j_scary_face"]).expected == 180
+
+    def test_smiley_на_картинках(self) -> None:
+        # Пара королей, обе картинки: (10 + 20) × (2 + 10)
+        assert сыграть(parse_cards("KH KD"), [0, 1], ["j_smiley"]).expected == 360
+
+    def test_walkie_talkie_на_четвёрке(self) -> None:
+        # (5 + 4 + 10) × (1 + 4)
+        assert сыграть(parse_cards("4H"), [0], ["j_walkie_talkie"]).expected == 95
+
+    def test_walkie_talkie_молчит_на_чужом_ранге(self) -> None:
+        assert сыграть(parse_cards("2H"), [0], ["j_walkie_talkie"]).expected == 7
+
+    def test_triboulet_умножает_за_каждую_картинку(self) -> None:
+        # Пара королей: (10 + 20) × 2 × 2 × 2
+        assert сыграть(parse_cards("KH KD"), [0, 1], ["j_triboulet"]).expected == 240
+
+    def test_shoot_the_moon_считает_дам_в_руке(self) -> None:
+        # Дама осталась в руке: (5 + 11) × (1 + 13)
+        assert сыграть(parse_cards("AH QD"), [0], ["j_shoot_the_moon"]).expected == 224
+
+    def test_raised_fist_берёт_младшую_карту_в_руке(self) -> None:
+        # Младшая в руке — двойка: (5 + 11) × (1 + 2 × 2)
+        assert сыграть(parse_cards("AH 2D 5S"), [0], ["j_raised_fist"]).expected == 80
+
+    def test_raised_fist_игнорирует_каменные(self) -> None:
+        hand = [
+            карта(Rank.ACE),
+            карта(Rank.TWO, Suit.SPADES, enhancement=Enhancement.STONE),
+            карта(Rank.FIVE, Suit.CLUBS),
+        ]
+        # Каменная двойка не в счёт — младшая среди обычных: пятёрка.
+        assert сыграть(hand, [0], ["j_raised_fist"]).expected == (5 + 11) * (1 + 2 * 5)
+
+    def test_raised_fist_молчит_без_карт_в_руке(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_raised_fist"]).expected == 16
+
+    def test_blackboard_на_пиках_и_трефах(self) -> None:
+        # (5 + 11) × (1 × 3)
+        assert сыграть(parse_cards("AH 2S 3C"), [0], ["j_blackboard"]).expected == 48
+
+    def test_blackboard_молчит_на_чужой_масти(self) -> None:
+        assert сыграть(parse_cards("AH 2S 3H"), [0], ["j_blackboard"]).expected == 16
+
+    def test_blackboard_срабатывает_на_пустой_руке(self) -> None:
+        # Условие «все карты в руке — пики или трефы» выполняется на пустом множестве.
+        assert сыграть(parse_cards("AH"), [0], ["j_blackboard"]).expected == 48
+
+    def test_flower_pot_на_всех_мастях(self) -> None:
+        # Четыре туза, по одному на масть — каре, все 4 масти представлены.
+        outcome = сыграть(parse_cards("AH AD AC AS"), [0, 1, 2, 3], ["j_flower_pot"])
+        assert outcome.expected == 2184
+
+    def test_flower_pot_молчит_без_всех_мастей(self) -> None:
+        outcome = сыграть(parse_cards("AH AD AC"), [0, 1, 2], ["j_flower_pot"])
+        assert outcome.expected == 189
+
+    def test_seeing_double_треф_и_другая_масть(self) -> None:
+        # (10 + 22) × (2 × 2)
+        assert сыграть(parse_cards("AC AH"), [0, 1], ["j_seeing_double"]).expected == 128
+
+    def test_seeing_double_молчит_без_треф(self) -> None:
+        assert сыграть(parse_cards("AH KH"), [0, 1], ["j_seeing_double"]).expected == 16
+
+    def test_bloodstone_разброс(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_bloodstone"])
+        assert outcome.minimum == 16
+        assert outcome.maximum == 24
+        assert outcome.expected == pytest.approx(20.0)
+
+    def test_bloodstone_молчит_на_чужой_масти(self) -> None:
+        outcome = сыграть(parse_cards("AC"), [0], ["j_bloodstone"])
+        assert outcome.certain
+        assert outcome.expected == 16
+
 
 class TestУсловныеДжокеры:
     def test_jolly_на_паре(self) -> None:
@@ -200,6 +305,33 @@ class TestУсловныеДжокеры:
         assert outcome.hand_type is HandType.THREE_OF_A_KIND
         assert outcome.expected == (30 + 33) * 3
 
+    def test_duo_на_паре(self) -> None:
+        # (10 + 22) × (2 × 2)
+        assert сыграть(parse_cards("AH AD"), [0, 1], ["j_duo"]).expected == 128
+
+    def test_duo_молчит_без_пары(self) -> None:
+        assert сыграть(parse_cards("AH KD"), [0, 1], ["j_duo"]).expected == 16
+
+    def test_trio_на_тройке(self) -> None:
+        # (30 + 33) × (3 × 3)
+        assert сыграть(parse_cards("AH AD AC"), [0, 1, 2], ["j_trio"]).expected == 567
+
+    def test_family_на_каре(self) -> None:
+        # (60 + 44) × (7 × 4)
+        assert сыграть(parse_cards("AH AD AC AS"), [0, 1, 2, 3], ["j_family"]).expected == 2912
+
+    def test_order_на_стрите(self) -> None:
+        # 9-10-J-Q-K вразнобой по мастям: (30 + 49) × (4 × 3)
+        outcome = сыграть(parse_cards("9H TC JD QS KH"), [0, 1, 2, 3, 4], ["j_order"])
+        assert outcome.hand_type is HandType.STRAIGHT
+        assert outcome.expected == 948
+
+    def test_tribe_на_флеше(self) -> None:
+        # Пять черв не подряд: (35 + 40) × (4 × 2)
+        outcome = сыграть(parse_cards("AH KH TH 7H 2H"), [0, 1, 2, 3, 4], ["j_tribe"])
+        assert outcome.hand_type is HandType.FLUSH
+        assert outcome.expected == 600
+
 
 class TestСостояниеРана:
     def test_bull_считает_деньги(self) -> None:
@@ -219,6 +351,159 @@ class TestСостояниеРана:
         info = {HandType.HIGH_CARD: PokerHandInfo(level=1, chips=5, mult=1, played=5)}
         outcome = сыграть(parse_cards("AH"), [0], ["j_supernova"], hand_info=info)
         assert outcome.expected == 16 * 6
+
+    def test_mystic_summit_без_сбросов(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_mystic_summit"], discards_left=0)
+        assert outcome.expected == 16 * 16
+
+    def test_mystic_summit_молчит_если_сбросы_остались(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_mystic_summit"], discards_left=2)
+        assert outcome.expected == 16
+
+    def test_acrobat_на_последней_руке(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_acrobat"], hands_left=1).expected == 48
+
+    def test_acrobat_молчит_если_руки_остались(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_acrobat"], hands_left=3).expected == 16
+
+    def test_cavendish_x3_безусловно(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_cavendish"]).expected == 48
+
+    def test_gros_michel_флэт_мульт(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_gros_michel"]).expected == 256
+
+    def test_stuntman_флэт_фишки(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_stuntman"]).expected == 266
+
+    def test_card_sharp_на_уже_сыгранной_руке(self) -> None:
+        info = {HandType.HIGH_CARD: PokerHandInfo(level=1, chips=5, mult=1, played_this_round=1)}
+        outcome = сыграть(parse_cards("AH"), [0], ["j_card_sharp"], hand_info=info)
+        assert outcome.expected == 48
+
+    def test_card_sharp_молчит_если_рука_ещё_не_игралась(self) -> None:
+        info = {HandType.HIGH_CARD: PokerHandInfo(level=1, chips=5, mult=1, played_this_round=0)}
+        outcome = сыграть(parse_cards("AH"), [0], ["j_card_sharp"], hand_info=info)
+        assert outcome.expected == 16
+
+    def test_card_sharp_без_данных_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_card_sharp"])
+        assert any("Card Sharp" in reason for reason in outcome.unknown)
+
+    def test_bootstraps_считает_пятёрки_денег(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_bootstraps"], money=12).expected == 80
+
+    def test_bootstraps_молчит_без_денег(self) -> None:
+        assert сыграть(parse_cards("AH"), [0], ["j_bootstraps"], money=0).expected == 16
+
+    def test_blue_joker_считает_колоду(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_blue_joker"], deck=parse_cards("2H 3H 4H"))
+        assert outcome.expected == 22
+
+    def test_blue_joker_без_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_blue_joker"])
+        assert any("Blue Joker" in reason for reason in outcome.unknown)
+
+    def test_ice_cream_уменьшается_с_розыгрышами(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_ice_cream"], hands_played=3)
+        assert outcome.expected == 101
+
+    def test_ice_cream_без_розыгрышей(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_ice_cream"], hands_played=0)
+        assert outcome.expected == 116
+
+    def test_stencil_считает_пустые_слоты(self) -> None:
+        # Один слот занят самим Stencil'ом, 4 свободны: X(1+4)
+        outcome = сыграть(parse_cards("AH"), [0], ["j_stencil"], joker_slots=5)
+        assert outcome.expected == 80
+
+    def test_stencil_без_вместимости_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_stencil"])
+        assert any("Stencil" in reason for reason in outcome.unknown)
+
+    def test_swashbuckler_складывает_цену_продажи_других(self) -> None:
+        from balatro_bot.core.scoring import score_play
+
+        jokers = (
+            JokerCard("j_swashbuckler"),
+            JokerCard("j_burnt", sell_value=3),
+            JokerCard("j_rough_gem", sell_value=5),
+        )
+        state = GameState(hand=parse_cards("AH"), jokers=jokers)
+        outcome = score_play(state, [state.hand[0]])
+        assert outcome.expected == 144
+
+    def test_swashbuckler_без_цены_продажи_неточно(self) -> None:
+        from balatro_bot.core.scoring import score_play
+
+        jokers = (JokerCard("j_swashbuckler"), JokerCard("j_burnt"))
+        state = GameState(hand=parse_cards("AH"), jokers=jokers)
+        outcome = score_play(state, [state.hand[0]])
+        assert any("Swashbuckler" in reason for reason in outcome.unknown)
+
+    def test_steel_joker_считает_стальные_карты_в_полной_колоде(self) -> None:
+        full_deck = (
+            карта(Rank.TWO, Suit.SPADES, enhancement=Enhancement.STEEL),
+            карта(Rank.THREE, Suit.SPADES, enhancement=Enhancement.STEEL),
+            карта(Rank.FOUR, Suit.SPADES),
+        )
+        outcome = сыграть(parse_cards("AH"), [0], ["j_steel_joker"], full_deck=full_deck)
+        assert outcome.expected == pytest.approx(16 * 1.4)
+
+    def test_steel_joker_без_полной_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_steel_joker"])
+        assert any("Steel Joker" in reason for reason in outcome.unknown)
+
+    def test_stone_joker_считает_каменные_карты_в_полной_колоде(self) -> None:
+        full_deck = (
+            карта(Rank.TWO, Suit.SPADES, enhancement=Enhancement.STONE),
+            карта(Rank.THREE, Suit.SPADES),
+        )
+        outcome = сыграть(parse_cards("AH"), [0], ["j_stone"], full_deck=full_deck)
+        assert outcome.expected == (16 + 25) * 1
+
+    def test_stone_joker_без_полной_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_stone"])
+        assert any("Stone Joker" in reason for reason in outcome.unknown)
+
+    def test_drivers_license_с_16_улучшенными(self) -> None:
+        full_deck = tuple(
+            карта(Rank.TWO, Suit.SPADES, enhancement=Enhancement.BONUS) for _ in range(16)
+        )
+        outcome = сыграть(parse_cards("AH"), [0], ["j_drivers_license"], full_deck=full_deck)
+        assert outcome.expected == 48
+
+    def test_drivers_license_молчит_меньше_16(self) -> None:
+        full_deck = tuple(
+            карта(Rank.TWO, Suit.SPADES, enhancement=Enhancement.BONUS) for _ in range(15)
+        )
+        outcome = сыграть(parse_cards("AH"), [0], ["j_drivers_license"], full_deck=full_deck)
+        assert outcome.expected == 16
+
+    def test_drivers_license_без_полной_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_drivers_license"])
+        assert any("Driver's License" in reason for reason in outcome.unknown)
+
+    def test_erosion_считает_недостающие_карты(self) -> None:
+        # 50 из 52 стартовых — не хватает двух: +4×2 множителя
+        full_deck = standard_deck()[:50]
+        outcome = сыграть(
+            parse_cards("AH"), [0], ["j_erosion"], full_deck=full_deck, deck_type="RED"
+        )
+        assert outcome.expected == 144
+
+    def test_erosion_молчит_на_полной_колоде(self) -> None:
+        outcome = сыграть(
+            parse_cards("AH"), [0], ["j_erosion"], full_deck=standard_deck(), deck_type="RED"
+        )
+        assert outcome.expected == 16
+
+    def test_erosion_без_типа_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_erosion"], full_deck=standard_deck())
+        assert any("Erosion" in reason for reason in outcome.unknown)
+
+    def test_erosion_без_полной_колоды_неточно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_erosion"], deck_type="RED")
+        assert any("Erosion" in reason for reason in outcome.unknown)
 
 
 class TestКопирующие:
@@ -256,6 +541,57 @@ class TestПравилаРаспознавания:
         outcome = сыграть(parse_cards("AH KD QH JD 9H"), [0, 1, 2, 3, 4], ["j_smeared"])
         assert outcome.hand_type is HandType.FLUSH
 
+    def test_splash_считает_все_сыгранные_карты(self) -> None:
+        # Без Splash тройка в счёт не идёт: пара только из тузов.
+        # (10 + 22 + 2) × 2
+        outcome = сыграть(parse_cards("AH AD 2C"), [0, 1, 2], ["j_splash"])
+        assert outcome.hand_type is HandType.PAIR
+        assert len(outcome.scoring_cards) == 3
+        assert outcome.expected == 68
+
+    def test_без_splash_лишняя_карта_не_считается(self) -> None:
+        outcome = сыграть(parse_cards("AH AD 2C"), [0, 1, 2])
+        assert len(outcome.scoring_cards) == 2
+        assert outcome.expected == 64
+
+    def test_pareidolia_делает_все_карты_картинками(self) -> None:
+        # Двойка — не картинка, но Pareidolia это снимает: (5 + 2 + 30) × 1
+        outcome = сыграть(parse_cards("2H"), [0], ["j_pareidolia", "j_scary_face"])
+        assert outcome.expected == 37
+
+    def test_без_pareidolia_обычная_карта_не_картинка(self) -> None:
+        assert сыграть(parse_cards("2H"), [0], ["j_scary_face"]).expected == 7
+
+    def test_chicot_отключает_дебафф(self) -> None:
+        hand = [карта(debuffed=True)]
+        assert сыграть(hand, [0], ["j_chicot"]).expected == 16
+
+    def test_без_chicot_дебафф_действует(self) -> None:
+        assert сыграть([карта(debuffed=True)], [0]).expected == 5
+
+    def test_chicot_снимает_дебафф_и_у_карт_в_руке(self) -> None:
+        # Дебаффнутый король в руке: с Chicot Baron всё равно даёт ×1.5.
+        hand = [карта(), карта(Rank.KING, Suit.SPADES, debuffed=True)]
+        assert сыграть(hand, [0], ["j_baron", "j_chicot"]).expected == 24
+
+    def test_oops_удваивает_lucky(self) -> None:
+        # Значение бонуса не меняется (+20 множителя), только вероятность: 0.4 вместо 0.2.
+        outcome = сыграть([карта(enhancement=Enhancement.LUCKY)], [0], ["j_oops"])
+        assert outcome.minimum == 16
+        assert outcome.maximum == 336
+        assert outcome.expected == pytest.approx(0.6 * 16 + 0.4 * 336)
+
+    def test_oops_доводит_bloodstone_до_гарантии(self) -> None:
+        # 1 к 2 удвоенный — это уже гарантия, разброса не остаётся.
+        outcome = сыграть(parse_cards("AH"), [0], ["j_bloodstone", "j_oops"])
+        assert outcome.certain
+        assert outcome.expected == 24
+
+    def test_без_oops_bloodstone_как_обычно(self) -> None:
+        outcome = сыграть(parse_cards("AH"), [0], ["j_bloodstone"])
+        assert not outcome.certain
+        assert outcome.maximum == 24
+
 
 class TestСлучайность:
     def test_lucky_даёт_разброс(self) -> None:
@@ -281,9 +617,9 @@ class TestСлучайность:
 
 class TestЧестность:
     def test_нереализованный_джокер_помечает_неточность(self) -> None:
-        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_cavendish"])
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_baseball"])
         assert not outcome.exact
-        assert any("j_cavendish" in reason for reason in outcome.unknown)
+        assert any("j_baseball" in reason for reason in outcome.unknown)
 
     def test_провизорные_таблицы_помечают_неточность(self) -> None:
         outcome = сыграть(parse_cards("AH AD"), [0, 1])
@@ -293,6 +629,51 @@ class TestЧестность:
     def test_с_данными_игры_расчёт_точен(self) -> None:
         info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
         outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_joker"], hand_info=info)
+        assert outcome.exact
+        assert outcome.unknown == ()
+
+
+#: Известные джокеры, чей эффект заведомо не трогает chips/mult розыгрыша —
+#: деньги, расходники, размер руки/сбросов (уже отражённые в состоянии) или
+#: события после подсчёта. Список не исчерпывающий, это выборка по одной
+#: из каждой категории в `implementations.py`.
+_NO_SCORE_EFFECT_JOKERS = [
+    "j_burnt",
+    "j_rough_gem",
+    "j_business",
+    "j_reserved_parking",
+    "j_ticket",
+    "j_cloud_9",
+    "j_golden",
+    "j_juggler",
+    "j_burglar",
+    "j_certificate",
+    "j_astronomer",
+    "j_mr_bones",
+    "j_midas_mask",
+    "j_space",
+    "j_8_ball",
+]
+
+
+class TestДжокерыБезЭффектаНаСчёт:
+    """Известные джокеры, чей эффект заведомо не трогает chips/mult розыгрыша.
+
+    Не «нереализовано»: деньги и прокачка уровня руки не входят в счёт этого
+    хода, поэтому молчаливый эффект — честный итог, а не догадка.
+    """
+
+    @pytest.mark.parametrize("joker", _NO_SCORE_EFFECT_JOKERS)
+    def test_не_меняет_счёт(self, joker: str) -> None:
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
+        база = сыграть(parse_cards("AH AD"), [0, 1], hand_info=info)
+        с_джокером = сыграть(parse_cards("AH AD"), [0, 1], [joker], hand_info=info)
+        assert с_джокером.expected == база.expected
+
+    @pytest.mark.parametrize("joker", _NO_SCORE_EFFECT_JOKERS)
+    def test_известен_расчёт_остаётся_точным(self, joker: str) -> None:
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], [joker], hand_info=info)
         assert outcome.exact
         assert outcome.unknown == ()
 
@@ -312,8 +693,8 @@ class TestРегрессии:
         assert outcome.expected > 64
 
     def test_причина_неточности_не_дублируется(self) -> None:
-        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_cavendish"])
-        про_джокера = [reason for reason in outcome.unknown if "cavendish" in reason]
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_baseball"])
+        про_джокера = [reason for reason in outcome.unknown if "baseball" in reason]
         assert len(про_джокера) == 1
 
     def test_детерминированная_рука_считается_один_раз(

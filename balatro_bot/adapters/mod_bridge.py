@@ -106,11 +106,14 @@ def _parse_playing_card(payload: Mapping[str, Any], unknown: list[str]) -> Card 
 
 def _parse_joker(payload: Mapping[str, Any], unknown: list[str]) -> JokerCard:
     modifier = payload.get("modifier") or {}
+    cost = payload.get("cost")
+    sell_value = cost.get("sell") if isinstance(cost, Mapping) else None
     joker = JokerCard(
         key=str(payload.get("key", "")),
         label=str(payload.get("label", "")),
         edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
         eternal=bool(modifier.get("eternal", False)),
+        sell_value=int(sell_value) if sell_value is not None else None,
     )
     if not joker.is_known:
         unknown.append(f"joker:{joker.key}")
@@ -150,6 +153,7 @@ def _parse_hands(payload: Any, unknown: list[str]) -> dict[HandType, PokerHandIn
             chips=int(info.get("chips", 0)),
             mult=int(info.get("mult", 0)),
             played=int(info.get("played", 0)),
+            played_this_round=int(info.get("played_this_round", 0)),
         )
     return result
 
@@ -183,8 +187,38 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         if card is not None:
             hand.append(card)
 
-    jokers = [_parse_joker(raw, unknown) for raw in _area_cards(payload.get("jokers"))]
+    jokers_area = payload.get("jokers")
+    jokers = [_parse_joker(raw, unknown) for raw in _area_cards(jokers_area)]
+    joker_slots = jokers_area.get("limit") if isinstance(jokers_area, Mapping) else None
     round_info = payload.get("round") or {}
+
+    #: Область `cards` — это буквально оставшаяся колода, а не весь деск:
+    #: `hand.count + cards.count` совпадает с размером всей колоды. Именно
+    #: это нужно для точного EV сброса (`solver/discard.py`). Отсутствие
+    #: области (старый мод, другая фаза) отличаем от пустой колоды: пустой
+    #: список при отсутствующем ключе означал бы «доборов нет», хотя на
+    #: самом деле мы просто не знаем колоду.
+    cards_area = payload.get("cards")
+    deck: tuple[Card, ...] | None = None
+    if isinstance(cards_area, Mapping):
+        parsed_deck: list[Card] = []
+        for raw in _area_cards(cards_area):
+            card = _parse_playing_card(raw, unknown)
+            if card is not None:
+                parsed_deck.append(card)
+        deck = tuple(parsed_deck)
+
+    #: Полный состав колоды восстановим точно только в узком случае: пока за
+    #: раунд ничего не сыграно и не сброшено, `hand ∪ cards` и есть вся
+    #: колода. Стоит сыграть или сбросить хоть раз — часть карт уходит в
+    #: стопку, которую мод не показывает ни в одной области, и равенство
+    #: перестаёт быть точным.
+    round_is_fresh = (
+        int(round_info.get("hands_played", 0)) == 0 and int(round_info.get("discards_used", 0)) == 0
+    )
+    full_deck: tuple[Card, ...] | None = None
+    if deck is not None and round_is_fresh:
+        full_deck = tuple(hand) + deck
 
     return GameState(
         phase=str(payload.get("state", "UNKNOWN")),
@@ -195,9 +229,14 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         jokers=tuple(jokers),
         hand_info=_parse_hands(payload.get("hands"), unknown),
         blind=_parse_blind(payload.get("blinds")),
+        deck_type=str(payload["deck"]) if payload.get("deck") else None,
+        deck=deck,
+        full_deck=full_deck,
         hands_left=int(round_info.get("hands_left", 0)),
         discards_left=int(round_info.get("discards_left", 0)),
+        hands_played=int(round_info.get("hands_played", 0)),
         chips_scored=int(round_info.get("chips", 0)),
+        joker_slots=int(joker_slots) if joker_slots is not None else None,
         unknown_keys=tuple(unknown),
     )
 

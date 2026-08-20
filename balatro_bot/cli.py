@@ -4,6 +4,7 @@
 
     balatro-bot install         поставить мод-стек одной командой
     balatro-bot advise          посоветовать ход: из игры или по набранной руке
+    balatro-bot watch           следить за игрой — советы обновляются сами
     balatro-bot doctor          проверить, что мод отвечает, и показать состояние
     balatro-bot record ИМЯ      записать текущее состояние как эталонный случай
 
@@ -20,12 +21,10 @@ import tempfile
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import DEFAULT_HOST, DEFAULT_PORT, ModBridge, ModBridgeError
-from balatro_bot.core.cards import Card, Enhancement
-from balatro_bot.core.state import GameState
+from balatro_bot.core.cards import parse_cards
 from balatro_bot.install import (
     InstallError,
     Paths,
@@ -37,12 +36,15 @@ from balatro_bot.install import (
     resolve_paths,
     verify,
 )
-from balatro_bot.solver.play import (
-    MAX_JOKERS_FOR_ORDER_SEARCH,
-    Advice,
-    Candidate,
-    advise,
-    rank_joker_orders,
+from balatro_bot.solver.discard import discard_outcome
+from balatro_bot.solver.play import advise
+from balatro_bot.ui import tui
+from balatro_bot.ui.render import (
+    format_cards,
+    render_advice,
+    render_discard_outcome,
+    render_joker_order,
+    render_state,
 )
 
 GOLDEN_DIR = Path("tests/golden")
@@ -56,150 +58,6 @@ NOT_RUNNING_HINT = """
   3. Порт совпадает? Сейчас пробуем {port}, по умолчанию у мода {default}.
      Сменить: balatro-bot doctor --port ДРУГОЙ
 """
-
-
-#: Однобуквенные пометки улучшений. Steel и Stone нарочно разведены:
-#: первая буква у них общая, а путать их нельзя — одно работает в руке,
-#: другое при розыгрыше.
-_ENHANCEMENT_MARKS: Final[dict[Enhancement, str]] = {
-    Enhancement.BONUS: "B",
-    Enhancement.MULT: "M",
-    Enhancement.WILD: "W",
-    Enhancement.GLASS: "G",
-    Enhancement.STEEL: "T",
-    Enhancement.STONE: "S",
-    Enhancement.GOLD: "$",
-    Enhancement.LUCKY: "L",
-}
-
-
-def _format_card(card: Card) -> str:
-    """Компактная запись карты с пометками, если она не обычная."""
-    text = f"{card.rank.value}{card.suit.value}"
-    marks = _ENHANCEMENT_MARKS.get(card.enhancement, "")
-    if card.debuffed:
-        marks += "x"
-    return f"{text}({marks})" if marks else text
-
-
-def _report(state: GameState) -> None:
-    """Показать состояние человеку."""
-    print(f"фаза:        {state.phase}")
-    print(f"анте/раунд:  {state.ante} / {state.round_number}")
-    print(f"деньги:      ${state.money}")
-
-    blind = state.blind
-    if blind is not None:
-        print(f"блайнд:      {blind.name} ({blind.kind}), нужно {blind.required_score}")
-        print(f"             эффект: {blind.effect or '—'}")
-    else:
-        print("блайнд:      сейчас не выбран")
-
-    print(f"осталось:    рук {state.hands_left}, сбросов {state.discards_left}")
-    print(f"рука:        {' '.join(_format_card(card) for card in state.hand) or '—'}")
-
-    if state.jokers:
-        print("джокеры:")
-        for position, joker in enumerate(state.jokers, start=1):
-            mark = "" if joker.is_known else "  <- эффект не реализован"
-            print(f"  {position}. {joker.label or joker.key} [{joker.key}]{mark}")
-    else:
-        print("джокеры:     нет")
-
-    источник = "от игры" if state.has_authoritative_hand_values else "провизорные таблицы"
-    print(f"значения рук: {источник}")
-
-    прокачано = sorted(
-        ((hand_type, info) for hand_type, info in state.hand_info.items() if info.level > 1),
-        key=lambda item: item[1].level,
-        reverse=True,
-    )
-    if прокачано:
-        # Уровень поднимают не только Planet-карты, но и награда Big Blind
-        # тега (Orbital Tag) — источник в данных не различается, поэтому
-        # причину не называем, только сам факт и уровень.
-        строка = ", ".join(f"{hand_type.value} ур.{info.level}" for hand_type, info in прокачано)
-        print(f"уровни рук выше первого: {строка}")
-
-    if state.is_exact:
-        print("\nрасчёт по этому состоянию будет точным")
-    else:
-        print("\nрасчёт будет НЕТОЧНЫМ, не опознано:")
-        for key in state.unknown_keys:
-            print(f"  - {key}")
-
-
-def _number(value: float) -> str:
-    """Число с пробелами между разрядами: 1530 -> `1 530`."""
-    return f"{value:,.0f}".replace(",", " ")
-
-
-def _cards(cards: Sequence[Card]) -> str:
-    return " ".join(_format_card(card) for card in cards)
-
-
-def _show_advice(advice: Advice, top: int, explain: bool) -> None:
-    """Показать ранжированный список ходов."""
-    remaining = None if advice.required is None else advice.required - advice.already_scored
-    if remaining is not None:
-        добрано = (
-            f" (уже набрано {_number(advice.already_scored)})" if advice.already_scored else ""
-        )
-        print(f"нужно набрать: {_number(remaining)}{добрано}\n")
-
-    показать = advice.candidates[: max(top, 1)]
-    ширина = max(len(_cards(item.cards)) for item in показать)
-    for позиция, item in enumerate(показать, start=1):
-        отметка = ""
-        if remaining is not None:
-            отметка = "  хватает" if item.beats(remaining) else ""
-        счёт = str(item.outcome) if not item.outcome.certain else _number(item.score)
-        строка = f"  {позиция}. {_cards(item.cards):<{ширина}}  "
-        print(f"{строка}{item.outcome.hand_type.value:<15} {счёт:>12}{отметка}")
-
-    экономный = advice.cheapest_sufficient
-    if remaining is not None:
-        if экономный is None:
-            print("\nни один ход не перебивает блайнд гарантированно")
-        elif экономный is not advice.best:
-            print(f"\nхватит и меньшего: {экономный.describe()}")
-            print("он тратит меньше карт и сохраняет колоду")
-
-    if explain:
-        _explain(advice.best)
-
-    if not advice.exact:
-        причины = sorted({reason for item in advice.candidates for reason in item.outcome.unknown})
-        print("\nчисла НЕТОЧНЫЕ:")
-        for причина in причины:
-            print(f"  - {причина}")
-
-
-def _show_joker_order(state: GameState, current: Advice) -> None:
-    """Проверить, не даст ли другой порядок джокеров счёт больше."""
-    result = rank_joker_orders(state)
-    if result is None:
-        print(f"\nджокеров больше {MAX_JOKERS_FOR_ORDER_SEARCH} — честный перебор порядка пропущен")
-        return
-
-    order, order_advice = result
-    if order == state.jokers or order_advice.best.score <= current.best.score:
-        print("\nтекущий порядок джокеров уже лучший")
-        return
-
-    имена = " → ".join(joker.label or joker.key for joker in order)
-    print(f"\nдругой порядок джокеров даст больше: {имена}")
-    print(f"  сейчас:          {_number(current.best.score)}")
-    print(f"  с этим порядком: {_number(order_advice.best.score)}")
-
-
-def _explain(candidate: Candidate) -> None:
-    """Показать, из чего сложился счёт."""
-    print(f"\nразбор варианта {_cards(candidate.cards)}:")
-    for step in candidate.outcome.trace:
-        print(f"  {step.source:<12} {step.detail:<38} {_number(step.chips):>8} × {step.mult:g}")
-    outcome = candidate.outcome
-    print(f"  {'итог':<12} {'':<38} {_number(outcome.expected):>8}")
 
 
 def _install(args: argparse.Namespace) -> int:
@@ -309,7 +167,7 @@ def _advise(bridge: ModBridge, args: argparse.Namespace) -> int:
         except ValueError as error:
             print(f"НЕ ВЫШЛО: {error}")
             return 2
-        print(f"рука: {_cards(state.hand)}")
+        print(f"рука: {format_cards(state.hand)}")
         if state.jokers:
             print(f"джокеры: {', '.join(joker.label or joker.key for joker in state.jokers)}")
         print()
@@ -324,12 +182,41 @@ def _advise(bridge: ModBridge, args: argparse.Namespace) -> int:
         if not state.hand:
             print("в руке нет карт — бот полезен на этапе выбора карт")
             return 1
-        print(f"рука: {_cards(state.hand)}\n")
+        print(f"рука: {format_cards(state.hand)}\n")
 
     advice = advise(state)
-    _show_advice(advice, args.top, args.explain)
+    render_advice(advice, args.top, args.explain)
     if args.joker_order and len(state.jokers) >= 2:
-        _show_joker_order(state, advice)
+        render_joker_order(state, advice)
+    if args.discard:
+        try:
+            discard = parse_cards(args.discard)
+        except ValueError as error:
+            print(f"НЕ ВЫШЛО: {error}")
+            return 2
+        missing = [card for card in discard if card not in state.hand]
+        if missing:
+            print(f"\nНЕ ВЫШЛО: этих карт нет в руке: {format_cards(missing)}")
+            return 2
+        if state.discards_left <= 0:
+            print("\nсбросов не осталось — считаю чисто гипотетически")
+        render_discard_outcome(discard_outcome(state, discard), discard, advice.best)
+    return 0
+
+
+def _watch(bridge: ModBridge, args: argparse.Namespace) -> int:
+    """Следить за игрой: советы обновляются сами, пока не нажат Ctrl+C."""
+    try:
+        tui.watch(
+            bridge,
+            interval=args.interval,
+            top=args.top,
+            explain=args.explain,
+            joker_order=args.joker_order,
+            discard_tips=args.discard_tips,
+        )
+    except KeyboardInterrupt:
+        print("\nостановлено")
     return 0
 
 
@@ -343,7 +230,7 @@ def _doctor(bridge: ModBridge) -> int:
         return 1
 
     print("связь есть\n")
-    _report(state)
+    render_state(state)
     return 0
 
 
@@ -394,6 +281,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="проверить, не даст ли другой порядок джокеров счёт больше",
     )
+    tip.add_argument(
+        "--discard",
+        help='карты из руки для сравнения "сыграть сейчас" со сбросом, например "3S 2S"',
+    )
+
+    follow = commands.add_parser("watch", help="следить за игрой — советы обновляются сами")
+    follow.add_argument(
+        "--interval", type=float, default=1.0, help="как часто опрашивать мод, в секундах"
+    )
+    follow.add_argument("--top", type=int, default=5, help="сколько вариантов показывать")
+    follow.add_argument("--explain", action="store_true", help="показывать разбор лучшего варианта")
+    follow.add_argument(
+        "--joker-order",
+        action="store_true",
+        help="проверять, не даст ли другой порядок джокеров счёт больше",
+    )
+    follow.add_argument(
+        "--no-discard-tips",
+        dest="discard_tips",
+        action="store_false",
+        help="не считать, какую одну карту выгоднее сбросить (это самая тяжёлая часть пересчёта)",
+    )
 
     commands.add_parser("doctor", help="проверить связь с игрой и показать состояние")
     record = commands.add_parser("record", help="записать состояние как эталонный случай")
@@ -406,6 +315,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _install(args)
     if args.command == "advise":
         return _advise(bridge, args)
+    if args.command == "watch":
+        return _watch(bridge, args)
     if args.command == "record":
         return _record(bridge, str(args.name))
     return _doctor(bridge)

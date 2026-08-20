@@ -75,6 +75,25 @@ class HandModifiers:
     smeared: bool = False
     """Червы равны бубнам, трефы равны пикам (`Smeared Joker`)."""
 
+    splash: bool = False
+    """Каждая сыгранная карта участвует в подсчёте, а не только вошедшие
+    в распознанную руку (`Splash`). На сам тип руки не влияет — только на
+    то, какие карты попадут в `scoring_cards`."""
+
+    pareidolia: bool = False
+    """Любая карта считается картинкой (`Pareidolia`). На распознавание
+    типа руки не влияет — только на джокеров, реагирующих на картинки
+    (`ScoreContext.is_face`)."""
+
+    chicot: bool = False
+    """Эффекты боссового блайнда отключены (`Chicot`), в том числе дебафф
+    карт: отключённые боссом карты снова участвуют в подсчёте."""
+
+    oops: bool = False
+    """Вероятности вероятностных эффектов удвоены (`Oops! All 6s`). Учтён
+    только там, где эффект — двухвариантный шанс «не повезло / бонус»
+    (`core.scoring.double_chance`): Lucky-карты, `j_bloodstone`."""
+
 
 @dataclass(frozen=True, slots=True)
 class HandValues:
@@ -171,7 +190,8 @@ def evaluate(cards: Sequence[Card], modifiers: HandModifiers | None = None) -> H
         return HandResult(HandType.HIGH_CARD, _ordered(cards, stones))
 
     hand_type, chosen = _classify(playable, mods)
-    return HandResult(hand_type, _ordered(cards, chosen + stones))
+    scoring = list(cards) if mods.splash else chosen + stones
+    return HandResult(hand_type, _ordered(cards, scoring))
 
 
 def _classify(cards: list[Card], mods: HandModifiers) -> tuple[HandType, list[Card]]:

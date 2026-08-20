@@ -166,6 +166,68 @@ class TestНетСоединения:
         assert ModBridge(port=1, timeout=1.0).is_alive() is False
 
 
+class TestКолода:
+    def test_тип_колоды_разбирается(self) -> None:
+        assert parse_game_state(sample_state()).deck_type == "RED"
+
+    def test_без_области_cards_колода_неизвестна(self) -> None:
+        assert parse_game_state(sample_state()).deck is None
+
+    def test_область_cards_разбирается_в_колоду(self) -> None:
+        raw = sample_state()
+        raw["cards"] = {
+            "count": 2,
+            "cards": [
+                {"value": {"suit": "C", "rank": "2"}, "modifier": {}, "state": {}},
+                {"value": {"suit": "D", "rank": "3"}, "modifier": {}, "state": {}},
+            ],
+        }
+        state = parse_game_state(raw)
+        assert state.deck is not None
+        assert len(state.deck) == 2
+        assert state.deck[0].rank is Rank.TWO
+        assert state.deck[1].suit is Suit.DIAMONDS
+
+    def test_пустая_область_cards_это_известная_пустая_колода(self) -> None:
+        # Отличаем «мод прислал: доборов нет» от «мод вообще не прислал колоду».
+        raw = sample_state()
+        raw["cards"] = {"count": 0, "cards": []}
+        assert parse_game_state(raw).deck == ()
+
+    def test_полная_колода_в_начале_раунда(self) -> None:
+        # Ничего не сыграно и не сброшено — hand ∪ cards и есть вся колода.
+        raw = sample_state()
+        raw["round"]["hands_played"] = 0
+        raw["round"]["discards_used"] = 0
+        raw["cards"] = {
+            "count": 1,
+            "cards": [{"value": {"suit": "C", "rank": "2"}, "modifier": {}, "state": {}}],
+        }
+        state = parse_game_state(raw)
+        assert state.full_deck is not None
+        assert len(state.full_deck) == len(state.hand) + 1
+
+    def test_полная_колода_неизвестна_если_уже_сыграно(self) -> None:
+        raw = sample_state()
+        raw["round"]["hands_played"] = 1
+        raw["round"]["discards_used"] = 0
+        raw["cards"] = {"count": 0, "cards": []}
+        assert parse_game_state(raw).full_deck is None
+
+    def test_полная_колода_неизвестна_если_уже_сброшено(self) -> None:
+        raw = sample_state()
+        raw["round"]["hands_played"] = 0
+        raw["round"]["discards_used"] = 1
+        raw["cards"] = {"count": 0, "cards": []}
+        assert parse_game_state(raw).full_deck is None
+
+    def test_полная_колода_неизвестна_без_cards(self) -> None:
+        raw = sample_state()
+        raw["round"]["hands_played"] = 0
+        raw["round"]["discards_used"] = 0
+        assert parse_game_state(raw).full_deck is None
+
+
 def test_эталон_копируется_для_каждого_теста() -> None:
     first = sample_state()
     first["money"] = 999
