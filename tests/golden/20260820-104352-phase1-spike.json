@@ -1,0 +1,1521 @@
+{
+  "state": "SHOP",
+  "deck": "BLUE",
+  "shop": {
+    "count": 2,
+    "highlighted_limit": 1,
+    "cards": [
+      {
+        "state": [],
+        "label": "Blue Joker",
+        "cost": {
+          "sell": 2,
+          "buy": 5
+        },
+        "value": {
+          "effect": "+2 шт. фишек за каждую оставшуюся карту в колоде (сейчас +104 шт. фишек)"
+        },
+        "id": 75,
+        "modifier": [],
+        "set": "JOKER",
+        "key": "j_blue_joker"
+      },
+      {
+        "state": [],
+        "label": "Astronomer",
+        "cost": {
+          "sell": 4,
+          "buy": 8
+        },
+        "value": {
+          "effect": "Все карты планет и небесные наборы в лавке бесплатны"
+        },
+        "id": 76,
+        "modifier": {
+          "enhancement": ""
+        },
+        "set": "JOKER",
+        "key": "j_astronomer"
+      }
+    ],
+    "limit": 2
+  },
+  "seed": "UH234H2J",
+  "ante_num": 1,
+  "stake": "WHITE",
+  "money": 10,
+  "consumables": {
+    "count": 0,
+    "highlighted_limit": 1,
+    "cards": [],
+    "limit": 2
+  },
+  "cards": {
+    "count": 52,
+    "highlighted_limit": 5,
+    "cards": [
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+6 шт. фишек",
+          "rank": "6"
+        },
+        "id": 27,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_6"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+3 шт. фишек",
+          "rank": "3"
+        },
+        "id": 24,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_3"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+2 шт. фишек",
+          "rank": "2"
+        },
+        "id": 49,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_2"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+5 шт. фишек",
+          "rank": "5"
+        },
+        "id": 26,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_5"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+10 шт. фишек",
+          "rank": "J"
+        },
+        "id": 71,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_J"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+3 шт. фишек",
+          "rank": "3"
+        },
+        "id": 37,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_3"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+8 шт. фишек",
+          "rank": "8"
+        },
+        "id": 29,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_8"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+10 шт. фишек",
+          "rank": "K"
+        },
+        "id": 72,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_K"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+10 шт. фишек",
+          "rank": "Q"
+        },
+        "id": 60,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_Q"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+10 шт. фишек",
+          "rank": "T"
+        },
+        "id": 61,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_T"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+2 шт. фишек",
+          "rank": "2"
+        },
+        "id": 23,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_2"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+11 шт. фишек",
+          "rank": "A"
+        },
+        "id": 44,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_A"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+6 шт. фишек",
+          "rank": "6"
+        },
+        "id": 53,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_6"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+8 шт. фишек",
+          "rank": "8"
+        },
+        "id": 42,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_8"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+4 шт. фишек",
+          "rank": "4"
+        },
+        "id": 25,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_4"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+10 шт. фишек",
+          "rank": "J"
+        },
+        "id": 32,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_J"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+10 шт. фишек",
+          "rank": "Q"
+        },
+        "id": 47,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_Q"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+9 шт. фишек",
+          "rank": "9"
+        },
+        "id": 30,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_9"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+10 шт. фишек",
+          "rank": "K"
+        },
+        "id": 33,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_K"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+7 шт. фишек",
+          "rank": "7"
+        },
+        "id": 28,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_7"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+10 шт. фишек",
+          "rank": "Q"
+        },
+        "id": 34,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_Q"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+11 шт. фишек",
+          "rank": "A"
+        },
+        "id": 31,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_A"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+5 шт. фишек",
+          "rank": "5"
+        },
+        "id": 52,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_5"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+7 шт. фишек",
+          "rank": "7"
+        },
+        "id": 54,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_7"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+10 шт. фишек",
+          "rank": "J"
+        },
+        "id": 58,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_J"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+8 шт. фишек",
+          "rank": "8"
+        },
+        "id": 55,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_8"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+5 шт. фишек",
+          "rank": "5"
+        },
+        "id": 65,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_5"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+2 шт. фишек",
+          "rank": "2"
+        },
+        "id": 36,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_2"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+7 шт. фишек",
+          "rank": "7"
+        },
+        "id": 67,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_7"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+3 шт. фишек",
+          "rank": "3"
+        },
+        "id": 63,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_3"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+10 шт. фишек",
+          "rank": "T"
+        },
+        "id": 74,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_T"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+9 шт. фишек",
+          "rank": "9"
+        },
+        "id": 69,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_9"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+2 шт. фишек",
+          "rank": "2"
+        },
+        "id": 62,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_2"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+5 шт. фишек",
+          "rank": "5"
+        },
+        "id": 39,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_5"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+6 шт. фишек",
+          "rank": "6"
+        },
+        "id": 66,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_6"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+11 шт. фишек",
+          "rank": "A"
+        },
+        "id": 57,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_A"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+8 шт. фишек",
+          "rank": "8"
+        },
+        "id": 68,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_8"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+9 шт. фишек",
+          "rank": "9"
+        },
+        "id": 56,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_9"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+4 шт. фишек",
+          "rank": "4"
+        },
+        "id": 64,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_4"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+10 шт. фишек",
+          "rank": "Q"
+        },
+        "id": 73,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_Q"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "C",
+          "effect": "+10 шт. фишек",
+          "rank": "T"
+        },
+        "id": 35,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "C_T"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+4 шт. фишек",
+          "rank": "4"
+        },
+        "id": 51,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_4"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+10 шт. фишек",
+          "rank": "T"
+        },
+        "id": 48,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_T"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+9 шт. фишек",
+          "rank": "9"
+        },
+        "id": 43,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_9"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+3 шт. фишек",
+          "rank": "3"
+        },
+        "id": 50,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_3"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+4 шт. фишек",
+          "rank": "4"
+        },
+        "id": 38,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_4"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "H",
+          "effect": "+10 шт. фишек",
+          "rank": "K"
+        },
+        "id": 59,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "H_K"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+7 шт. фишек",
+          "rank": "7"
+        },
+        "id": 41,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_7"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "S",
+          "effect": "+11 шт. фишек",
+          "rank": "A"
+        },
+        "id": 70,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "S_A"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+10 шт. фишек",
+          "rank": "K"
+        },
+        "id": 46,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_K"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+6 шт. фишек",
+          "rank": "6"
+        },
+        "id": 40,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_6"
+      },
+      {
+        "state": {
+          "hidden": true
+        },
+        "label": "Base Card",
+        "cost": {
+          "sell": 1,
+          "buy": 1
+        },
+        "value": {
+          "suit": "D",
+          "effect": "+10 шт. фишек",
+          "rank": "J"
+        },
+        "id": 45,
+        "modifier": [],
+        "set": "DEFAULT",
+        "key": "D_J"
+      }
+    ],
+    "limit": 52
+  },
+  "round": {
+    "discards_used": 1,
+    "hands_played": 2,
+    "chips": 0,
+    "reroll_cost": 5,
+    "hands_left": 5,
+    "discards_left": 3
+  },
+  "hand": {
+    "count": 0,
+    "highlighted_limit": 5,
+    "cards": [],
+    "limit": 8
+  },
+  "blinds": {
+    "small": {
+      "status": "DEFEATED",
+      "tag_name": "D6 Tag",
+      "name": "Small Blind",
+      "effect": "",
+      "type": "SMALL",
+      "tag_effect": "Перебросы в следующей лавке начинаются при $0",
+      "score": 300
+    },
+    "big": {
+      "status": "UPCOMING",
+      "tag_name": "Rare Tag",
+      "name": "Big Blind",
+      "effect": "",
+      "type": "BIG",
+      "tag_effect": "В лавке есть бесплатный редкий джокер",
+      "score": 450
+    },
+    "boss": {
+      "status": "UPCOMING",
+      "tag_name": "",
+      "name": "The Goad",
+      "effect": "Все пиковые карты ослабляются",
+      "type": "BOSS",
+      "tag_effect": "",
+      "score": 600
+    }
+  },
+  "vouchers": {
+    "count": 1,
+    "highlighted_limit": 1,
+    "cards": [
+      {
+        "state": [],
+        "label": "Planet Merchant",
+        "cost": {
+          "sell": 5,
+          "buy": 10
+        },
+        "value": {
+          "effect": "Карты планет появляются в 2 раз(а) чаще в лавке"
+        },
+        "id": 77,
+        "modifier": [],
+        "set": "VOUCHER",
+        "key": "v_planet_merchant"
+      }
+    ],
+    "limit": 1
+  },
+  "hands": {
+    "Four of a Kind": {
+      "mult": 7,
+      "example": [
+        [
+          "S_J",
+          true
+        ],
+        [
+          "H_J",
+          true
+        ],
+        [
+          "C_J",
+          true
+        ],
+        [
+          "D_J",
+          true
+        ],
+        [
+          "C_3",
+          false
+        ]
+      ],
+      "level": 1,
+      "order": 5,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 60
+    },
+    "Full House": {
+      "mult": 4,
+      "example": [
+        [
+          "H_K",
+          true
+        ],
+        [
+          "C_K",
+          true
+        ],
+        [
+          "D_K",
+          true
+        ],
+        [
+          "S_2",
+          true
+        ],
+        [
+          "D_2",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 6,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 40
+    },
+    "Flush": {
+      "mult": 4,
+      "example": [
+        [
+          "H_A",
+          true
+        ],
+        [
+          "H_K",
+          true
+        ],
+        [
+          "H_T",
+          true
+        ],
+        [
+          "H_5",
+          true
+        ],
+        [
+          "H_4",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 7,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 35
+    },
+    "Straight": {
+      "mult": 4,
+      "example": [
+        [
+          "D_J",
+          true
+        ],
+        [
+          "C_T",
+          true
+        ],
+        [
+          "C_9",
+          true
+        ],
+        [
+          "S_8",
+          true
+        ],
+        [
+          "H_7",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 8,
+      "played": 1,
+      "played_this_round": 1,
+      "chips": 30
+    },
+    "Three of a Kind": {
+      "mult": 3,
+      "example": [
+        [
+          "S_T",
+          true
+        ],
+        [
+          "C_T",
+          true
+        ],
+        [
+          "D_T",
+          true
+        ],
+        [
+          "H_6",
+          false
+        ],
+        [
+          "D_5",
+          false
+        ]
+      ],
+      "level": 1,
+      "order": 9,
+      "played": 1,
+      "played_this_round": 1,
+      "chips": 30
+    },
+    "Two Pair": {
+      "mult": 2,
+      "example": [
+        [
+          "H_A",
+          true
+        ],
+        [
+          "D_A",
+          true
+        ],
+        [
+          "C_Q",
+          false
+        ],
+        [
+          "H_4",
+          true
+        ],
+        [
+          "C_4",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 10,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 20
+    },
+    "Pair": {
+      "mult": 2,
+      "example": [
+        [
+          "S_K",
+          false
+        ],
+        [
+          "S_9",
+          true
+        ],
+        [
+          "D_9",
+          true
+        ],
+        [
+          "H_6",
+          false
+        ],
+        [
+          "D_3",
+          false
+        ]
+      ],
+      "level": 1,
+      "order": 11,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 10
+    },
+    "High Card": {
+      "mult": 1,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "D_Q",
+          false
+        ],
+        [
+          "D_9",
+          false
+        ],
+        [
+          "C_4",
+          false
+        ],
+        [
+          "D_3",
+          false
+        ]
+      ],
+      "level": 1,
+      "order": 12,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 5
+    },
+    "Flush Five": {
+      "mult": 16,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ],
+        [
+          "S_A",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 1,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 160
+    },
+    "Flush House": {
+      "mult": 14,
+      "example": [
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_7",
+          true
+        ],
+        [
+          "D_4",
+          true
+        ],
+        [
+          "D_4",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 2,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 140
+    },
+    "Five of a Kind": {
+      "mult": 12,
+      "example": [
+        [
+          "S_A",
+          true
+        ],
+        [
+          "H_A",
+          true
+        ],
+        [
+          "H_A",
+          true
+        ],
+        [
+          "C_A",
+          true
+        ],
+        [
+          "D_A",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 3,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 120
+    },
+    "Straight Flush": {
+      "mult": 8,
+      "example": [
+        [
+          "S_Q",
+          true
+        ],
+        [
+          "S_J",
+          true
+        ],
+        [
+          "S_T",
+          true
+        ],
+        [
+          "S_9",
+          true
+        ],
+        [
+          "S_8",
+          true
+        ]
+      ],
+      "level": 1,
+      "order": 4,
+      "played": 0,
+      "played_this_round": 0,
+      "chips": 100
+    }
+  },
+  "jokers": {
+    "count": 0,
+    "highlighted_limit": 1,
+    "cards": [],
+    "limit": 5
+  },
+  "packs": {
+    "count": 2,
+    "highlighted_limit": 1,
+    "cards": [
+      {
+        "state": [],
+        "label": "Buffoon Pack",
+        "cost": {
+          "sell": 2,
+          "buy": 4
+        },
+        "value": {
+          "effect": "Выберите 1 из 2 карт джокеров"
+        },
+        "id": 78,
+        "modifier": [],
+        "set": "BOOSTER",
+        "key": "p_buffoon_normal_2"
+      },
+      {
+        "state": [],
+        "label": "Jumbo Arcana Pack",
+        "cost": {
+          "sell": 3,
+          "buy": 6
+        },
+        "value": {
+          "effect": "Выберите 1 из 5 карт Таро, чтобы использовать немедленно"
+        },
+        "id": 79,
+        "modifier": [],
+        "set": "BOOSTER",
+        "key": "p_arcana_jumbo_2"
+      }
+    ],
+    "limit": 2
+  },
+  "round_num": 1,
+  "used_vouchers": [],
+  "won": false
+}

@@ -1,0 +1,284 @@
+"""Клиент к JSON-RPC API мода BalatroBot.
+
+Мод `coder/balatrobot` (MIT) поднимает внутри игры HTTP-сервер с JSON-RPC 2.0
+и отдаёт полное состояние рана. Здесь — тонкий клиент к нему и разбор ответа
+в наши доменные типы.
+
+Схема ответа взята из спецификации мода (`src/lua/utils/openrpc.json`), а не
+угадана. Совпадения не случайны: масти и ранги в моде кодируются теми же
+символами, что и в нашей компактной записи.
+
+Зависимостей нет намеренно: стандартной библиотеки хватает, а лишняя
+зависимость в адаптере усложнила бы установку на Mac.
+"""
+
+from __future__ import annotations
+
+import json
+import urllib.error
+import urllib.request
+from collections.abc import Mapping, Sequence
+from typing import Any
+
+from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit
+from balatro_bot.core.hands import HandType
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo
+
+__all__ = [
+    "DEFAULT_PORT",
+    "ModBridge",
+    "ModBridgeError",
+    "NotConnectedError",
+    "RpcError",
+    "parse_game_state",
+]
+
+DEFAULT_HOST = "127.0.0.1"
+DEFAULT_PORT = 12346
+
+
+class ModBridgeError(RuntimeError):
+    """Общая ошибка работы с модом."""
+
+
+class NotConnectedError(ModBridgeError):
+    """Игра не запущена или мод не отвечает."""
+
+
+class RpcError(ModBridgeError):
+    """Мод вернул ошибку JSON-RPC."""
+
+    def __init__(self, code: int, message: str, data: Any = None) -> None:
+        super().__init__(f"[{code}] {message}")
+        self.code = code
+        self.message = message
+        self.data = data
+
+
+#: Мод именует издание `HOLO`, у нас оно называется полностью.
+_EDITION_ALIASES = {"HOLO": Edition.HOLOGRAPHIC}
+
+
+def _pick(
+    raw: str | None,
+    enum: type[Enhancement] | type[Edition] | type[Seal],
+    kind: str,
+    unknown: list[str],
+) -> Any:
+    """Опознать значение перечисления, запомнив незнакомое вместо падения."""
+    if not raw:
+        return enum.NONE if hasattr(enum, "NONE") else Edition.BASE
+    if enum is Edition and raw in _EDITION_ALIASES:
+        return _EDITION_ALIASES[raw]
+    try:
+        return enum[raw]
+    except KeyError:
+        unknown.append(f"{kind}:{raw}")
+        return enum.NONE if hasattr(enum, "NONE") else Edition.BASE
+
+
+def _parse_playing_card(payload: Mapping[str, Any], unknown: list[str]) -> Card | None:
+    """Разобрать игральную карту. Джокеры и расходники сюда не попадают."""
+    value = payload.get("value") or {}
+    suit_symbol = value.get("suit")
+    rank_symbol = value.get("rank")
+    if not suit_symbol or not rank_symbol:
+        return None
+
+    try:
+        suit = Suit(suit_symbol)
+        rank = Rank(rank_symbol)
+    except ValueError:
+        unknown.append(f"card:{rank_symbol}{suit_symbol}")
+        return None
+
+    modifier = payload.get("modifier") or {}
+    state = payload.get("state") or {}
+    return Card(
+        rank=rank,
+        suit=suit,
+        enhancement=_pick(modifier.get("enhancement"), Enhancement, "enhancement", unknown),
+        edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
+        seal=_pick(modifier.get("seal"), Seal, "seal", unknown),
+        debuffed=bool(state.get("debuff", False)),
+    )
+
+
+def _parse_joker(payload: Mapping[str, Any], unknown: list[str]) -> JokerCard:
+    modifier = payload.get("modifier") or {}
+    joker = JokerCard(
+        key=str(payload.get("key", "")),
+        label=str(payload.get("label", "")),
+        edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
+        eternal=bool(modifier.get("eternal", False)),
+    )
+    if not joker.is_known:
+        unknown.append(f"joker:{joker.key}")
+    return joker
+
+
+def _area_cards(area: Any) -> list[Mapping[str, Any]]:
+    """Карты из области состояния (`hand`, `jokers`, `shop`…)."""
+    if not isinstance(area, Mapping):
+        return []
+    cards = area.get("cards")
+    return list(cards) if isinstance(cards, Sequence) else []
+
+
+#: Названия рук в игре пишутся по-разному в разных местах, поэтому
+#: сопоставляем по «схлопнутому» виду: `Three of a Kind` -> `threeofakind`.
+def _squash(name: str) -> str:
+    return "".join(char for char in name.lower() if char.isalnum())
+
+
+_HAND_BY_NAME = {_squash(hand.name): hand for hand in HandType}
+
+
+def _parse_hands(payload: Any, unknown: list[str]) -> dict[HandType, PokerHandInfo]:
+    if not isinstance(payload, Mapping):
+        return {}
+    result: dict[HandType, PokerHandInfo] = {}
+    for name, info in payload.items():
+        hand_type = _HAND_BY_NAME.get(_squash(str(name)))
+        if hand_type is None:
+            unknown.append(f"hand:{name}")
+            continue
+        if not isinstance(info, Mapping):
+            continue
+        result[hand_type] = PokerHandInfo(
+            level=int(info.get("level", 1)),
+            chips=int(info.get("chips", 0)),
+            mult=int(info.get("mult", 0)),
+            played=int(info.get("played", 0)),
+        )
+    return result
+
+
+def _parse_blind(payload: Any) -> BlindInfo | None:
+    """Текущий блайнд — тот, что помечен статусом `CURRENT`."""
+    if not isinstance(payload, Mapping):
+        return None
+    for blind in payload.values():
+        if isinstance(blind, Mapping) and blind.get("status") == "CURRENT":
+            return BlindInfo(
+                kind=str(blind.get("type", "")),
+                name=str(blind.get("name", "")),
+                effect=str(blind.get("effect", "")),
+                required_score=int(blind.get("score", 0)),
+            )
+    return None
+
+
+def parse_game_state(payload: Mapping[str, Any]) -> GameState:
+    """Разобрать ответ метода `gamestate` в наше состояние.
+
+    Ничего не выбрасывает на незнакомых значениях: они собираются в
+    `unknown_keys`, и состояние помечается неточным.
+    """
+    unknown: list[str] = []
+
+    hand: list[Card] = []
+    for raw in _area_cards(payload.get("hand")):
+        card = _parse_playing_card(raw, unknown)
+        if card is not None:
+            hand.append(card)
+
+    jokers = [_parse_joker(raw, unknown) for raw in _area_cards(payload.get("jokers"))]
+    round_info = payload.get("round") or {}
+
+    return GameState(
+        phase=str(payload.get("state", "UNKNOWN")),
+        ante=int(payload.get("ante_num", 1)),
+        round_number=int(payload.get("round_num", 1)),
+        money=int(payload.get("money", 0)),
+        hand=tuple(hand),
+        jokers=tuple(jokers),
+        hand_info=_parse_hands(payload.get("hands"), unknown),
+        blind=_parse_blind(payload.get("blinds")),
+        hands_left=int(round_info.get("hands_left", 0)),
+        discards_left=int(round_info.get("discards_left", 0)),
+        chips_scored=int(round_info.get("chips", 0)),
+        unknown_keys=tuple(unknown),
+    )
+
+
+class ModBridge:
+    """Соединение с работающей игрой.
+
+    Игра должна быть запущена вместе с модом: `uvx balatrobot serve`.
+    """
+
+    def __init__(
+        self, host: str = DEFAULT_HOST, port: int = DEFAULT_PORT, timeout: float = 5.0
+    ) -> None:
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._next_id = 0
+
+    @property
+    def url(self) -> str:
+        return f"http://{self.host}:{self.port}"
+
+    def call(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
+        """Вызвать метод API и вернуть поле `result`."""
+        self._next_id += 1
+        request_body: dict[str, Any] = {
+            "jsonrpc": "2.0",
+            "method": method,
+            "id": self._next_id,
+        }
+        if params:
+            request_body["params"] = dict(params)
+
+        request = urllib.request.Request(
+            self.url,
+            data=json.dumps(request_body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except urllib.error.URLError as error:
+            raise NotConnectedError(
+                f"мод не отвечает на {self.url}: {error}. "
+                "Игра запущена через `uvx balatrobot serve`?"
+            ) from error
+        except json.JSONDecodeError as error:
+            raise ModBridgeError(f"мод вернул не JSON: {error}") from error
+
+        if "error" in payload:
+            error_body = payload["error"] or {}
+            raise RpcError(
+                int(error_body.get("code", -1)),
+                str(error_body.get("message", "неизвестная ошибка")),
+                error_body.get("data"),
+            )
+        return payload.get("result")
+
+    def is_alive(self) -> bool:
+        """Отвечает ли мод. Не бросает исключений — это проверка, а не действие."""
+        try:
+            return bool(self.call("health"))
+        except ModBridgeError:
+            return False
+
+    def raw_game_state(self) -> Mapping[str, Any]:
+        """Состояние как есть — нужно для записи эталонных случаев."""
+        result = self.call("gamestate")
+        if not isinstance(result, Mapping):
+            raise ModBridgeError(f"gamestate вернул не объект: {type(result).__name__}")
+        return result
+
+    def game_state(self) -> GameState:
+        """Текущее состояние в наших типах."""
+        return parse_game_state(self.raw_game_state())
+
+    def play(self, indices: Sequence[int]) -> GameState:
+        """Сыграть карты по индексам в руке (нумерация с нуля)."""
+        return parse_game_state(self.call("play", {"cards": list(indices)}))
+
+    def discard(self, indices: Sequence[int]) -> GameState:
+        """Сбросить карты по индексам в руке (нумерация с нуля)."""
+        return parse_game_state(self.call("discard", {"cards": list(indices)}))
