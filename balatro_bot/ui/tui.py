@@ -38,7 +38,7 @@ def watch(
     interval: float = 1.0,
     top: int = 5,
     explain: bool = False,
-    joker_order: bool = False,
+    joker_order: bool = True,
     discard_tips: bool = True,
     iterations: int | None = None,
     sleep: Callable[[float], None] = time.sleep,

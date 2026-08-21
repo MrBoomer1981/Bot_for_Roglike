@@ -74,6 +74,21 @@ class TestWatch:
         out = capsys.readouterr().out
         assert out.count(tui._CLEAR) == 1
 
+    def test_порядок_джокеров_проверяется_по_умолчанию(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # В отличие от `advise`, где `--joker-order` — опция, `watch` считает
+        # порядок сам: живая сессия — как раз тот случай, где выгодно узнать
+        # об этом сразу, а не когда игрок сам вспомнит про флаг.
+        tui.watch(bridge, iterations=1, sleep=lambda _: None)
+        assert "порядок джокеров" in capsys.readouterr().out
+
+    def test_можно_отключить_порядок_джокеров(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        tui.watch(bridge, iterations=1, sleep=lambda _: None, joker_order=False)
+        assert "порядок джокеров" not in capsys.readouterr().out
+
     def test_показывает_совет_по_сбросу_одной_карты(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:

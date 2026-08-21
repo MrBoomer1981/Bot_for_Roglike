@@ -293,9 +293,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     follow.add_argument("--top", type=int, default=5, help="сколько вариантов показывать")
     follow.add_argument("--explain", action="store_true", help="показывать разбор лучшего варианта")
     follow.add_argument(
-        "--joker-order",
-        action="store_true",
-        help="проверять, не даст ли другой порядок джокеров счёт больше",
+        "--no-joker-order",
+        dest="joker_order",
+        action="store_false",
+        help="не проверять порядок джокеров (перебор до 720 перестановок на каждый опрос)",
     )
     follow.add_argument(
         "--no-discard-tips",
