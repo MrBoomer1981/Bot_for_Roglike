@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import json
+import re
 import urllib.error
 import urllib.request
 from collections.abc import Mapping, Sequence
@@ -104,16 +105,42 @@ def _parse_playing_card(payload: Mapping[str, Any], unknown: list[str]) -> Card 
     )
 
 
+#: Скобочная группа с числом внутри — последняя в тексте эффекта. Игра сама
+#: подставляет туда уже посчитанное текущее значение накопителя («сейчас
+#: +15 множ.», «(Currently X2.5 Mult)») вне зависимости от языка игры, само
+#: слово «сейчас»/«currently» не при чём — важна только позиция и цифра.
+_PAREN_GROUP_RE = re.compile(r"\(([^()]*)\)")
+_SIGNED_NUMBER_RE = re.compile(r"[+\-−]?\d+(?:[.,]\d+)?")
+
+
+def _extract_current_value(effect: object) -> float | None:
+    """Вытащить готовое число из последней скобочной группы текста эффекта.
+
+    Не история событий — само значение уже посчитано игрой и просто
+    отображается человеку. Не привязано к языку: ищет по структуре
+    (последние скобки + число внутри), а не по конкретному слову.
+    """
+    if not isinstance(effect, str):
+        return None
+    groups = _PAREN_GROUP_RE.findall(effect)
+    for group in reversed(groups):
+        if match := _SIGNED_NUMBER_RE.search(group):
+            return float(match.group().replace(",", ".").replace("−", "-"))
+    return None
+
+
 def _parse_joker(payload: Mapping[str, Any], unknown: list[str]) -> JokerCard:
     modifier = payload.get("modifier") or {}
     cost = payload.get("cost")
     sell_value = cost.get("sell") if isinstance(cost, Mapping) else None
+    value = payload.get("value") or {}
     joker = JokerCard(
         key=str(payload.get("key", "")),
         label=str(payload.get("label", "")),
         edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
         eternal=bool(modifier.get("eternal", False)),
         sell_value=int(sell_value) if sell_value is not None else None,
+        current_value=_extract_current_value(value.get("effect")),
     )
     if not joker.is_known:
         unknown.append(f"joker:{joker.key}")

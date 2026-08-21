@@ -8,6 +8,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
+
 import pytest
 
 from balatro_bot.adapters.mod_bridge import (
@@ -64,6 +66,49 @@ class TestРазборСостояния:
         state = parse_game_state({})
         assert state.hand == ()
         assert state.blind is None
+
+
+class TestТекущееЗначениеДжокера:
+    """Джокеры-накопители (Green Joker, Square, ...) сами не хранят историю
+    событий — их текущий вклад читается из текста эффекта, который игра уже
+    сама посчитала и отрендерила. Мост вытаскивает число из последней
+    скобочной группы, независимо от языка игры."""
+
+    @staticmethod
+    def _state_with_joker(effect: str) -> Mapping[str, object]:
+        return {
+            "jokers": {
+                "cards": [{"key": "j_square", "label": "Square Joker", "value": {"effect": effect}}]
+            }
+        }
+
+    def test_число_из_русского_текста(self) -> None:
+        state = parse_game_state(
+            self._state_with_joker("+4 фишки, если рука из 4 карт (сейчас +8 фишек)")
+        )
+        assert state.jokers[0].current_value == 8
+
+    def test_число_из_английского_текста(self) -> None:
+        state = parse_game_state(
+            self._state_with_joker(
+                "+4 Chips if played hand has exactly 4 cards (Currently +8 Chips)"
+            )
+        )
+        assert state.jokers[0].current_value == 8
+
+    def test_отрицательное_число(self) -> None:
+        state = parse_game_state(self._state_with_joker("+1 за руку, −1 за сброс (сейчас −3)"))
+        assert state.jokers[0].current_value == -3
+
+    def test_без_скобочной_группы_с_числом(self) -> None:
+        state = parse_game_state(
+            self._state_with_joker("За каждую 8 есть шанс (должно быть место)")
+        )
+        assert state.jokers[0].current_value is None
+
+    def test_без_текста_эффекта(self) -> None:
+        state = parse_game_state({"jokers": {"cards": [{"key": "j_square"}]}})
+        assert state.jokers[0].current_value is None
 
 
 class TestЗначенияРук:

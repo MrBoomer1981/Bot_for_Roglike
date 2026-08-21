@@ -25,7 +25,9 @@ from balatro_bot.core.cards import (
     parse_cards,
     standard_deck,
 )
+from balatro_bot.core.catalogue import JOKERS
 from balatro_bot.core.hands import HandType
+from balatro_bot.core.jokers.implementations import _JOKER_RARITY
 from balatro_bot.core.scoring import ScoreOutcome, score_play
 from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo
 
@@ -34,12 +36,14 @@ def сыграть(
     hand: Sequence[Card],
     play: Sequence[int],
     jokers: Sequence[str] = (),
+    joker_values: dict[str, float] | None = None,
     **state_kwargs: object,
 ) -> ScoreOutcome:
     """Разыграть карты руки по индексам. Остальные считаются оставшимися в руке."""
+    values = joker_values or {}
     state = GameState(
         hand=tuple(hand),
-        jokers=tuple(JokerCard(key) for key in jokers),
+        jokers=tuple(JokerCard(key, current_value=values.get(key)) for key in jokers),
         **state_kwargs,  # type: ignore[arg-type]
     )
     return score_play(state, [state.hand[index] for index in play])
@@ -333,6 +337,87 @@ class TestУсловныеДжокеры:
         assert outcome.expected == 600
 
 
+class TestРедкостьДжокеров:
+    """Целостность захардкоженной таблицы `_JOKER_RARITY` (150 джокеров,
+    сверена по справочнику сообщества — см. комментарий рядом с таблицей).
+    Один пропуск или опечатка здесь тихо испортит `Baseball Card`, поэтому
+    проверяем структуру таблицы отдельно от самого джокера."""
+
+    def test_накрывает_каждый_джокер_каталога_ровно_один_раз(self) -> None:
+        assert set(_JOKER_RARITY) == set(JOKERS)
+
+    def test_количество_по_редкостям_совпадает_с_официальным(self) -> None:
+        counts: dict[str, int] = {}
+        for rarity in _JOKER_RARITY.values():
+            counts[rarity] = counts.get(rarity, 0) + 1
+        assert counts == {"common": 61, "uncommon": 64, "rare": 20, "legendary": 5}
+
+
+class TestBaseballCard:
+    def test_умножает_за_каждого_uncommon_джокера(self) -> None:
+        # j_rough_gem и j_cloud_9 — Uncommon без вклада в счёт (см.
+        # TestДжокерыБезЭффектаНаСчёт), j_joker — Common, не считается.
+        # (5 + 11) × ((1 × 1.5 × 1.5) + 4)
+        outcome = сыграть(
+            parse_cards("AH"), [0], ["j_baseball", "j_rough_gem", "j_cloud_9", "j_joker"]
+        )
+        assert outcome.expected == 100
+
+    def test_молчит_без_uncommon_джокеров(self) -> None:
+        база = сыграть(parse_cards("AH"), [0], ["j_joker"])
+        с_baseball = сыграть(parse_cards("AH"), [0], ["j_baseball", "j_joker"])
+        assert с_baseball.expected == база.expected
+
+    def test_расчёт_остаётся_точным(self) -> None:
+        info = {HandType.HIGH_CARD: PokerHandInfo(level=1, chips=5, mult=1)}
+        outcome = сыграть(parse_cards("AH"), [0], ["j_baseball", "j_seeing_double"], hand_info=info)
+        assert outcome.exact
+
+
+class TestНакопителиИзТекстаЭффекта:
+    """Джокеры, реальный эффект которых копится по истории, недоступной
+    состоянию игры (прошлые сбросы, продажи, рероллы...). Число вместо
+    этого читается готовым из `JokerCard.current_value` — мост вытаскивает
+    его из текста эффекта живого мода. Без него (ручной ввод, парсинг не
+    удался) расчёт честно помечается неточным, а не считается с нуля."""
+
+    def test_chips_накопитель(self) -> None:
+        # (5 + 11 + 8) × 1 — j_square: current_value уже готовое число фишек.
+        outcome = сыграть(parse_cards("AH"), [0], ["j_square"], joker_values={"j_square": 8})
+        assert outcome.expected == 24
+
+    def test_mult_накопитель(self) -> None:
+        # (5 + 11) × (1 + 12) — j_green_joker: current_value уже готовый мульт.
+        outcome = сыграть(
+            parse_cards("AH"), [0], ["j_green_joker"], joker_values={"j_green_joker": 12}
+        )
+        assert outcome.expected == 208
+
+    def test_mult_накопитель_может_быть_отрицательным(self) -> None:
+        # Больше сбросов, чем рук: (5 + 11) × (1 − 2) — при mult < 0 итог
+        # не должен «уходить в минус бесконечность», игра просто считает как есть.
+        outcome = сыграть(
+            parse_cards("AH"), [0], ["j_green_joker"], joker_values={"j_green_joker": -2}
+        )
+        assert outcome.expected == -16
+
+    def test_xmult_накопитель(self) -> None:
+        # (5 + 11) × (1 × 2.5) — j_glass: current_value уже готовый Х-множитель.
+        outcome = сыграть(parse_cards("AH"), [0], ["j_glass"], joker_values={"j_glass": 2.5})
+        assert outcome.expected == 40
+
+    def test_без_текущего_значения_расчёт_неточный(self) -> None:
+        # Ручной ввод или не распознанный текст эффекта — current_value = None.
+        outcome = сыграть(parse_cards("AH"), [0], ["j_square"])
+        assert not outcome.exact
+        assert any("j_square" in reason for reason in outcome.unknown)
+
+    def test_без_текущего_значения_счёт_как_без_джокера(self) -> None:
+        база = сыграть(parse_cards("AH"), [0])
+        с_джокером = сыграть(parse_cards("AH"), [0], ["j_square"])
+        assert с_джокером.expected == база.expected
+
+
 class TestСостояниеРана:
     def test_bull_считает_деньги(self) -> None:
         assert сыграть(parse_cards("AH"), [0], ["j_bull"], money=10).expected == 36
@@ -617,9 +702,9 @@ class TestСлучайность:
 
 class TestЧестность:
     def test_нереализованный_джокер_помечает_неточность(self) -> None:
-        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_baseball"])
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_hiker"])
         assert not outcome.exact
-        assert any("j_baseball" in reason for reason in outcome.unknown)
+        assert any("j_hiker" in reason for reason in outcome.unknown)
 
     def test_провизорные_таблицы_помечают_неточность(self) -> None:
         outcome = сыграть(parse_cards("AH AD"), [0, 1])
@@ -693,8 +778,8 @@ class TestРегрессии:
         assert outcome.expected > 64
 
     def test_причина_неточности_не_дублируется(self) -> None:
-        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_baseball"])
-        про_джокера = [reason for reason in outcome.unknown if "baseball" in reason]
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_hiker"])
+        про_джокера = [reason for reason in outcome.unknown if "hiker" in reason]
         assert len(про_джокера) == 1
 
     def test_детерминированная_рука_считается_один_раз(

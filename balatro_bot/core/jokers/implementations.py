@@ -179,6 +179,82 @@ class HalfJoker(_OwnTurn):
 
 
 # ---------------------------------------------------------------------------
+# Накопители — не история событий, а готовое число из моста
+# ---------------------------------------------------------------------------
+#
+# Реальный эффект копится по событиям, которых состояние игры не хранит
+# (прошлые сбросы, прошлые проданные карты, прошлые рероллы и т.д.) — гадать
+# число по истории мы не можем. Но сама игра его уже считает и подставляет
+# в текст эффекта («сейчас +15 множ.», «Currently X2.5 Mult»), и мост
+# (`mod_bridge._extract_current_value`) вытаскивает готовое число оттуда в
+# `JokerCard.current_value`. Здесь просто берём его как есть и прикладываем
+# нужным эффектом — само накопление не пересчитываем.
+#
+# Работает только вживую: при ручном вводе или если в тексте эффекта не
+# нашлось числа, `current_value` — `None`, и джокер честно помечает расчёт
+# неточным вместо того, чтобы считать с нуля.
+
+
+class _LiveAccumulator(_OwnTurn):
+    """Джокер, чей текущий вклад уже посчитан игрой (см. пояснение выше)."""
+
+    kind: str = "mult"  #: "chips" | "mult" | "xmult"
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        value = self.card.current_value
+        if value is None:
+            ctx.mark_unknown(f"джокер-накопитель без текущего значения: {self.key}")
+            return
+        match self.kind:
+            case "chips":
+                yield AddChips(value)
+            case "mult":
+                yield AddMult(value)
+            case "xmult":
+                yield XMult(value)
+
+
+def _accumulator(kind: str) -> type[_LiveAccumulator]:
+    """Собрать класс накопителя нужного типа."""
+
+    class Built(_LiveAccumulator):
+        pass
+
+    Built.kind = kind
+    return Built
+
+
+# +N Chips, накопленное игрой: сколько именно — не важно, важно текущее число.
+register("j_castle")(_accumulator("chips"))  # +3 Chips за каждый сброшенный [масть]
+register("j_runner")(_accumulator("chips"))  # +15 Chips, если рука — стрит
+register("j_square")(_accumulator("chips"))  # +4 Chips, если в руке ровно 4 карты
+register("j_wee")(_accumulator("chips"))  # +8 Chips за каждую сыгранную двойку
+
+# +N Mult, накопленное игрой.
+register("j_ceremonial")(_accumulator("mult"))  # удвоенная цена продажи соседа справа
+register("j_flash")(_accumulator("mult"))  # +2 Mult за рерол в магазине
+register("j_fortune_teller")(_accumulator("mult"))  # +1 Mult за использованное Таро
+register("j_green_joker")(_accumulator("mult"))  # +1 за руку, −1 за сброс
+register("j_red_card")(_accumulator("mult"))  # +3 Mult за пропущенный бустер-пак
+register("j_ride_the_bus")(_accumulator("mult"))  # +1 Mult за руку без картинки
+register("j_trousers")(_accumulator("mult"))  # +2 Mult, если рука — две пары
+
+# XN Mult, накопленное игрой.
+register("j_caino")(_accumulator("xmult"))  # X1 Mult за уничтоженную картинку
+register("j_campfire")(_accumulator("xmult"))  # X0.25 за проданную карту, сброс на боссе
+register("j_constellation")(_accumulator("xmult"))  # X0.1 за использованную Planet
+register("j_glass")(_accumulator("xmult"))  # X0.75 за уничтоженную Glass-карту
+register("j_hit_the_road")(_accumulator("xmult"))  # X0.5 за сброшенного валета за раунд
+register("j_hologram")(_accumulator("xmult"))  # X0.25 за карту, добавленную в колоду
+register("j_lucky_cat")(_accumulator("xmult"))  # X0.25 за сработавшую Lucky-карту
+register("j_madness")(_accumulator("xmult"))  # X0.5 за выбор Small/Big Blind
+register("j_obelisk")(_accumulator("xmult"))  # X0.2 за руку без самого частого типа
+register("j_throwback")(_accumulator("xmult"))  # X0.25 за пропущенный блайнд
+register("j_vampire")(_accumulator("xmult"))  # X0.1 за карту с улучшением, снимает его
+register("j_yorick")(_accumulator("xmult"))  # X1 Mult за каждые 23 сброшенные карты
+
+
+# ---------------------------------------------------------------------------
 # Реакция на отдельные засчитываемые карты
 # ---------------------------------------------------------------------------
 
@@ -581,6 +657,185 @@ class AbstractJoker(_OwnTurn):
 
     def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
         yield AddMult(3 * len(ctx.jokers))
+
+
+#: Редкость всех 150 джокеров. Игровое правило, не история событий рана —
+#: тот же тип данных, что `_DECK_STARTING_SIZE` ниже. Ни каталог (собран из
+#: `enums.lua`), ни ответ мода редкость не присылают, поэтому таблица
+#: захардкожена по справочнику сообщества (сверена по трём отдельным
+#: категориям вики — Common/Uncommon/Rare/Legendary — с числами 61/64/20/5,
+#: совпадающими с официальными; для неочевидных пар имя-ключ сверен и текст
+#: эффекта). Нужна только для `Baseball Card`, который считает, у скольких
+#: *других* джокеров в игре редкость Uncommon.
+_JOKER_RARITY_COMMON = (
+    "j_8_ball",
+    "j_abstract",
+    "j_banner",
+    "j_blue_joker",
+    "j_business",
+    "j_cavendish",
+    "j_chaos",
+    "j_clever",
+    "j_crafty",
+    "j_crazy",
+    "j_credit_card",
+    "j_delayed_grat",
+    "j_devious",
+    "j_droll",
+    "j_drunkard",
+    "j_egg",
+    "j_even_steven",
+    "j_faceless",
+    "j_fortune_teller",
+    "j_gluttenous_joker",
+    "j_golden",
+    "j_ticket",
+    "j_greedy_joker",
+    "j_green_joker",
+    "j_gros_michel",
+    "j_half",
+    "j_hallucination",
+    "j_hanging_chad",
+    "j_ice_cream",
+    "j_joker",
+    "j_jolly",
+    "j_juggler",
+    "j_lusty_joker",
+    "j_mad",
+    "j_mail",
+    "j_misprint",
+    "j_mystic_summit",
+    "j_odd_todd",
+    "j_photograph",
+    "j_popcorn",
+    "j_raised_fist",
+    "j_red_card",
+    "j_reserved_parking",
+    "j_ride_the_bus",
+    "j_riff_raff",
+    "j_runner",
+    "j_scary_face",
+    "j_scholar",
+    "j_shoot_the_moon",
+    "j_sly",
+    "j_smiley",
+    "j_splash",
+    "j_square",
+    "j_supernova",
+    "j_superposition",
+    "j_swashbuckler",
+    "j_todo_list",
+    "j_walkie_talkie",
+    "j_wily",
+    "j_wrathful_joker",
+    "j_zany",
+)
+_JOKER_RARITY_UNCOMMON = (
+    "j_acrobat",
+    "j_arrowhead",
+    "j_astronomer",
+    "j_blackboard",
+    "j_bloodstone",
+    "j_bootstraps",
+    "j_bull",
+    "j_burglar",
+    "j_card_sharp",
+    "j_cartomancer",
+    "j_castle",
+    "j_ceremonial",
+    "j_certificate",
+    "j_cloud_9",
+    "j_constellation",
+    "j_diet_cola",
+    "j_dusk",
+    "j_erosion",
+    "j_fibonacci",
+    "j_flash",
+    "j_flower_pot",
+    "j_four_fingers",
+    "j_gift",
+    "j_glass",
+    "j_hack",
+    "j_hiker",
+    "j_hologram",
+    "j_stencil",
+    "j_loyalty_card",
+    "j_luchador",
+    "j_lucky_cat",
+    "j_madness",
+    "j_marble",
+    "j_matador",
+    "j_merry_andy",
+    "j_midas_mask",
+    "j_mime",
+    "j_mr_bones",
+    "j_onyx_agate",
+    "j_oops",
+    "j_pareidolia",
+    "j_ramen",
+    "j_rocket",
+    "j_rough_gem",
+    "j_satellite",
+    "j_seeing_double",
+    "j_selzer",
+    "j_shortcut",
+    "j_ring_master",
+    "j_sixth_sense",
+    "j_smeared",
+    "j_sock_and_buskin",
+    "j_space",
+    "j_trousers",
+    "j_steel_joker",
+    "j_stone",
+    "j_seance",
+    "j_idol",
+    "j_throwback",
+    "j_to_the_moon",
+    "j_trading",
+    "j_troubadour",
+    "j_turtle_bean",
+    "j_vampire",
+)
+_JOKER_RARITY_RARE = (
+    "j_ancient",
+    "j_baron",
+    "j_baseball",
+    "j_blueprint",
+    "j_brainstorm",
+    "j_burnt",
+    "j_campfire",
+    "j_dna",
+    "j_drivers_license",
+    "j_duo",
+    "j_family",
+    "j_hit_the_road",
+    "j_invisible",
+    "j_obelisk",
+    "j_order",
+    "j_stuntman",
+    "j_tribe",
+    "j_trio",
+    "j_vagabond",
+    "j_wee",
+)
+_JOKER_RARITY_LEGENDARY = ("j_caino", "j_chicot", "j_perkeo", "j_triboulet", "j_yorick")
+
+_JOKER_RARITY: dict[str, str] = (
+    dict.fromkeys(_JOKER_RARITY_COMMON, "common")
+    | dict.fromkeys(_JOKER_RARITY_UNCOMMON, "uncommon")
+    | dict.fromkeys(_JOKER_RARITY_RARE, "rare")
+    | dict.fromkeys(_JOKER_RARITY_LEGENDARY, "legendary")
+)
+
+
+@register("j_baseball")
+class BaseballCard(_OwnTurn):
+    """Uncommon Jokers each give X1.5 Mult."""
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        uncommon = sum(1 for joker in ctx.jokers if _JOKER_RARITY.get(joker.key) == "uncommon")
+        for _ in range(uncommon):
+            yield XMult(1.5)
 
 
 @register("j_supernova")
