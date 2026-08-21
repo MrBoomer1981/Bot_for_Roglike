@@ -464,6 +464,17 @@ def _hold_card(card: Card, ctx: ScoreContext) -> None:
         ctx.apply(XMult(1.5), name, "×1.5 множителя (steel, в руке)")
 
 
+def _score_joker_edition(joker: Joker, ctx: ScoreContext) -> None:
+    """Издание самой карты джокера — то же Foil/Holographic/Polychrome, что и у игральных карт."""
+    edition = joker.card.edition
+    if (chips := _EDITION_CHIPS.get(edition)) is not None:
+        ctx.apply(AddChips(chips), joker.name, f"+{chips:g} очков ({edition.value})")
+    if (mult := _EDITION_MULT.get(edition)) is not None:
+        ctx.apply(AddMult(mult), joker.name, f"+{mult:g} множителя ({edition.value})")
+    if (factor := _EDITION_XMULT.get(edition)) is not None:
+        ctx.apply(XMult(factor), joker.name, f"×{factor:g} множителя ({edition.value})")
+
+
 # ---------------------------------------------------------------------------
 # Конвейер
 # ---------------------------------------------------------------------------
@@ -525,6 +536,7 @@ def _run_once(
 
     # 5. Джокеры слева направо.
     for joker in jokers:
+        _score_joker_edition(joker, ctx)
         ctx.emit(JokerTurn(joker))
 
     return ctx

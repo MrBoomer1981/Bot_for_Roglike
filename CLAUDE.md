@@ -54,6 +54,10 @@ tests/fake_mod.py       test fixture ─┘                     │
 
 **`core/state.py`** — `GameState` is the normalized boundary type. Everything external must be parsed into it; everything internal consumes it.
 
+**`core/cards.py`** — `Card` and its `Suit`/`Rank`/`Enhancement`/`Edition`/`Seal` enums, plus `parse_card(s)`/`parse_cards(s)` for the CLI string format (e.g. `"AH"`, `"7C"`) and `standard_deck()`.
+
+**`core/hands.py`** — poker-hand classification: `evaluate(cards, modifiers)` picks the best `HandType` (straight/flush detection respects `HandModifiers` like `four_fingers`/`splash`) and returns the scoring `HandResult`; `base_values()` gives the chip/mult base for a hand type and level.
+
 **`core/scoring.py`** — Event-driven pipeline. Each scoring step emits events (`HandDetermined`, `CardScored`, `CardHeld`, `JokerTurn`, `RetriggerQuery`); jokers react with effects (`AddChips`, `AddMult`, `XMult`, `Retrigger`). Enumerates the full probability tree (up to 4096 branches) for exact expected values.
 
 **`core/jokers/`** — Joker registry (`__init__.py`) + implementations (`implementations.py`). Unimplemented jokers use `UnimplementedJoker`, which marks `ScoreOutcome.exact = False` rather than silently giving wrong answers.

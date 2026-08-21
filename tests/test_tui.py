@@ -24,7 +24,7 @@ class TestWatch:
         out = capsys.readouterr().out
         assert "AH KH QH" in out
         assert "pair" in out
-        assert "1 792" in out
+        assert "4 352" in out
 
     def test_без_карт_в_руке_совет_не_считается(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]

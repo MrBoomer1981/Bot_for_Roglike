@@ -736,3 +736,15 @@ class TestРегрессии:
         state = GameState(hand=(steel, *parse_cards("AD KH")))
         # Steel сыгран, значит в руке его нет и множителя он не даёт.
         assert score_play(state, list(state.hand[:2])).expected == 64
+
+    def test_издание_на_самом_джокере_учитывается(self) -> None:
+        # mod_bridge парсил edition карты-джокера, но подсчёт его нигде не
+        # читал: Foil/Holographic/Polychrome на самом джокере молча пропадали,
+        # даже когда джокер честно помечал расчёт точным. Найдено вживую:
+        # у "8 Ball" с Foil-изданием пропадали +50 очков каждый розыгрыш.
+        state = GameState(
+            hand=parse_cards("AH"),
+            jokers=(JokerCard("j_8_ball", edition=Edition.FOIL),),
+        )
+        # (5 + 11 + 50) × 1 — сам джокер эффекта на счёт не даёт, издание даёт.
+        assert score_play(state, list(state.hand)).expected == 66

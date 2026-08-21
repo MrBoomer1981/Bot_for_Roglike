@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Final
 
-from balatro_bot.core.cards import Card, Enhancement
+from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.discard import MAX_DRAW_COMBINATIONS, DiscardOutcome
 from balatro_bot.solver.play import (
@@ -46,14 +46,38 @@ _ENHANCEMENT_MARKS: Final[dict[Enhancement, str]] = {
     Enhancement.LUCKY: "L",
 }
 
+#: Пометки изданий. Буквы не пересекаются с `_ENHANCEMENT_MARKS` — обе
+#: группы делят одни скобки, поэтому важно не спутать пометку издания
+#: с пометкой улучшения.
+_EDITION_MARKS: Final[dict[Edition, str]] = {
+    Edition.FOIL: "F",
+    Edition.HOLOGRAPHIC: "H",
+    Edition.POLYCHROME: "P",
+    Edition.NEGATIVE: "N",
+}
+
+#: Пометки печатей. Печать — отдельное от улучшения и издания свойство
+#: карты, поэтому у неё свой значок `!` вместо общих скобок.
+_SEAL_MARKS: Final[dict[Seal, str]] = {
+    Seal.RED: "R",
+    Seal.GOLD: "G",
+    Seal.BLUE: "U",
+    Seal.PURPLE: "P",
+}
+
 
 def format_card(card: Card) -> str:
     """Компактная запись карты с пометками, если она не обычная."""
     text = f"{card.rank.value}{card.suit.value}"
     marks = _ENHANCEMENT_MARKS.get(card.enhancement, "")
+    marks += _EDITION_MARKS.get(card.edition, "")
     if card.debuffed:
         marks += "x"
-    return f"{text}({marks})" if marks else text
+    if marks:
+        text += f"({marks})"
+    if seal := _SEAL_MARKS.get(card.seal, ""):
+        text += f"!{seal}"
+    return text
 
 
 def format_cards(cards: Sequence[Card]) -> str:
@@ -84,8 +108,10 @@ def render_state(state: GameState) -> None:
     if state.jokers:
         print("джокеры:")
         for position, joker in enumerate(state.jokers, start=1):
+            edition = _EDITION_MARKS.get(joker.edition, "")
+            edition_mark = f" ({edition})" if edition else ""
             mark = "" if joker.is_known else "  <- эффект не реализован"
-            print(f"  {position}. {joker.label or joker.key} [{joker.key}]{mark}")
+            print(f"  {position}. {joker.label or joker.key} [{joker.key}]{edition_mark}{mark}")
     else:
         print("джокеры:     нет")
 

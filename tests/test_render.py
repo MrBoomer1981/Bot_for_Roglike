@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from balatro_bot.adapters.manual import build_state
-from balatro_bot.core.cards import Card, Enhancement, Rank, Suit, parse_cards
+from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, parse_cards
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
 from balatro_bot.ui.render import format_card, render_single_discard_ranking
@@ -20,6 +20,27 @@ class TestРегрессииВыводе:
         steel = format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STEEL))
         stone = format_card(Card(Rank.ACE, Suit.HEARTS, Enhancement.STONE))
         assert steel != stone
+
+
+class TestИзданияИПечатиВВыводе:
+    """Раньше `format_card` показывал только улучшение — Edition и Seal были
+    не видны глазами, хотя движок их уже считал (см. регрессию про издание
+    джокера в `test_scoring.py`)."""
+
+    def test_издание_видно_в_записи_карты(self) -> None:
+        card = Card(Rank.ACE, Suit.HEARTS, edition=Edition.FOIL)
+        assert format_card(card) == "AH(F)"
+
+    def test_улучшение_и_издание_в_одних_скобках(self) -> None:
+        card = Card(Rank.ACE, Suit.HEARTS, Enhancement.BONUS, Edition.FOIL)
+        assert format_card(card) == "AH(BF)"
+
+    def test_печать_видна_отдельным_значком(self) -> None:
+        card = Card(Rank.ACE, Suit.HEARTS, seal=Seal.RED)
+        assert format_card(card) == "AH!R"
+
+    def test_обычная_карта_без_пометок(self) -> None:
+        assert format_card(Card(Rank.ACE, Suit.HEARTS)) == "AH"
 
 
 class TestРанжированиеСброса:
