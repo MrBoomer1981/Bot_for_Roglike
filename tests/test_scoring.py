@@ -418,6 +418,73 @@ class TestНакопителиИзТекстаЭффекта:
         assert с_джокером.expected == база.expected
 
 
+class TestPopcornRamen:
+    """У этих двух живое значение — не последнее число в тексте эффекта, а
+    первое (`JokerCard.leading_value`), сверено с `card.lua`."""
+
+    def test_popcorn_добавляет_текущий_множитель(self) -> None:
+        state = GameState(hand=parse_cards("AH"), jokers=(JokerCard("j_popcorn", leading_value=8),))
+        # (5 + 11) × (1 + 8)
+        assert score_play(state, list(state.hand)).expected == 144
+
+    def test_ramen_умножает_на_текущий_множитель(self) -> None:
+        state = GameState(hand=parse_cards("AH"), jokers=(JokerCard("j_ramen", leading_value=1.5),))
+        # (5 + 11) × (1 × 1.5)
+        assert score_play(state, list(state.hand)).expected == 24
+
+    def test_без_leading_value_расчёт_неточный(self) -> None:
+        state = GameState(hand=parse_cards("AH"), jokers=(JokerCard("j_popcorn"),))
+        assert not score_play(state, list(state.hand)).exact
+
+
+class TestAncientIdol:
+    """Текущая цель (масть/ранг) распознаётся словом в тексте эффекта
+    (`JokerCard.target_suit`/`target_rank`), структурного поля под неё нет."""
+
+    def test_ancient_умножает_только_карты_нужной_масти(self) -> None:
+        state = GameState(
+            hand=parse_cards("AH AD"),
+            jokers=(JokerCard("j_ancient", target_suit=Suit.HEARTS),),
+        )
+        # (10 + 11 + 11) × (2 × 1.5) — из пары тузов только AH подходит по масти
+        assert score_play(state, list(state.hand)).expected == 96
+
+    def test_ancient_без_target_suit_расчёт_неточный(self) -> None:
+        state = GameState(hand=parse_cards("AH"), jokers=(JokerCard("j_ancient"),))
+        assert not score_play(state, list(state.hand)).exact
+
+    def test_idol_срабатывает_только_на_нужном_ранге_и_масти(self) -> None:
+        state = GameState(
+            hand=parse_cards("KH KD"),
+            jokers=(JokerCard("j_idol", target_suit=Suit.HEARTS, target_rank=Rank.KING),),
+        )
+        # (10 + 10 + 10) × (2 × 2) — из пары королей только KH подходит и по рангу, и по масти
+        assert score_play(state, list(state.hand)).expected == 120
+
+    def test_idol_без_цели_расчёт_неточный(self) -> None:
+        state = GameState(hand=parse_cards("KH"), jokers=(JokerCard("j_idol"),))
+        assert not score_play(state, list(state.hand)).exact
+
+
+class TestLoyaltyCard:
+    def test_срабатывает_когда_активно(self) -> None:
+        state = GameState(
+            hand=parse_cards("AH"), jokers=(JokerCard("j_loyalty_card", loyalty_active=True),)
+        )
+        # (5 + 11) × (1 × 4)
+        assert score_play(state, list(state.hand)).expected == 64
+
+    def test_молчит_когда_не_активно(self) -> None:
+        state = GameState(
+            hand=parse_cards("AH"), jokers=(JokerCard("j_loyalty_card", loyalty_active=False),)
+        )
+        assert score_play(state, list(state.hand)).expected == 16
+
+    def test_без_состояния_расчёт_неточный(self) -> None:
+        state = GameState(hand=parse_cards("AH"), jokers=(JokerCard("j_loyalty_card"),))
+        assert not score_play(state, list(state.hand)).exact
+
+
 class TestСостояниеРана:
     def test_bull_считает_деньги(self) -> None:
         assert сыграть(parse_cards("AH"), [0], ["j_bull"], money=10).expected == 36

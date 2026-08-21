@@ -129,18 +129,125 @@ def _extract_current_value(effect: object) -> float | None:
     return None
 
 
+def _extract_leading_value(effect: object) -> float | None:
+    """Вытащить первое число из текста эффекта — не в скобках, а вообще.
+
+    Нужен `Popcorn`/`Ramen`: игра подставляет их текущее (затухающее)
+    значение самым первым `var`, а статичный шаг угасания — уже вторым
+    (сверено с `card.lua`: `loc_vars = {self.ability.mult, self.ability.extra}`
+    у Popcorn), в отличие от `_extract_current_value`, где живое значение —
+    последнее. Раз число первое, до него ничего своего в тексте ещё нет, так
+    что дополнительно проверять позицию не нужно — как и там, само слово
+    неважно, важна структура.
+    """
+    if not isinstance(effect, str):
+        return None
+    if match := _SIGNED_NUMBER_RE.search(effect):
+        return float(match.group().replace(",", ".").replace("−", "-"))
+    return None
+
+
+#: Слова-названия мастей из `localization/{ru,en-us}.lua` (`suits_singular`
+#: и `suits_plural` — в русской локализации они совпадают, в английской
+#: расходятся окончанием, поэтому в словаре обе формы). Нужны `Ancient
+#: Joker`: текущая масть-цель нигде не отдаётся полем, только этим словом
+#: прямо в тексте эффекта. Работает только на этих двух языках — на прочих
+#: `target_suit` останется `None`, и джокер честно пометит расчёт неточным.
+_SUIT_WORDS: dict[str, Suit] = {
+    "club": Suit.CLUBS,
+    "clubs": Suit.CLUBS,
+    "diamond": Suit.DIAMONDS,
+    "diamonds": Suit.DIAMONDS,
+    "heart": Suit.HEARTS,
+    "hearts": Suit.HEARTS,
+    "spade": Suit.SPADES,
+    "spades": Suit.SPADES,
+    "трефы": Suit.CLUBS,
+    "бубны": Suit.DIAMONDS,
+    "черви": Suit.HEARTS,
+    "пики": Suit.SPADES,
+}
+
+#: Слова-названия рангов из `localization/{ru,en-us}.lua` (`ranks`). Нужны
+#: `The Idol`. `2`/«2» намеренно не включён: у `The Idol` множитель всегда
+#: X2 (`config.extra = 2`), поэтому цифра «2» есть в тексте эффекта
+#: постоянно, независимо от того, какой ранг сейчас на самом деле цель —
+#: как индикатор ранга она неоднозначна. Если цель — именно двойка, честнее
+#: не найти её вовсе (`target_rank = None`), чем один раз случайно угадать.
+_RANK_WORDS: dict[str, Rank] = {
+    "ace": Rank.ACE,
+    "jack": Rank.JACK,
+    "queen": Rank.QUEEN,
+    "king": Rank.KING,
+    "туз": Rank.ACE,
+    "валет": Rank.JACK,
+    "дама": Rank.QUEEN,
+    "король": Rank.KING,
+    "3": Rank.THREE,
+    "4": Rank.FOUR,
+    "5": Rank.FIVE,
+    "6": Rank.SIX,
+    "7": Rank.SEVEN,
+    "8": Rank.EIGHT,
+    "9": Rank.NINE,
+    "10": Rank.TEN,
+}
+
+
+def _extract_word[T](effect: object, words: Mapping[str, T]) -> T | None:
+    """Найти первое известное слово из словаря в тексте эффекта (без учёта
+    регистра, по границе слова — чтобы «10» не подошло под середину другого
+    числа)."""
+    if not isinstance(effect, str):
+        return None
+    lowered = effect.lower()
+    for word, value in words.items():
+        if re.search(rf"\b{re.escape(word)}\b", lowered):
+            return value
+    return None
+
+
+#: Слова состояния `Loyalty Card` из `localization/{ru,en-us}.lua`
+#: (`loyalty_active`/`loyalty_inactive`) — сверено с `card.lua`: множитель
+#: X4 срабатывает ровно тогда, когда игра показывает «Активно!»/«Active!»
+#: вместо счётчика «N осталось»/«N remaining». Нужную циклическую формулу
+#: (`(every - 1 - (hands_played - hands_played_at_create)) % (every + 1)`)
+#: посчитать самим нельзя — она зависит от момента покупки джокера, которого
+#: состояние игры не хранит, поэтому распознаём готовый текст, а не считаем.
+_LOYALTY_ACTIVE_WORDS = ("active!", "активно!")
+_LOYALTY_INACTIVE_WORDS = ("remaining", "осталось")
+
+
+def _extract_loyalty_active(effect: object) -> bool | None:
+    """`True`/`False`, если текст эффекта явно говорит «активно» или «ещё N
+    осталось», иначе `None` — не тот язык или число ещё не пришло."""
+    if not isinstance(effect, str):
+        return None
+    lowered = effect.lower()
+    if any(word in lowered for word in _LOYALTY_ACTIVE_WORDS):
+        return True
+    if any(word in lowered for word in _LOYALTY_INACTIVE_WORDS):
+        return False
+    return None
+
+
 def _parse_joker(payload: Mapping[str, Any], unknown: list[str]) -> JokerCard:
     modifier = payload.get("modifier") or {}
     cost = payload.get("cost")
     sell_value = cost.get("sell") if isinstance(cost, Mapping) else None
     value = payload.get("value") or {}
+    effect = value.get("effect")
     joker = JokerCard(
         key=str(payload.get("key", "")),
         label=str(payload.get("label", "")),
         edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
         eternal=bool(modifier.get("eternal", False)),
         sell_value=int(sell_value) if sell_value is not None else None,
-        current_value=_extract_current_value(value.get("effect")),
+        current_value=_extract_current_value(effect),
+        leading_value=_extract_leading_value(effect),
+        target_suit=_extract_word(effect, _SUIT_WORDS),
+        target_rank=_extract_word(effect, _RANK_WORDS),
+        loyalty_active=_extract_loyalty_active(effect),
     )
     if not joker.is_known:
         unknown.append(f"joker:{joker.key}")

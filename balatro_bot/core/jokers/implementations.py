@@ -254,6 +254,56 @@ register("j_vampire")(_accumulator("xmult"))  # X0.1 за карту с улуч
 register("j_yorick")(_accumulator("xmult"))  # X1 Mult за каждые 23 сброшенные карты
 
 
+class _LeadingValueJoker(_OwnTurn):
+    """Как `_LiveAccumulator`, но число не последнее в тексте эффекта, а
+    первое (`Popcorn`, `Ramen`): сверено с `card.lua` — `loc_vars` у обоих
+    начинается с текущего затухающего значения, статичный шаг угасания уже
+    вторым. См. `mod_bridge._extract_leading_value` и `JokerCard.leading_value`."""
+
+    kind: str = "mult"  #: "mult" | "xmult"
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        value = self.card.leading_value
+        if value is None:
+            ctx.mark_unknown(f"джокер-накопитель без текущего значения: {self.key}")
+            return
+        yield XMult(value) if self.kind == "xmult" else AddMult(value)
+
+
+@register("j_popcorn")
+class Popcorn(_LeadingValueJoker):
+    """+20 Mult -4 Mult per round played."""
+
+    kind = "mult"
+
+
+@register("j_ramen")
+class Ramen(_LeadingValueJoker):
+    """X2 Mult, loses X0.01 Mult per card discarded."""
+
+    kind = "xmult"
+
+
+@register("j_loyalty_card")
+class LoyaltyCard(_OwnTurn):
+    """X4 Mult every 6 hands played.
+
+    Настоящая формула (`card.lua`): `(every - 1 - (hands_played -
+    hands_played_at_create)) % (every + 1) == 0`. Посчитать самим нельзя —
+    зависит от момента покупки джокера, которого состояние не хранит, зато
+    игра сама пишет в тексте эффекта «Активно!»/«N осталось». См.
+    `mod_bridge._extract_loyalty_active` и `JokerCard.loyalty_active`.
+    """
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        active = self.card.loyalty_active
+        if active is None:
+            ctx.mark_unknown(f"джокер-накопитель без текущего значения: {self.key}")
+            return
+        if active:
+            yield XMult(4)
+
+
 # ---------------------------------------------------------------------------
 # Реакция на отдельные засчитываемые карты
 # ---------------------------------------------------------------------------
@@ -304,6 +354,39 @@ register("j_gluttenous_joker")(_suit_joker(Suit.CLUBS, mult=3))
 
 register("j_arrowhead")(_suit_joker(Suit.SPADES, chips=50))
 register("j_onyx_agate")(_suit_joker(Suit.CLUBS, mult=7))
+
+
+@register("j_ancient")
+class AncientJoker(_PerScoredCard):
+    """Each played card with [suit] gives X1.5 Mult when scored, suit changes at end of round.
+
+    В отличие от `_suit_joker`, масть не постоянная — сама игра выбирает
+    новую раз в раунд и пишет её словом прямо в тексте эффекта (структурного
+    поля под это нет, см. `JokerCard.target_suit`)."""
+
+    def on_card(self, event: CardScored, ctx: ScoreContext) -> Iterable[Effect]:
+        suit = self.card.target_suit
+        if suit is None:
+            ctx.mark_unknown(f"{self.key}: текущая масть неизвестна")
+            return
+        if ctx.has_suit(event.card, suit):
+            yield XMult(1.5)
+
+
+@register("j_idol")
+class Idol(_PerScoredCard):
+    """Each played [rank] of [suit] gives X2 Mult when scored. Card changes every round.
+
+    Та же история, что у `Ancient Joker`, только цель — конкретная карта
+    (ранг + масть), не просто масть. См. `JokerCard.target_rank`/`target_suit`."""
+
+    def on_card(self, event: CardScored, ctx: ScoreContext) -> Iterable[Effect]:
+        suit, rank = self.card.target_suit, self.card.target_rank
+        if suit is None or rank is None:
+            ctx.mark_unknown(f"{self.key}: текущая карта-цель неизвестна")
+            return
+        if event.card.rank is rank and ctx.has_suit(event.card, suit):
+            yield XMult(2)
 
 
 _ALL_SUITS = frozenset(Suit)

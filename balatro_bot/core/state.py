@@ -14,7 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from balatro_bot.core.cards import Card, Edition
+from balatro_bot.core.cards import Card, Edition, Rank, Suit
 from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.hands import HandType, HandValues, base_values
 
@@ -57,6 +57,26 @@ class JokerCard:
     нужно. `None`, если источник состояния его не прислал (ручной ввод) или
     в тексте эффекта не нашлось числа — джокер тогда помечает расчёт
     неточным вместо того, чтобы считать с нуля."""
+    leading_value: float | None = None
+    """То же самое, что `current_value`, но число не последнее в тексте
+    эффекта, а первое (`Popcorn`, `Ramen`: игра подставляет текущее
+    затухающее значение первым `var`, а статичный шаг угасания — вторым,
+    см. `mod_bridge._extract_leading_value`)."""
+    target_suit: Suit | None = None
+    """Текущая масть-цель, которую игра подставляет прямо в текст эффекта
+    (`Ancient Joker`, `The Idol`) — не история, а то, что видно сейчас.
+    Опознаётся по слову в тексте, поэтому работает только на языках,
+    которые распознаёт `mod_bridge._SUIT_WORDS` (сейчас — русский и
+    английский); на прочих языках останется `None`, и джокер честно
+    пометит расчёт неточным."""
+    target_rank: Rank | None = None
+    """Текущий ранг-цель (`The Idol`). То же ограничение по языку, что и
+    у `target_suit`, см. `mod_bridge._RANK_WORDS`."""
+    loyalty_active: bool | None = None
+    """Сработает ли `Loyalty Card` в этот розыгрыш — распознаётся по
+    словам «Активно!»/«Active!» или «осталось»/«remaining» в тексте
+    эффекта (см. `mod_bridge._extract_loyalty_active`). `None`, если ни
+    то ни другое слово не нашлось (не тот язык или ручной ввод)."""
 
     @property
     def is_known(self) -> bool:

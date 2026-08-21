@@ -111,6 +111,103 @@ class TestТекущееЗначениеДжокера:
         assert state.jokers[0].current_value is None
 
 
+def _joker_state(key: str, effect: str) -> Mapping[str, object]:
+    return {"jokers": {"cards": [{"key": key, "value": {"effect": effect}}]}}
+
+
+class TestПервоеЧислоВТексте:
+    """Popcorn/Ramen: живое значение — первое число в тексте, не в скобках
+    (сверено с `card.lua`: `loc_vars` начинается с текущего множителя)."""
+
+    def test_popcorn_берёт_первое_число(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_popcorn", "+8 множ. -4 множ. за каждый сыгранный раунд")
+        )
+        assert state.jokers[0].leading_value == 8
+
+    def test_ramen_берёт_первое_число(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_ramen", "X1.5 множ., теряет X0.01 множ. за каждую сброшенную карту")
+        )
+        assert state.jokers[0].leading_value == 1.5
+
+    def test_без_числа_leading_value_пуст(self) -> None:
+        state = parse_game_state(_joker_state("j_popcorn", "без чисел вообще"))
+        assert state.jokers[0].leading_value is None
+
+
+class TestЦельПоМастиИРангу:
+    """Ancient Joker/The Idol: текущая цель — слово прямо в тексте эффекта,
+    не отдельное поле (сверено с `card.lua`/`localization/{ru,en-us}.lua`)."""
+
+    def test_ancient_масть_по_русскому_тексту(self) -> None:
+        state = parse_game_state(
+            _joker_state(
+                "j_ancient",
+                "Каждая сыгранная карта с мастью Черви дает X1.5 множ. при подсчете очков,"
+                " масть меняется в конце раунда",
+            )
+        )
+        assert state.jokers[0].target_suit is Suit.HEARTS
+
+    def test_ancient_масть_по_английскому_тексту(self) -> None:
+        state = parse_game_state(
+            _joker_state(
+                "j_ancient",
+                "Each played card with Spades suit gives X1.5 Mult when scored,"
+                " suit changes at end of round",
+            )
+        )
+        assert state.jokers[0].target_suit is Suit.SPADES
+
+    def test_idol_ранг_и_масть(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_idol", "Каждая играемая Дама из Пики дает X2 множ. при подсчете очков")
+        )
+        joker = state.jokers[0]
+        assert joker.target_rank is Rank.QUEEN
+        assert joker.target_suit is Suit.SPADES
+
+    def test_idol_двойка_не_путается_со_статичным_множителем(self) -> None:
+        # У The Idol множитель всегда X2 — цифра "2" в тексте есть всегда,
+        # и как индикатор ранга она неоднозначна. Проверяем на масти, где
+        # такой коллизии нет: цель по рангу без числа-омонима.
+        state = parse_game_state(
+            _joker_state("j_idol", "Каждая играемая Валет из Черви дает X2 множ.")
+        )
+        joker = state.jokers[0]
+        assert joker.target_rank is Rank.JACK
+        assert joker.target_suit is Suit.HEARTS
+
+    def test_без_известного_слова_цель_не_определена(self) -> None:
+        state = parse_game_state(_joker_state("j_ancient", "какой-то незнакомый текст"))
+        assert state.jokers[0].target_suit is None
+
+
+class TestАктивностьLoyaltyCard:
+    def test_активно_по_восклицанию(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_loyalty_card", "X4 множ. с каждыми 6 сыгранными руками Активно!")
+        )
+        assert state.jokers[0].loyalty_active is True
+
+    def test_активно_по_английскому_тексту(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_loyalty_card", "X4 Mult every 6 hands played Active!")
+        )
+        assert state.jokers[0].loyalty_active is True
+
+    def test_не_активно_по_счётчику(self) -> None:
+        state = parse_game_state(
+            _joker_state("j_loyalty_card", "X4 множ. с каждыми 6 сыгранными руками 3 осталось")
+        )
+        assert state.jokers[0].loyalty_active is False
+
+    def test_без_известного_слова_состояние_не_определено(self) -> None:
+        state = parse_game_state(_joker_state("j_loyalty_card", "какой-то незнакомый текст"))
+        assert state.jokers[0].loyalty_active is None
+
+
 class TestЗначенияРук:
     def test_берутся_из_игры(self) -> None:
         state = parse_game_state(sample_state())
