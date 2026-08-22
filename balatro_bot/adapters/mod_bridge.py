@@ -23,7 +23,7 @@ from typing import Any
 
 from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit
 from balatro_bot.core.hands import HandType
-from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo, ShopItem
 
 __all__ = [
     "DEFAULT_PORT",
@@ -292,19 +292,66 @@ def _parse_hands(payload: Any, unknown: list[str]) -> dict[HandType, PokerHandIn
     return result
 
 
+def _parse_one_blind(blind: Mapping[str, Any]) -> BlindInfo:
+    return BlindInfo(
+        kind=str(blind.get("type", "")),
+        name=str(blind.get("name", "")),
+        effect=str(blind.get("effect", "")),
+        required_score=int(blind.get("score", 0)),
+        status=str(blind.get("status", "")),
+        tag_name=str(blind.get("tag_name", "")),
+        tag_effect=str(blind.get("tag_effect", "")),
+    )
+
+
 def _parse_blind(payload: Any) -> BlindInfo | None:
     """Текущий блайнд — тот, что помечен статусом `CURRENT`."""
     if not isinstance(payload, Mapping):
         return None
     for blind in payload.values():
         if isinstance(blind, Mapping) and blind.get("status") == "CURRENT":
-            return BlindInfo(
-                kind=str(blind.get("type", "")),
-                name=str(blind.get("name", "")),
-                effect=str(blind.get("effect", "")),
-                required_score=int(blind.get("score", 0)),
-            )
+            return _parse_one_blind(blind)
     return None
+
+
+def _parse_blinds_map(payload: Any) -> dict[str, BlindInfo]:
+    """Все три блайнда анте — ключи `small`/`big`/`boss`, не только текущий.
+
+    На экране выбора блайнда (`BLIND_SELECT`) `_parse_blind` выше вернёт
+    `None` (статуса `CURRENT` там ни у кого нет), а требования и теги всех
+    трёх уже известны — это то, на чём считается совет по скипу.
+    """
+    if not isinstance(payload, Mapping):
+        return {}
+    result: dict[str, BlindInfo] = {}
+    for key in ("small", "big", "boss"):
+        blind = payload.get(key)
+        if isinstance(blind, Mapping):
+            result[key] = _parse_one_blind(blind)
+    return result
+
+
+def _parse_shop_item(payload: Mapping[str, Any], unknown: list[str]) -> ShopItem:
+    modifier = payload.get("modifier")
+    cost = payload.get("cost")
+    value = payload.get("value")
+    return ShopItem(
+        key=str(payload.get("key", "")),
+        label=str(payload.get("label", "")),
+        kind=str(payload.get("set", "")),
+        price=int(cost.get("buy", 0)) if isinstance(cost, Mapping) else 0,
+        effect=str(value.get("effect", "")) if isinstance(value, Mapping) else "",
+        edition=_pick(modifier.get("edition"), Edition, "edition", unknown)
+        if isinstance(modifier, Mapping)
+        else Edition.BASE,
+    )
+
+
+def _parse_shop_area(area: Any, unknown: list[str]) -> tuple[ShopItem, ...]:
+    """Один и тот же разбор для `shop`/`vouchers`/`packs` — три раздельные
+    области мода (`GameState.shop`/`shop_vouchers`/`shop_packs`), непустые
+    только в фазе `SHOP`."""
+    return tuple(_parse_shop_item(raw, unknown) for raw in _area_cards(area))
 
 
 def parse_game_state(payload: Mapping[str, Any]) -> GameState:
@@ -363,6 +410,10 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         jokers=tuple(jokers),
         hand_info=_parse_hands(payload.get("hands"), unknown),
         blind=_parse_blind(payload.get("blinds")),
+        blinds=_parse_blinds_map(payload.get("blinds")),
+        shop=_parse_shop_area(payload.get("shop"), unknown),
+        shop_vouchers=_parse_shop_area(payload.get("vouchers"), unknown),
+        shop_packs=_parse_shop_area(payload.get("packs"), unknown),
         deck_type=str(payload["deck"]) if payload.get("deck") else None,
         deck=deck,
         full_deck=full_deck,

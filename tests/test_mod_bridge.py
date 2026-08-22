@@ -57,6 +57,89 @@ class TestРазборСостояния:
         assert blind.kind == "BIG"
         assert blind.required_score == 450
 
+    def test_все_три_блайнда_анте_доступны_не_только_текущий(self) -> None:
+        blinds = parse_game_state(sample_state()).blinds
+        assert set(blinds) == {"small", "big", "boss"}
+        assert blinds["small"].status == "DEFEATED"
+        assert blinds["big"].status == "CURRENT"
+        assert blinds["boss"].required_score == 900
+
+    def test_без_области_blinds_пустая_карта(self) -> None:
+        raw = sample_state()
+        del raw["blinds"]
+        assert parse_game_state(raw).blinds == {}
+
+    def test_без_фазы_магазина_пустые_области(self) -> None:
+        state = parse_game_state(sample_state())
+        assert state.shop == ()
+        assert state.shop_vouchers == ()
+        assert state.shop_packs == ()
+
+    def test_магазин_разбирается_с_ценой_и_эффектом(self) -> None:
+        raw = sample_state()
+        raw["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {"seal": None, "edition": "FOIL", "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 3},
+                }
+            ],
+        }
+        item = parse_game_state(raw).shop[0]
+        assert item.key == "j_joker"
+        assert item.kind == "JOKER"
+        assert item.price == 3
+        assert item.effect == "+4 Mult"
+        assert item.edition is Edition.FOIL
+
+    def test_ваучеры_и_паки_отдельными_областями(self) -> None:
+        raw = sample_state()
+        raw["vouchers"] = {
+            "count": 1,
+            "limit": 1,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "v_overstock",
+                    "set": "VOUCHER",
+                    "label": "Overstock",
+                    "value": {"effect": "+1 карточный слот в магазине"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 10},
+                }
+            ],
+        }
+        raw["packs"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 2,
+                    "key": "p_arcana_normal_1",
+                    "set": "BOOSTER",
+                    "label": "Arcana Pack",
+                    "value": {"effect": ""},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 4},
+                }
+            ],
+        }
+        state = parse_game_state(raw)
+        assert state.shop_vouchers[0].label == "Overstock"
+        assert state.shop_vouchers[0].price == 10
+        assert state.shop_packs[0].label == "Arcana Pack"
+        assert state.shop_packs[0].price == 4
+
     def test_ресурсы_раунда(self) -> None:
         state = parse_game_state(sample_state())
         assert state.hands_left == 3

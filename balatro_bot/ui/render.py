@@ -12,6 +12,7 @@ from typing import Final
 
 from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
+from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.discard import MAX_DRAW_COMBINATIONS, DiscardOutcome
 from balatro_bot.solver.play import (
     MAX_JOKERS_FOR_ORDER_SEARCH,
@@ -19,6 +20,8 @@ from balatro_bot.solver.play import (
     Candidate,
     rank_joker_orders,
 )
+from balatro_bot.solver.shop import ShopAdvice
+from balatro_bot.solver.skip import SkipAdvice
 
 __all__ = [
     "format_card",
@@ -28,8 +31,11 @@ __all__ = [
     "render_discard_outcome",
     "render_explanation",
     "render_joker_order",
+    "render_shop_advice",
     "render_single_discard_ranking",
+    "render_skip_advice",
     "render_state",
+    "render_top_actions",
 ]
 
 #: Однобуквенные пометки улучшений. Steel и Stone нарочно разведены:
@@ -138,6 +144,69 @@ def render_state(state: GameState) -> None:
             print(f"  - {key}")
 
 
+def render_skip_advice(advice: SkipAdvice) -> None:
+    """Показать разложенные числа для решения «играть или скипнуть».
+
+    Не даёт единого вердикта — часть тегов принципиально не сводится к
+    одному числу (`solver/skip.py`), поэтому показываем содержимое обеих
+    сторон и оставляем сравнение человеку, как договорились."""
+    print(f"\nвыбор блайнда: {advice.blind_kind.title()} Blind, нужно {advice.required_score}")
+    if advice.next_required_score:
+        print(
+            f"  дальше — {advice.next_blind_kind.title()} Blind, "
+            f"нужно {advice.next_required_score} "
+            f"(в {advice.requirement_ratio:.2g}× больше этого)"
+        )
+
+    print(f"\n  играть: минимум ${advice.play_reward_min} за победу")
+    print(f"          {advice.play_reward_hint}")
+
+    print(f"\n  скипнуть: {advice.tag_name or '—'}")
+    if advice.tag_effect:
+        print(f"            {advice.tag_effect}")
+    if advice.tag is None and advice.tag_name:
+        print(f"            тег не опознан ботом: {advice.tag_name!r}")
+    if advice.tag_dollars is not None:
+        print(f"            в деньгах: ${advice.tag_dollars:g} ({advice.tag_dollars_note})")
+    elif advice.tag_dollars_note:
+        print(f"            в деньгах: не оценено — {advice.tag_dollars_note}")
+
+
+def render_shop_advice(advice: ShopAdvice) -> None:
+    """Показать, что предлагает магазин: джокеры с оценкой прироста счёта,
+    ваучеры и паки — текстом как есть (раздел `solver/shop.py`: им не с чем
+    сравнить контрфактум, в отличие от джокеров)."""
+    print(f"\nмагазин: денег ${advice.money}")
+
+    if advice.jokers:
+        print("\nджокеры:")
+        ширина = max(len(offer.item.label) for offer in advice.jokers)
+        for offer in advice.jokers:
+            item = offer.item
+            пометки = []
+            if not offer.affordable:
+                пометки.append("не хватает денег")
+            if not offer.has_slot:
+                пометки.append("нет слота")
+            хвост = f"  ({', '.join(пометки)})" if пометки else ""
+            if offer.expected_uplift is None:
+                оценка = "не оценено" if offer.known else "эффект не реализован"
+            else:
+                приближено = "" if offer.exact_deck else ", колода приближена"
+                оценка = f"прирост ~{format_number(offer.expected_uplift)}{приближено}"
+            print(f"  {item.label:<{ширина}}  ${item.price:<4} {оценка}{хвост}")
+
+    if advice.vouchers:
+        print("\nваучеры:")
+        for item in advice.vouchers:
+            print(f"  {item.label:<24} ${item.price:<4} {item.effect}")
+
+    if advice.packs:
+        print("\nпаки:")
+        for item in advice.packs:
+            print(f"  {item.label:<24} ${item.price}")
+
+
 def render_advice(advice: Advice, top: int, explain: bool) -> None:
     """Показать ранжированный список ходов."""
     remaining = None if advice.required is None else advice.required - advice.already_scored
@@ -173,6 +242,76 @@ def render_advice(advice: Advice, top: int, explain: bool) -> None:
     if not advice.exact:
         причины = sorted({reason for item in advice.candidates for reason in item.outcome.unknown})
         print("\nчисла НЕТОЧНЫЕ:")
+        for причина in причины:
+            print(f"  - {причина}")
+
+
+def render_top_actions(
+    advice: Advice, actions: Sequence[ActionOption], explain: bool = False
+) -> None:
+    """Единый топ «что делать сейчас»: розыгрыши и сбросы в одном списке.
+
+    Раньше розыгрыши и сбросы показывались двумя отдельными списками, и
+    решить между ними приходилось вручную, сравнивая числа глазами. Здесь
+    один список, отсортированный по тому же матожиданию счёта — топ-1 просто
+    лучшее действие, розыгрыш это или сброс. `render_advice` не удалён:
+    список только розыгрышей всё ещё может пригодиться, когда сбросов нет
+    или они не нужны.
+    """
+    remaining = None if advice.required is None else advice.required - advice.already_scored
+    if remaining is not None:
+        добрано = (
+            f" (уже набрано {format_number(advice.already_scored)})"
+            if advice.already_scored
+            else ""
+        )
+        print(f"нужно набрать: {format_number(remaining)}{добрано}\n")
+
+    if not actions:
+        print("вариантов нет")
+        return
+
+    ширина = max(len(format_cards(action.cards)) for action in actions)
+    for позиция, action in enumerate(actions, start=1):
+        карты = f"{format_cards(action.cards):<{ширина}}"
+        if action.kind == "play":
+            отметка = ""
+            if remaining is not None and action.minimum is not None:
+                отметка = "  хватает" if action.minimum >= remaining else ""
+            print(
+                f"  {позиция}. сыграть  {карты}  {action.label:<15} "
+                f"{format_number(action.score):>10}{отметка}"
+            )
+        else:
+            шанс = (
+                ""
+                if action.success_probability is None
+                else f", шанс {action.success_probability:.0%}"
+            )
+            приближено = "" if action.exact_deck else " (колода приближена)"
+            print(
+                f"  {позиция}. сбросить {карты}  ждём {action.label} "
+                f"~{format_number(action.score)}{шанс}{приближено}"
+            )
+
+    экономный = advice.cheapest_sufficient
+    if remaining is not None:
+        if экономный is None:
+            print("\nни один ход не перебивает блайнд гарантированно")
+        elif экономный is not advice.best:
+            print(f"\nхватит и меньшего: {экономный.describe()}")
+            print("он тратит меньше карт и сохраняет колоду")
+
+    if explain:
+        render_explanation(advice.best)
+
+    неточные = [action for action in actions if not action.exact]
+    if неточные:
+        print("\nчисла НЕТОЧНЫЕ:")
+        for action in неточные:
+            if action.kind == "discard":
+                print(f"  - сброс {format_cards(action.cards)}: оценка по выборке, не расчёт")
+        причины = sorted({reason for c in advice.candidates for reason in c.outcome.unknown})
         for причина in причины:
             print(f"  - {причина}")
 

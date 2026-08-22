@@ -16,13 +16,16 @@ from collections.abc import Callable
 
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.core.state import GameState
-from balatro_bot.solver.discard import rank_single_discards
+from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.play import advise
+from balatro_bot.solver.shop import evaluate_shop
+from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui.render import (
-    render_advice,
     render_joker_order,
-    render_single_discard_ranking,
+    render_shop_advice,
+    render_skip_advice,
     render_state,
+    render_top_actions,
 )
 
 __all__ = ["watch"]
@@ -39,7 +42,8 @@ def watch(
     top: int = 5,
     explain: bool = False,
     joker_order: bool = True,
-    discard_tips: bool = True,
+    consider_discards: bool = True,
+    consider_shop: bool = True,
     iterations: int | None = None,
     sleep: Callable[[float], None] = time.sleep,
 ) -> None:
@@ -72,14 +76,20 @@ def watch(
                 print(_CLEAR, end="")
                 print(f"balatro-bot следит за игрой — опрос раз в {interval:g} с, Ctrl+C — выйти\n")
                 render_state(state)
+                skip_advice = evaluate_skip(state)
+                if skip_advice is not None:
+                    render_skip_advice(skip_advice)
+                if consider_shop:
+                    shop_advice = evaluate_shop(state)
+                    if shop_advice is not None:
+                        render_shop_advice(shop_advice)
                 if state.hand:
                     print()
                     result = advise(state)
-                    render_advice(result, top, explain)
+                    actions = rank_actions(state, top=top, include_discards=consider_discards)
+                    render_top_actions(result, actions, explain)
                     if joker_order and len(state.jokers) >= 2:
                         render_joker_order(state, result)
-                    if discard_tips and state.discards_left > 0:
-                        render_single_discard_ranking(rank_single_discards(state), result.best)
                 last_state = state
 
         sleep(interval)

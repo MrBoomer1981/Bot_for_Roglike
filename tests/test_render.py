@@ -6,9 +6,20 @@ import pytest
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, parse_cards
+from balatro_bot.core.state import ShopItem
+from balatro_bot.core.tags import TAGS
+from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
-from balatro_bot.ui.render import format_card, render_single_discard_ranking
+from balatro_bot.solver.shop import JokerOffer, ShopAdvice
+from balatro_bot.solver.skip import SkipAdvice
+from balatro_bot.ui.render import (
+    format_card,
+    render_shop_advice,
+    render_single_discard_ranking,
+    render_skip_advice,
+    render_top_actions,
+)
 
 
 class TestРегрессииВыводе:
@@ -76,3 +87,257 @@ class TestРанжированиеСброса:
         )
         render_single_discard_ranking((неточный,), play_now)
         assert "колода приближена" in capsys.readouterr().out
+
+
+class TestЕдиныйСписокДействий:
+    """`ActionOption` собираются вручную — рендер не должен зависеть от того,
+    чем в реальности заканчивает решатель на конкретной руке."""
+
+    def test_розыгрыш_и_сброс_в_одном_списке(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S")
+        advice = advise(state)
+        actions = (
+            ActionOption(
+                kind="play", cards=parse_cards("AH KH"), score=100, label="pair", exact=True
+            ),
+            ActionOption(
+                kind="discard",
+                cards=parse_cards("2C 7D"),
+                score=90,
+                label="флеш черви",
+                exact=False,
+                success_probability=0.61,
+                exact_deck=True,
+            ),
+        )
+        render_top_actions(advice, actions)
+        out = capsys.readouterr().out
+        assert "сыграть" in out
+        assert "сбросить" in out
+
+    def test_вероятность_показана_процентом(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S")
+        advice = advise(state)
+        actions = (
+            ActionOption(
+                kind="discard",
+                cards=parse_cards("2C 7D"),
+                score=90,
+                label="флеш черви",
+                exact=False,
+                success_probability=0.6142938173567782,
+                exact_deck=True,
+            ),
+        )
+        render_top_actions(advice, actions)
+        out = capsys.readouterr().out
+        assert "шанс 61%" in out
+
+    def test_пустой_список_не_падает(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S")
+        advice = advise(state)
+        render_top_actions(advice, ())
+        assert "вариантов нет" in capsys.readouterr().out
+
+    def test_неточные_сбросы_отмечены(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S")
+        advice = advise(state)
+        actions = (
+            ActionOption(
+                kind="discard",
+                cards=parse_cards("2C 7D"),
+                score=90,
+                label="флеш черви",
+                exact=False,
+                success_probability=0.61,
+                exact_deck=False,
+            ),
+        )
+        render_top_actions(advice, actions)
+        out = capsys.readouterr().out
+        assert "числа НЕТОЧНЫЕ" in out
+        assert "оценка по выборке" in out
+        assert "колода приближена" in out
+
+    def test_розыгрыш_с_гарантией_помечен_хватает(self, capsys: pytest.CaptureFixture[str]) -> None:
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S", blind=100)
+        advice = advise(state)
+        actions = (
+            ActionOption(
+                kind="play",
+                cards=parse_cards("AH KH"),
+                score=150,
+                label="pair",
+                exact=True,
+                minimum=150,
+            ),
+        )
+        render_top_actions(advice, actions)
+        assert "хватает" in capsys.readouterr().out
+
+    def test_среднее_у_сброса_не_считается_гарантией(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # У сброса нет `minimum` (см. `ActionOption.minimum`) — даже если
+        # `score` перекрывает блайнд, «хватает» здесь означать нечего:
+        # это среднее по доборам, а не гарантия.
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S", blind=100)
+        advice = advise(state)
+        actions = (
+            ActionOption(
+                kind="discard",
+                cards=parse_cards("2C 7D"),
+                score=150,
+                label="флеш черви",
+                exact=False,
+                success_probability=0.5,
+                exact_deck=True,
+            ),
+        )
+        render_top_actions(advice, actions)
+        assert "хватает" not in capsys.readouterr().out
+
+
+class TestРендерСоветаПоСкипу:
+    def test_денежный_тег_показывает_сумму(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = SkipAdvice(
+            blind_kind="BIG",
+            required_score=450,
+            next_blind_kind="BOSS",
+            next_required_score=600,
+            requirement_ratio=600 / 450,
+            play_reward_min=4,
+            play_reward_hint="+ $1 за руку",
+            tag_name="Investment Tag",
+            tag_effect="После победы над Боссом даёт $25",
+            tag=TAGS["tag_investment"],
+            tag_dollars=25.0,
+            tag_dollars_note="после победы над боссом",
+        )
+        render_skip_advice(advice)
+        out = capsys.readouterr().out
+        assert "Big Blind" in out
+        assert "450" in out
+        assert "Boss Blind" in out
+        assert "$25" in out
+        assert "Investment Tag" in out
+
+    def test_тег_без_точной_суммы_помечен_не_оценено(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        advice = SkipAdvice(
+            blind_kind="SMALL",
+            required_score=300,
+            next_blind_kind="BIG",
+            next_required_score=450,
+            requirement_ratio=1.5,
+            play_reward_min=3,
+            play_reward_hint="+ $1 за руку",
+            tag_name="Handy Tag",
+            tag_effect="...",
+            tag=TAGS["tag_handy"],
+            tag_dollars=None,
+            tag_dollars_note="формула требует счётчик уровня рана",
+        )
+        render_skip_advice(advice)
+        assert "не оценено" in capsys.readouterr().out
+
+    def test_неопознанный_тег_помечен_честно(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = SkipAdvice(
+            blind_kind="SMALL",
+            required_score=300,
+            next_blind_kind="BIG",
+            next_required_score=450,
+            requirement_ratio=1.5,
+            play_reward_min=3,
+            play_reward_hint="+ $1 за руку",
+            tag_name="Совершенно Новый Tag",
+            tag_effect="...",
+            tag=None,
+            tag_dollars=None,
+            tag_dollars_note="",
+        )
+        render_skip_advice(advice)
+        out = capsys.readouterr().out
+        assert "не опознан" in out
+
+
+class TestРендерСоветаПоМагазину:
+    def test_оценённый_джокер_показывает_прирост(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = ShopAdvice(
+            jokers=(
+                JokerOffer(
+                    item=ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),
+                    affordable=True,
+                    has_slot=True,
+                    known=True,
+                    expected_uplift=12.5,
+                    exact_deck=False,
+                    samples=12,
+                ),
+            ),
+            vouchers=(),
+            packs=(),
+            money=10,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "Joker" in out
+        assert "$3" in out
+        assert "прирост" in out
+        assert "колода приближена" in out
+
+    def test_неизвестный_джокер_помечен(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = ShopAdvice(
+            jokers=(
+                JokerOffer(
+                    item=ShopItem("j_новый", "???", "JOKER", 5, ""),
+                    affordable=True,
+                    has_slot=True,
+                    known=False,
+                    expected_uplift=None,
+                    exact_deck=False,
+                    samples=0,
+                ),
+            ),
+            vouchers=(),
+            packs=(),
+            money=10,
+        )
+        render_shop_advice(advice)
+        assert "эффект не реализован" in capsys.readouterr().out
+
+    def test_нехватка_денег_и_слота_отмечены(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = ShopAdvice(
+            jokers=(
+                JokerOffer(
+                    item=ShopItem("j_joker", "Joker", "JOKER", 99, "+4 Mult"),
+                    affordable=False,
+                    has_slot=False,
+                    known=True,
+                    expected_uplift=4.0,
+                    exact_deck=True,
+                    samples=12,
+                ),
+            ),
+            vouchers=(),
+            packs=(),
+            money=1,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "не хватает денег" in out
+        assert "нет слота" in out
+
+    def test_ваучеры_и_паки_показаны_текстом(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = ShopAdvice(
+            jokers=(),
+            vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10, "+1 слот в магазине"),),
+            packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
+            money=10,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "Overstock" in out
+        assert "+1 слот в магазине" in out
+        assert "Arcana Pack" in out

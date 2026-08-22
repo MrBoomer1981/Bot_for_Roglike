@@ -36,15 +36,20 @@ from balatro_bot.install import (
     resolve_paths,
     verify,
 )
+from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.discard import discard_outcome
 from balatro_bot.solver.play import advise
+from balatro_bot.solver.shop import evaluate_shop
+from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui import tui
 from balatro_bot.ui.render import (
     format_cards,
-    render_advice,
     render_discard_outcome,
     render_joker_order,
+    render_shop_advice,
+    render_skip_advice,
     render_state,
+    render_top_actions,
 )
 
 GOLDEN_DIR = Path("tests/golden")
@@ -185,7 +190,8 @@ def _advise(bridge: ModBridge, args: argparse.Namespace) -> int:
         print(f"рука: {format_cards(state.hand)}\n")
 
     advice = advise(state)
-    render_advice(advice, args.top, args.explain)
+    actions = rank_actions(state, top=args.top)
+    render_top_actions(advice, actions, args.explain)
     if args.joker_order and len(state.jokers) >= 2:
         render_joker_order(state, advice)
     if args.discard:
@@ -213,7 +219,8 @@ def _watch(bridge: ModBridge, args: argparse.Namespace) -> int:
             top=args.top,
             explain=args.explain,
             joker_order=args.joker_order,
-            discard_tips=args.discard_tips,
+            consider_discards=args.consider_discards,
+            consider_shop=args.consider_shop,
         )
     except KeyboardInterrupt:
         print("\nостановлено")
@@ -231,6 +238,12 @@ def _doctor(bridge: ModBridge) -> int:
 
     print("связь есть\n")
     render_state(state)
+    skip_advice = evaluate_skip(state)
+    if skip_advice is not None:
+        render_skip_advice(skip_advice)
+    shop_advice = evaluate_shop(state)
+    if shop_advice is not None:
+        render_shop_advice(shop_advice)
     return 0
 
 
@@ -299,10 +312,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="не проверять порядок джокеров (перебор до 720 перестановок на каждый опрос)",
     )
     follow.add_argument(
-        "--no-discard-tips",
-        dest="discard_tips",
+        "--no-discard",
+        dest="consider_discards",
         action="store_false",
-        help="не считать, какую одну карту выгоднее сбросить (это самая тяжёлая часть пересчёта)",
+        help="не рассматривать сбросы в общем списке действий (пропустить advise_discard)",
+    )
+    follow.add_argument(
+        "--no-shop",
+        dest="consider_shop",
+        action="store_false",
+        help="не оценивать джокеров в магазине (несколько advise() на каждого предложенного)",
     )
 
     commands.add_parser("doctor", help="проверить связь с игрой и показать состояние")

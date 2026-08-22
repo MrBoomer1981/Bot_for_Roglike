@@ -89,19 +89,19 @@ class TestWatch:
         tui.watch(bridge, iterations=1, sleep=lambda _: None, joker_order=False)
         assert "порядок джокеров" not in capsys.readouterr().out
 
-    def test_показывает_совет_по_сбросу_одной_карты(
+    def test_единый_список_включает_сбросы(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
         tui.watch(bridge, iterations=1, sleep=lambda _: None)
-        assert "что выгоднее сбросить" in capsys.readouterr().out
+        assert "сбросить" in capsys.readouterr().out
 
-    def test_можно_отключить_совет_по_сбросу(
+    def test_можно_отключить_рассмотрение_сбросов(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
-        tui.watch(bridge, iterations=1, sleep=lambda _: None, discard_tips=False)
-        assert "что выгоднее сбросить" not in capsys.readouterr().out
+        tui.watch(bridge, iterations=1, sleep=lambda _: None, consider_discards=False)
+        assert "сбросить" not in capsys.readouterr().out
 
-    def test_без_сбросов_совет_не_считается(
+    def test_без_сбросов_вариантов_сброса_в_списке_нет(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
         no_discards = sample_state()
@@ -109,7 +109,65 @@ class TestWatch:
         FakeMod.state = no_discards
 
         tui.watch(bridge, iterations=1, sleep=lambda _: None)
-        assert "что выгоднее сбросить" not in capsys.readouterr().out
+        assert "сбросить" not in capsys.readouterr().out
+
+    def test_показывает_совет_по_магазину(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 3},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.watch(bridge, iterations=1, sleep=lambda _: None)
+        out = capsys.readouterr().out
+        assert "магазин" in out
+        assert "Joker" in out
+
+    def test_можно_отключить_совет_по_магазину(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 3},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.watch(bridge, iterations=1, sleep=lambda _: None, consider_shop=False)
+        assert "магазин" not in capsys.readouterr().out
+
+    def test_без_магазина_совет_не_показывается(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        tui.watch(bridge, iterations=1, sleep=lambda _: None)
+        assert "магазин" not in capsys.readouterr().out
 
     def test_восстанавливается_после_обрыва_связи(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]

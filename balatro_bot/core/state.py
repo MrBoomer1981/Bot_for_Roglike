@@ -18,7 +18,7 @@ from balatro_bot.core.cards import Card, Edition, Rank, Suit
 from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.hands import HandType, HandValues, base_values
 
-__all__ = ["BlindInfo", "GameState", "JokerCard", "PokerHandInfo"]
+__all__ = ["BlindInfo", "GameState", "JokerCard", "PokerHandInfo", "ShopItem"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -86,12 +86,49 @@ class JokerCard:
 
 @dataclass(frozen=True, slots=True)
 class BlindInfo:
-    """Блайнд, который сейчас нужно пробить."""
+    """Один блайнд — не обязательно текущий, см. `GameState.blind` vs `GameState.blinds`."""
 
     kind: str
     name: str
     effect: str
     required_score: int
+
+    status: str = ""
+    """Статус этого блайнда в моде: `SELECT` (можно выбрать сейчас — играть
+    или скипнуть), `CURRENT` (уже играется), `UPCOMING`, `DEFEATED`. Пустая
+    строка — источник не прислал (например, ручной ввод)."""
+
+    tag_name: str = ""
+    """Имя тега, который достанется при скипе (только Small/Big). Пустая
+    строка — блайнд уже сыгран/скипнут, тега не будет, либо это боссовый
+    блайнд (скипнуть нельзя, тега не бывает)."""
+
+    tag_effect: str = ""
+    """Текст эффекта тега, как его показывает игра — так же, как эффекты
+    джокеров, честнее не пересказывать своими словами, а показать как есть."""
+
+
+@dataclass(frozen=True, slots=True)
+class ShopItem:
+    """Один предмет на продажу — джокер, ваучер, пак или таро/планета/спектр.
+
+    `effect` берётся из того же поля мода, что и `JokerCard.current_value` —
+    `value.effect`, уже посчитанный игрой текст. Для ваучеров и паков это
+    единственный источник понимания, что предмет делает: отдельного
+    справочника для них в проекте нет (в отличие от джокеров и тегов) —
+    сама игра уже вернула готовый текст, пересказывать нечего."""
+
+    key: str
+    label: str
+    kind: str
+    """`JOKER`/`VOUCHER`/`BOOSTER`/`TAROT`/`PLANET`/`SPECTRAL` — значение
+    поля `set` мода (`CardSet` в схеме)."""
+
+    price: int
+    effect: str = ""
+    edition: Edition = Edition.BASE
+    """Значимо только для `JOKER`: издание, за которое магазин просит цену
+    в `price`, влияет на реальную ценность покупки (`solver/shop.py`)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,6 +144,20 @@ class GameState:
     jokers: tuple[JokerCard, ...] = ()
     hand_info: Mapping[HandType, PokerHandInfo] = field(default_factory=dict)
     blind: BlindInfo | None = None
+
+    blinds: Mapping[str, BlindInfo] = field(default_factory=dict)
+    """Все три блайнда анте — ключи `"small"`/`"big"`/`"boss"`, не только
+    текущий. Нужно для решения «скипнуть или нет» (`solver/skip.py`): на
+    экране выбора блайнда `blind` ещё `None` (`_parse_blind` ищет статус
+    `CURRENT`, а на этом экране его ни у кого нет), но сами по себе
+    требования и теги всех трёх блайндов уже известны."""
+
+    shop: tuple[ShopItem, ...] = ()
+    """Джокеры и таро/планета/спектр-карты на продажу — область `shop` мода,
+    непустая только в фазе `SHOP` (`solver/shop.py`)."""
+
+    shop_vouchers: tuple[ShopItem, ...] = ()
+    shop_packs: tuple[ShopItem, ...] = ()
 
     deck_type: str | None = None
     """Выбранная колода рана (`RED`, `ABANDONED`, …) — не путать с `deck`
