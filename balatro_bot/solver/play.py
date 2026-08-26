@@ -8,6 +8,13 @@
 всегда правильное решение: иногда выгоднее еле перебить блайнд, сохранив
 карты и сбросы, иногда — сыграть слабее ради прокачки уровня нужной руки.
 Это выбор игрока, дело бота — показать варианты и объяснить числа.
+
+Три босса из `core/bosses.py` (`BossEffect.restricts_legal_plays`) бьют по
+составу конкретного розыгрыша — иначе честно лучший по счёту вариант может
+физически оказаться нелегальным ходом, который мод откажется принять. Такие
+кандидаты отфильтровываются до попадания в ранжированный список, а не после
+того, как их попробуют сыграть (см. `_is_legal_play`), — прямое следствие
+допущения №10 в PLAN.md.
 """
 
 from __future__ import annotations
@@ -16,6 +23,7 @@ from dataclasses import dataclass, replace
 from itertools import combinations, permutations
 
 from balatro_bot.core.cards import Card
+from balatro_bot.core.hands import HandType
 from balatro_bot.core.jokers import build_jokers, modifiers_from
 from balatro_bot.core.scoring import ScoreOutcome, score_play
 from balatro_bot.core.state import GameState, JokerCard
@@ -24,6 +32,18 @@ __all__ = ["Advice", "Candidate", "advise", "rank_joker_orders", "rank_plays"]
 
 #: Больше пяти карт за раз сыграть нельзя.
 MAX_PLAYED = 5
+
+#: Имена трёх боссов из `core/bosses.py`, чей `restricts_legal_plays=True` —
+#: сверено тестом (`tests/test_solver.py`), что список не разошёлся с
+#: каталогом. Строковые константы, не импорт `BOSSES`: сама проверка
+#: легальности всё равно завязана на конкретную механику каждого босса,
+#: единый флаг тут ничего не переиспользует, кроме имени.
+_THE_MOUTH = "The Mouth"
+_THE_EYE = "The Eye"
+_THE_PSYCHIC = "The Psychic"
+
+#: `The Psychic` не даёт играть меньше этого числа карт.
+_PSYCHIC_MIN_CARDS = 5
 
 #: 6! = 720 перестановок — секунды на честный перебор. Больше — не гадать
 #: эвристикой, а прямо сказать, что перебор порядка пропущен.
@@ -98,20 +118,58 @@ class Advice:
         return all(item.outcome.exact for item in self.candidates)
 
 
+def _played_hand_types(state: GameState) -> frozenset[HandType]:
+    """Какие типы руки уже сыграны в текущем раунде (`played_this_round > 0`)."""
+    return frozenset(
+        hand_type for hand_type, info in state.hand_info.items() if info.played_this_round > 0
+    )
+
+
+def _is_legal_play(state: GameState, cards: tuple[Card, ...], hand_type: HandType) -> bool:
+    """Легален ли этот конкретный розыгрыш под текущим боссовым блайндом.
+
+    Только три босса (см. модульный докстринг) бьют по составу конкретного
+    розыгрыша — остальные 25 либо общий случай дебаффа карт, либо уже
+    честно отражены живыми `hands_left`/`discards_left`/размером руки, либо
+    не влияют на подсчёт вовсе (см. докстринг `core/bosses.py`).
+    """
+    blind = state.blind
+    if blind is None:
+        return True
+    if blind.name == _THE_PSYCHIC:
+        return len(cards) >= _PSYCHIC_MIN_CARDS
+    if blind.name == _THE_MOUTH:
+        played = _played_hand_types(state)
+        return not played or hand_type in played
+    if blind.name == _THE_EYE:
+        return hand_type not in _played_hand_types(state)
+    return True
+
+
 def rank_plays(state: GameState, limit: int | None = None) -> tuple[Candidate, ...]:
     """Перебрать все розыгрыши и отсортировать по убыванию счёта.
 
-    При равном счёте выше идёт ход, тратящий меньше карт.
+    При равном счёте выше идёт ход, тратящий меньше карт. Нелегальные под
+    текущим боссом варианты (`_is_legal_play`) отфильтрованы — если это
+    оставляет список пустым (вырожденный случай: например, `The Psychic`
+    при руке короче 5 карт), фильтр честно отступает и отдаёт нефильтрованный
+    список — промолчать было бы хуже, чем показать вариант, легальность
+    которого под большим вопросом.
     """
     jokers = build_jokers(state)
     modifiers = modifiers_from(jokers)
 
     candidates: list[Candidate] = []
+    legal_candidates: list[Candidate] = []
     for size in range(1, min(MAX_PLAYED, len(state.hand)) + 1):
         for subset in combinations(state.hand, size):
             outcome = score_play(state, subset, jokers, modifiers)
-            candidates.append(Candidate(subset, outcome))
+            candidate = Candidate(subset, outcome)
+            candidates.append(candidate)
+            if _is_legal_play(state, subset, outcome.hand_type):
+                legal_candidates.append(candidate)
 
+    candidates = legal_candidates or candidates
     candidates.sort(key=lambda item: (-item.score, len(item.cards)))
     return tuple(candidates[:limit] if limit is not None else candidates)
 

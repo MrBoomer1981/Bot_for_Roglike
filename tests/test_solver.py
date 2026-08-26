@@ -7,7 +7,7 @@ import pytest
 from balatro_bot.core.cards import Card, Enhancement, Rank, Suit, parse_cards
 from balatro_bot.core.hands import HandType
 from balatro_bot.core.scoring import score_play
-from balatro_bot.core.state import BlindInfo, GameState, JokerCard
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo
 from balatro_bot.solver.play import Candidate, advise, rank_joker_orders, rank_plays
 
 
@@ -44,6 +44,70 @@ class TestПеребор:
         плейс = rank_plays(состояние("AH AD 2C 3D 4S"))
         лучшие = [item for item in плейс if item.score == плейс[0].score]
         assert len(лучшие[0].cards) == min(len(item.cards) for item in лучшие)
+
+
+def _boss_state(
+    hand: str, boss_name: str, hand_info: dict[HandType, PokerHandInfo] | None = None
+) -> GameState:
+    return GameState(
+        hand=parse_cards(hand),
+        blind=BlindInfo("BOSS", boss_name, "", 300),
+        hand_info=hand_info or {},
+    )
+
+
+class TestЛегальностьПодБоссом:
+    """Три босса из `core/bosses.py` (`BossEffect.restricts_legal_plays`) бьют по
+    составу конкретного розыгрыша — `rank_plays` обязан отфильтровать нелегальные
+    варианты до того, как они попадут в ранжированный список (допущение №10 в
+    PLAN.md)."""
+
+    def test_psychic_отсекает_розыгрыш_короче_пяти_карт(self) -> None:
+        плейс = rank_plays(_boss_state("AH KH QH JH 9H 7C 7D 2S", "The Psychic"))
+        assert плейс  # C(8, 5) = 56 вариантов размера ровно 5
+        assert all(len(item.cards) == 5 for item in плейс)
+
+    def test_psychic_без_легальных_вариантов_честно_отступает(self) -> None:
+        # В руке всего 4 карты — под Psychic (нужно ≥5) легальных вариантов
+        # нет вовсе; фильтр отступает и отдаёт нефильтрованный список, а не
+        # пустоту.
+        плейс = rank_plays(_boss_state("AH KH QH JH", "The Psychic"))
+        assert len(плейс) == 15  # 2^4 - 1 подмножеств
+        assert any(len(item.cards) < 5 for item in плейс)
+
+    def test_mouth_ничего_не_сыграно_легален_любой_тип(self) -> None:
+        плейс = rank_plays(_boss_state("AH AD KH KD QC", "The Mouth"))
+        assert len(плейс) == 31  # 2^5 - 1, фильтр ничего не убрал
+
+    def test_mouth_запирает_на_уже_сыгранный_тип(self) -> None:
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2, played_this_round=1)}
+        плейс = rank_plays(_boss_state("AH AD KH KD QC", "The Mouth", info))
+        assert плейс
+        assert all(item.outcome.hand_type is HandType.PAIR for item in плейс)
+
+    def test_eye_запрещает_повтор_уже_сыгранного_типа(self) -> None:
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2, played_this_round=1)}
+        плейс = rank_plays(_boss_state("AH AD KH KD QC", "The Eye", info))
+        assert плейс
+        assert not any(item.outcome.hand_type is HandType.PAIR for item in плейс)
+        assert any(item.outcome.hand_type is HandType.TWO_PAIR for item in плейс)
+
+    def test_другой_босс_не_фильтрует(self) -> None:
+        плейс = rank_plays(_boss_state("AH KH QH JH", "The Wall"))
+        assert len(плейс) == 15
+
+    def test_без_блайнда_не_фильтрует(self) -> None:
+        assert len(rank_plays(состояние("AH KH QH JH"))) == 15
+
+    def test_список_боссов_совпадает_с_каталогом(self) -> None:
+        # Тройка захардкожена и в solver/play.py, и здесь — если каталог
+        # core/bosses.py когда-нибудь поменяется, этот тест не даст
+        # разойтись молча.
+        from balatro_bot.core.bosses import BOSSES
+        from balatro_bot.solver.play import _THE_EYE, _THE_MOUTH, _THE_PSYCHIC
+
+        restricting = {effect.name for effect in BOSSES.values() if effect.restricts_legal_plays}
+        assert restricting == {_THE_MOUTH, _THE_EYE, _THE_PSYCHIC}
 
 
 class TestРекомендация:
