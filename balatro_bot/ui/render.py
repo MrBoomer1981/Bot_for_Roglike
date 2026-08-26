@@ -13,7 +13,7 @@ from typing import Final
 from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import ActionOption
-from balatro_bot.solver.discard import MAX_DRAW_COMBINATIONS, DiscardOutcome
+from balatro_bot.solver.discard import MAX_DISCARD_COMPOSITIONS, DiscardOutcome
 from balatro_bot.solver.play import (
     MAX_JOKERS_FOR_ORDER_SEARCH,
     Advice,
@@ -29,10 +29,10 @@ __all__ = [
     "format_number",
     "render_advice",
     "render_discard_outcome",
+    "render_discard_ranking",
     "render_explanation",
     "render_joker_order",
     "render_shop_advice",
-    "render_single_discard_ranking",
     "render_skip_advice",
     "render_state",
     "render_top_actions",
@@ -188,6 +188,8 @@ def render_shop_advice(advice: ShopAdvice) -> None:
                 пометки.append("не хватает денег")
             if not offer.has_slot:
                 пометки.append("нет слота")
+            if offer.interest_lost:
+                пометки.append(f"−${offer.interest_lost} процентов в конце раунда")
             хвост = f"  ({', '.join(пометки)})" if пометки else ""
             if offer.expected_uplift is None:
                 оценка = "не оценено" if offer.known else "эффект не реализован"
@@ -341,8 +343,9 @@ def render_discard_outcome(
     print(f"\nсброс {format_cards(discard)}:")
     if outcome is None:
         print(
-            f"  перебор добора недоступен: либо комбинаций больше {MAX_DRAW_COMBINATIONS}, "
-            "либо в колоде нечего добирать — не гадаю"
+            f"  перебор добора недоступен: даже после сжатия по классам эквивалентности "
+            f"карт композиций больше {MAX_DISCARD_COMPOSITIONS}, либо в колоде нечего "
+            "добирать — не гадаю"
         )
         return
 
@@ -357,18 +360,19 @@ def render_discard_outcome(
         print("  в среднем выгоднее сыграть сейчас")
 
 
-def render_single_discard_ranking(
+def render_discard_ranking(
     outcomes: Sequence[DiscardOutcome], play_now: Candidate, top: int = 3
 ) -> None:
-    """Показать лучшие сбросы одной карты, отсортированные по EV.
+    """Показать лучшие сбросы, отсортированные по точному EV.
 
-    Только сбросы размера 1 — единственный размер, который `watch` может
-    честно пересчитывать на каждое изменение состояния (см. `solver.discard`).
+    Годится и для `rank_single_discards` (только сбросы одной карты — самый
+    дешёвый частный случай), и для `rank_discards` (все размеры 1..5) —
+    сам рендер не завязан на размер сброса, `format_cards` показывает любой.
     """
     if not outcomes:
         return
 
-    print("\nчто выгоднее сбросить (одна карта):")
+    print("\nчто выгоднее сбросить:")
     for позиция, outcome in enumerate(outcomes[: max(top, 1)], start=1):
         отметка = "  выгоднее, чем сыграть сейчас" if outcome.expected > play_now.score else ""
         источник = "" if outcome.exact else "  (колода приближена)"

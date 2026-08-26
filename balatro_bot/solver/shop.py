@@ -20,7 +20,28 @@
 считать это тем же контрфактумом не на чем. Здесь честный текст важнее
 выдуманного числа (раздел 8 CLAUDE.md — то же решение, что для тегов в
 `core/tags.py`, только эффект уже даёт сама игра текстом, а не наша
-таблица)."""
+таблица).
+
+Поправка на экономику (раздел 8.1 плана, было отложено при закрытии
+основной части Фазы 7): покупка джокера — это не только `item.price`
+долларов, но и упущенные проценты в конце ближайшего раунда. Формула
+процентов (`_interest`) выписана из исходника игры, не по памяти —
+`functions/state_events.lua`: `interest_amount * min(floor(dollars/5),
+interest_cap/5)`, с константами по умолчанию `interest_amount=1`,
+`interest_cap=25` из `game.lua`'s `GAME_MOD.interest_cap`/`interest_amount`.
+Это не сводится к самой оценке счёта (`expected_uplift`) — доллары и очки
+несоизмеримы без произвольного курса обмена, тот же принцип, что и у
+`core/tags.py`/`solver/skip.py`. `JokerOffer.interest_lost` — честная,
+но заведомо **неполная** цифра: она про упущенные проценты только
+ближайшего конца раунда, а не про весь остаток рана (для этого нужно было
+бы знать число оставшихся раундов и весь будущий денежный поток — это уже
+не размер задачи витрины магазина, а Фаза 9). Она также предполагает
+`interest_cap=25` по умолчанию — `GameState` не хранит уже выкупленные
+ваучеры (`Seed Money`/`Money Tree` поднимают потолок до $50/$100), поэтому
+на раскачанной экономике эта цифра — не переоценка, а честная нижняя
+граница. Единственное исключение, которое код различает явно, — `Green
+Deck` (`deck_type == "GREEN"`), где `game.lua` отключает проценты вовсе
+(`no_interest=true`): там `interest_lost` всегда 0, а не догадка."""
 
 from __future__ import annotations
 
@@ -51,6 +72,30 @@ _HAND_SIZE: Final[int] = 8
 #: вызовами.
 _SAMPLE_SEED: Final[int] = 0
 
+#: Формула и константы процентов на конец раунда — выписаны из
+#: `functions/state_events.lua` игры, не по памяти:
+#: `interest_amount * min(floor(dollars/5), interest_cap/5)`. Значения по
+#: умолчанию (без выкупленных ваучеров) — из `game.lua`'s `GAME_MOD`.
+#: `Seed Money`/`Money Tree` поднимают `interest_cap` до 50/100, но
+#: `GameState` не хранит уже выкупленные ваучеры этого рана — числа ниже
+#: поэтому дают нижнюю границу, а не переоценку, см. модульный докстринг.
+_INTEREST_AMOUNT: Final[int] = 1
+_INTEREST_CAP: Final[int] = 25
+_INTEREST_STEP: Final[int] = 5
+
+#: `Green Deck` (`b_green` в `game.lua`) отключает проценты полностью
+#: (`config.no_interest = true`) — единственный отслеживаемый в `GameState`
+#: (`deck_type`) случай, где реальный ответ — гарантированный ноль, а не
+#: наше приближение по умолчанию.
+_NO_INTEREST_DECK: Final[str] = "GREEN"
+
+
+def _interest(money: int, deck_type: str | None) -> int:
+    """Проценты, которые накапало бы в конце раунда при данной сумме денег."""
+    if deck_type == _NO_INTEREST_DECK or money < _INTEREST_STEP:
+        return 0
+    return _INTEREST_AMOUNT * min(money // _INTEREST_STEP, _INTEREST_CAP // _INTEREST_STEP)
+
 
 @dataclass(frozen=True, slots=True)
 class JokerOffer:
@@ -73,6 +118,13 @@ class JokerOffer:
 
     samples: int
     """Сколько рук реально усреднено — 0, если оценка не считалась."""
+
+    interest_lost: int
+    """Упущенные проценты в конце ближайшего раунда, если купить именно
+    этого джокера (`_interest(money) - _interest(money - price)`) — честная,
+    но заведомо неполная цифра, см. модульный докстринг. Не переводится в
+    единицы `expected_uplift` (доллары и очки несоизмеримы), показывается
+    отдельно."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -131,9 +183,12 @@ def _evaluate_joker_offer(
     affordable = state.money >= item.price
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
     known = is_known_joker(item.key)
+    interest_lost = _interest(state.money, state.deck_type) - _interest(
+        state.money - item.price, state.deck_type
+    )
 
     if not known or len(deck_source) < _HAND_SIZE:
-        return JokerOffer(item, affordable, has_slot, known, None, exact_deck, 0)
+        return JokerOffer(item, affordable, has_slot, known, None, exact_deck, 0, interest_lost)
 
     candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
     with_candidate = (*state.jokers, candidate)
@@ -147,4 +202,6 @@ def _evaluate_joker_offer(
         boosted = advise(replace(state, hand=hand, jokers=with_candidate), limit=1).best.score
         total_delta += boosted - baseline
 
-    return JokerOffer(item, affordable, has_slot, known, total_delta / samples, exact_deck, samples)
+    return JokerOffer(
+        item, affordable, has_slot, known, total_delta / samples, exact_deck, samples, interest_lost
+    )

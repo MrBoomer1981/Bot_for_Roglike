@@ -1,23 +1,28 @@
 """Тесты EV сброса: `solver/discard.py`.
 
-Проверяется узкий срез Фазы 6 (раздел 8.1 плана): точный перебор добора для
-одного заданного набора карт на сброс, не полный перебор по всем наборам —
-и `advise_discard`, поиск лучшего сброса по целям без перебора всех наборов
-сброса (`docs/Discard Spec.md`).
+Проверяется точный перебор добора для одного заданного набора карт на сброс
+(`discard_outcome`, теперь через сжатие по классам эквивалентности — см.
+`TestКлассыЭквивалентности`/`TestSuitSensitiveJokerCoverage`), честный
+перебор ВСЕХ наборов сброса до пяти карт (`rank_discards`), и `advise_discard`
+— более старый и дешёвый (но не точный) поиск лучшего сброса по целям
+(`docs/Discard Spec.md`).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import replace
 
 import pytest
 
 import balatro_bot.solver.discard as discard_module
 from balatro_bot.adapters.manual import build_state
-from balatro_bot.core.cards import Suit, parse_cards, standard_deck
+from balatro_bot.core.cards import Rank, Suit, parse_cards, standard_deck
 from balatro_bot.core.hands import HandModifiers
-from balatro_bot.core.state import GameState
+from balatro_bot.core.jokers import REGISTRY, build_jokers, modifiers_from
+from balatro_bot.core.state import GameState, JokerCard
 from balatro_bot.solver.discard import (
+    _SUIT_SENSITIVE_JOKER_KEYS,
     MAX_DISCARD_SIZE,
     _flush_targets,
     _full_house_targets,
@@ -28,6 +33,7 @@ from balatro_bot.solver.discard import (
     advise_discard,
     discard_outcome,
     known_deck,
+    rank_discards,
     rank_single_discards,
 )
 from balatro_bot.solver.play import advise
@@ -72,12 +78,11 @@ class TestEVСброса:
         )
         assert outcome.expected == ожидаемое
 
-    def test_превышение_лимита_возвращает_none(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        monkeypatch.setattr(discard_module, "MAX_DRAW_COMBINATIONS", 1)
+    def test_превышение_лимита_возвращает_none(self) -> None:
         state = build_state("AH KH QH JH 9H 7C 7D 2S")
         state = replace(state, deck=parse_cards("2H 3C"))
 
-        assert discard_outcome(state, parse_cards("2S")) is None
+        assert discard_outcome(state, parse_cards("2S"), max_compositions=1) is None
 
     def test_пустая_известная_колода_возвращает_none(self) -> None:
         state = build_state("AH KH QH JH 9H 7C 7D 2S")
@@ -285,7 +290,7 @@ class TestAdviseDiscardПротивЭталона:
 
     `discard_outcome` — честный перебор без сэмплирования, эталон для
     сверки. Колода взята укороченной (13 карт), чтобы держать перебор
-    внутри `MAX_DRAW_COMBINATIONS` для сбросов размера вплоть до пяти.
+    внутри `MAX_DISCARD_COMPOSITIONS` для сбросов размера вплоть до пяти.
     """
 
     @staticmethod
@@ -326,3 +331,208 @@ class TestAdviseDiscardПротивЭталона:
         }
         лучший_по_аналитике = tuple(sorted(map(repr, options[0].discard)))
         assert лучший_по_аналитике in топ_по_эталону
+
+
+class TestКлассыЭквивалентности:
+    """`discard_outcome` теперь считает через сжатый перебор композиций
+    (см. модульный докстринг `solver/discard.py`) — здесь проверяется, что
+    сжатие не меняет ответ по сравнению с честным перебором сырых доборов."""
+
+    def test_сжатый_перебор_совпадает_с_сырым_на_повторяющихся_рангах(self) -> None:
+        # Колода с дублирующимися рангами разных мастей — хороший стресс-тест
+        # для сжатия: масти здесь не могут собрать флеш (рангов слишком мало
+        # видов, аутов на каждую масть — по паре), значит она схлопывается,
+        # и композиции по 3 рангам должны математически совпасть с сырым
+        # перебором по 6 картам.
+        state = build_state("AH KH QH JH 9H 7C 7D 2S", discards_left=1)
+        deck = parse_cards("2H 2D 3H 3C 4H 4D")
+        state = replace(state, deck=deck)
+        discard = parse_cards("7C 7D")
+
+        сжатый = discard_outcome(state, discard)
+        assert сжатый is not None
+        assert сжатый.draws_considered == math.comb(len(deck), len(discard))
+
+        сырые_доборы = [
+            draw
+            for i in range(len(deck))
+            for j in range(i + 1, len(deck))
+            for draw in [(deck[i], deck[j])]
+        ]
+        kept = tuple(c for c in state.hand if c not in discard)
+        сырое_среднее = sum(
+            advise(replace(state, hand=kept + draw)).best.score for draw in сырые_доборы
+        ) / len(сырые_доборы)
+        assert сжатый.expected == pytest.approx(сырое_среднее)
+
+    def test_число_композиций_не_больше_числа_сырых_доборов(self) -> None:
+        # Само сжатие обязано либо уменьшать число вызовов advise(), либо в
+        # худшем случае не увеличивать его — иначе это не оптимизация.
+        state = build_state("AH KH QH JH 9H 7C 7D 2S", discards_left=1)
+        unseen = tuple(c for c in standard_deck() if c not in state.hand)
+        state = replace(state, deck=unseen)
+
+        jokers = build_jokers(state)
+        mods = modifiers_from(jokers)
+        kept = state.hand[:6]
+        k = 3
+        active = discard_module._relevant_suits(jokers, mods, kept, unseen, k)
+        classes = discard_module._build_classes(unseen, active, mods.smeared)
+        composed = discard_module._enumerate_compositions(
+            [len(v) for v in classes.values()], k, discard_module.MAX_DISCARD_COMPOSITIONS
+        )
+        assert composed is not None
+        assert len(composed) <= math.comb(len(unseen), k)
+
+    def test_suit_джокер_форсирует_полную_детализацию_масти(self) -> None:
+        # С Greedy Joker в раскладке масть нельзя схлопывать — активными
+        # должны остаться все 4 масти, а не только достижимые для флеша.
+        state = build_state("AH KH QH 9H 2C 7D 3S 4S", jokers=["greedy joker"], discards_left=1)
+        unseen = tuple(c for c in standard_deck() if c not in state.hand)
+        jokers = build_jokers(state)
+        mods = modifiers_from(jokers)
+        active = discard_module._relevant_suits(jokers, mods, state.hand[:6], unseen, 2)
+        assert active == frozenset(Suit)
+
+    def test_без_suit_джокера_недостижимая_масть_схлопывается(self) -> None:
+        # Без suit-джокеров и с 3-4 разными мастями уже в keep флеш любой из
+        # них при сбросе 1-2 карт физически недостижим — активных мастей быть
+        # не должно вовсе.
+        state = build_state("AH KD QC 9S 2C 7D 3S 4S", discards_left=1)
+        unseen = tuple(c for c in standard_deck() if c not in state.hand)
+        jokers = build_jokers(state)
+        mods = modifiers_from(jokers)
+        keep = parse_cards("AH KD QC 9S")  # по одной каждой масти — флешу не собраться никогда
+        active = discard_module._relevant_suits(jokers, mods, keep, unseen, 2)
+        assert active == frozenset()
+
+
+class TestSuitSensitiveJokerCoverage:
+    """`_SUIT_SENSITIVE_JOKER_KEYS` управляет тем, можно ли схлопывать масть
+    карты добора в общую корзину классов эквивалентности при сжатом переборе
+    (см. `TestКлассыЭквивалентности` выше и модульный докстринг). Пропущенный
+    здесь suit-джокер тихо портил бы точность сжатия, поэтому список сверяется
+    не по памяти, а поведением: у каждого перечисленного джокера смена масти
+    ОДНОЙ карты в нейтральной руке (без флеша ни до, ни после — тип руки не
+    меняется, только участвующие в подсчёте масти) обязана менять счёт."""
+
+    def test_все_ключи_известны_реестру(self) -> None:
+        assert frozenset(REGISTRY) >= _SUIT_SENSITIVE_JOKER_KEYS
+
+    @staticmethod
+    def _straight_score(hand: str, joker: JokerCard) -> float:
+        state = replace(build_state(hand), jokers=(joker,))
+        return advise(state).best.score
+
+    def test_suit_bonus_семейство(self) -> None:
+        # Общий стрит 4-5-6-7 фиксированными мастями + карта 8 переменной
+        # масти: каждый _suit_joker считает по мастям СЫГРАННЫХ карт (стрит
+        # засчитывает все 5), так что совпадение восьмёрки с целевой мастью
+        # даёт лишнее срабатывание поверх уже фиксированного 5D/4H.
+        targets = {
+            "j_greedy_joker": Suit.DIAMONDS,
+            "j_lusty_joker": Suit.HEARTS,
+            "j_wrathful_joker": Suit.SPADES,
+            "j_gluttenous_joker": Suit.CLUBS,
+            "j_arrowhead": Suit.SPADES,
+            "j_onyx_agate": Suit.CLUBS,
+        }
+        for key, suit in targets.items():
+            другая = next(s for s in Suit if s is not suit)
+            совпало = self._straight_score(f"4H 5D 6C 7S 8{suit.value}", JokerCard(key=key))
+            не_совпало = self._straight_score(f"4H 5D 6C 7S 8{другая.value}", JokerCard(key=key))
+            assert совпало != не_совпало, key
+
+    def test_ancient_joker(self) -> None:
+        joker = JokerCard(key="j_ancient", target_suit=Suit.HEARTS)
+        совпало = self._straight_score("4H 5D 6C 7S 8H", joker)
+        не_совпало = self._straight_score("4H 5D 6C 7S 8C", joker)
+        assert совпало != не_совпало
+
+    def test_idol(self) -> None:
+        joker = JokerCard(key="j_idol", target_suit=Suit.HEARTS, target_rank=Rank.EIGHT)
+        совпало = self._straight_score("4H 5D 6C 7S 8H", joker)
+        не_совпало = self._straight_score("4H 5D 6C 7S 8C", joker)
+        assert совпало != не_совпало
+
+    def test_flower_pot(self) -> None:
+        # Базовые 4 карты держат только 3 разные масти (H/D/C) — восьмёрка
+        # пикями достраивает все 4, любой другой мастью — нет.
+        joker = JokerCard(key="j_flower_pot")
+        все_4_масти = self._straight_score("4H 5D 6C 7C 8S", joker)
+        только_3_масти = self._straight_score("4H 5D 6C 7C 8H", joker)
+        assert все_4_масти != только_3_масти
+
+    def test_seeing_double(self) -> None:
+        # Без треф в руке условие («треф + любая другая масть») не выполнено
+        # вовсе — восьмёрка трефами включает его.
+        joker = JokerCard(key="j_seeing_double")
+        с_трефой = self._straight_score("4H 5D 6H 7S 8C", joker)
+        без_трефы = self._straight_score("4H 5D 6H 7S 8H", joker)
+        assert с_трефой != без_трефы
+
+    def test_bloodstone(self) -> None:
+        joker = JokerCard(key="j_bloodstone")
+        черви = self._straight_score("4D 5C 6S 7C 8H", joker)
+        не_черви = self._straight_score("4D 5C 6S 7C 8C", joker)
+        assert черви != не_черви
+
+    def test_blackboard(self) -> None:
+        # Стрит 4-5-6-7-8 — лучший розыгрыш из 6 карт, шестая (туз) остаётся
+        # в руке несыгранной: Blackboard смотрит именно на нессыгранные карты.
+        joker = JokerCard(key="j_blackboard")
+        держит_пики = self._straight_score("4H 5D 6C 7S 8D AS", joker)
+        держит_червы = self._straight_score("4H 5D 6C 7S 8D AH", joker)
+        assert держит_пики != держит_червы
+
+
+class TestRankDiscards:
+    """`rank_discards` — честный перебор ВСЕХ сбросов размера 1..5, в отличие
+    от `advise_discard` (перебор целей) считает каждый кандидат через
+    `discard_outcome`, то есть точно (`DiscardOutcome.exact`, не флаг вроде
+    `DiscardOption.exact`, который у `advise_discard` всегда `False`).
+
+    Рука и колода намеренно маленькие (5 карт руки, 6 карт колоды): рука в
+    218 кандидатов и полная колода умножают число вызовов `advise()` до
+    десятков тысяч даже со сжатием — корректность это не проверяет лучше,
+    только удлиняет тесты. Реальный масштаб (8 карт руки) уже проверен через
+    `discard_outcome`/сжатие выше (`TestКлассыЭквивалентности`)."""
+
+    @staticmethod
+    def _state() -> GameState:
+        state = build_state("AH KH QH 9H 2C", discards_left=1)
+        unseen = tuple(c for c in standard_deck() if c not in state.hand)[:6]
+        return replace(state, deck=unseen)
+
+    def test_сбросов_не_осталось_пустой_результат(self) -> None:
+        state = build_state("AH KH QH 9H 2C", discards_left=0)
+        assert rank_discards(state) == ()
+
+    def test_мало_карт_в_руке_пустой_результат(self) -> None:
+        state = build_state("AH", discards_left=1)
+        assert rank_discards(state) == ()
+
+    def test_отсортировано_по_убыванию_ожидания(self) -> None:
+        outcomes = rank_discards(self._state(), limit=10)
+        assert outcomes
+        значения = [o.expected for o in outcomes]
+        assert значения == sorted(значения, reverse=True)
+
+    def test_лимит_обрезает_список(self) -> None:
+        assert len(rank_discards(self._state(), limit=2)) <= 2
+
+    def test_каждый_кандидат_точный(self) -> None:
+        state = self._state()
+        outcomes = rank_discards(state, limit=5)
+        assert outcomes
+        for outcome in outcomes:
+            эталон = discard_outcome(state, outcome.discarded)
+            assert эталон is not None
+            assert outcome.expected == pytest.approx(эталон.expected)
+
+    def test_согласуется_с_rank_single_discards_на_сбросах_одной_карты(self) -> None:
+        state = self._state()
+        одна_карта = {o.discarded: o.expected for o in rank_single_discards(state)}
+        общий = {o.discarded: o.expected for o in rank_discards(state, limit=100)}
+        for discard, expected in одна_карта.items():
+            assert общий[discard] == pytest.approx(expected)

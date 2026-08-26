@@ -3,25 +3,44 @@
 
 `discard_outcome` отвечает на вопрос «а что если сбросить вот эти карты?»
 для одного набора, заданного вызывающим кодом (CLI, `advise --discard`).
-Полный перебор по всем возможным наборам сброса, да ещё с Монте-Карло добора
-внутри каждого, сам по себе не укладывается по времени (см. допущение №9 в
-PLAN.md: 1000 выборок на один набор — уже 13 секунд). Полный перебор даже без
-сэмплирования быстро упирается в ту же стену: уже для сбросов из двух карт
-типичная колода даёт сотни комбинаций добора *на кандидата*, а кандидатов
-(какие 2 из 8 карт сбросить) — 28.
+Наивный перебор сырых доборов упирается в комбинаторику: уже для сброса двух
+карт типичная колода даёт сотни доборов *на кандидата*, для пяти карт из
+44 — больше миллиона (`math.comb(44, 5) ≈ 1 086 008`).
 
-`rank_single_discards` — компромисс: перебирает точно и честно, но только
-сбросы **одной** карты. Кандидатов не больше, чем карт в руке (≤8), у каждого
-до полусотни доборов — счёт укладывается в единицы секунд даже с джокерами
-в конвейере, поэтому это единственный размер сброса, который можно честно
-пересчитывать на каждое изменение состояния в `watch`. За более широким
-перебором (2+ карты, конкретный кандидат) — `discard_outcome` явно.
+Вместо сырых доборов перебираются **композиции классов эквивалентности**
+(`_build_classes`/`_enumerate_compositions`): счёт зависит только от ранга,
+релевантной масти, улучшения, издания, печати и дебаффа карты, а не от того,
+*какая именно* из нескольких неотличимых карт добралась — то есть все сырые
+доборы внутри одной композиции провально дают один и тот же счёт `advise()`
+и честно взвешиваются комбинаторным коэффициентом вместо того, чтобы
+перебираться по отдельности. Масть схлопывается в общую корзину только там,
+где это доказуемо безопасно: либо она физически не может успеть собраться во
+флеш в пределах данного сброса (`_flush_active_suits`), либо в раскладке
+вовсе нет джокера, различающего конкретные масти (`_SUIT_SENSITIVE_JOKER_KEYS`
+— список сверен по коду `implementations.py`, покрытие проверяет тест).
+Для сброса пяти карт это на два порядка меньше вызовов `advise()`, чем сырой
+перебор (порядка тысяч композиций вместо миллиона доборов), и результат
+математически точен — не выборка и не эвристика. Выше `MAX_DISCARD_COMPOSITIONS`
+даже после сжатия — честный `None`, как и раньше, просто порог считается по
+композициям, а не по сырым доборам.
 
-`advise_discard` закрывает общий случай — «что сбрасывать» без задания
-конкретного набора — не перебором сбросов, а перебором **целей** (флеш,
-стрит, N одинаковых, фулл-хаус, «оставить как есть»): сброс — это следствие
-цели, а не то, что нужно искать отдельно. Полное обоснование алгоритма и
-критерии приёмки — в `docs/Discard Spec.md`, здесь только реализация.
+`rank_single_discards` — самый дешёвый частный случай: сбросы **одной**
+карты, кандидатов не больше, чем карт в руке (≤8). `rank_discards` — общий
+случай: честный перебор ВСЕХ до 218 возможных наборов сброса размера 1..5
+(как `rank_plays` перебирает розыгрыш), каждый — через ускоренный
+`discard_outcome`. Это тяжелее по числу вызовов `advise()`, чем перебор
+розыгрыша (у каждого кандидата ещё и перебор добора внутри), поэтому не
+входит в `advise` по умолчанию и не вызывается из `watch` — доступна явно
+(`advise --discard-search`).
+
+`advise_discard` — более старый и более дешёвый путь к тому же общему
+случаю: не перебор сбросов, а перебор **целей** (флеш, стрит, N одинаковых,
+фулл-хаус, «оставить как есть») с гипергеометрической вероятностью и
+оценкой по представительной выборке вместо точного перебора добора внутри
+каждой корзины (`docs/Discard Spec.md`). Остаётся дефолтом в `advise`/`watch`
+(через `solver.actions.rank_actions`) именно из-за этой дешевизны;
+`rank_discards` — настоящий точный ответ на тот же вопрос там, где на него
+есть время.
 """
 
 from __future__ import annotations
@@ -30,6 +49,7 @@ import math
 import random
 from dataclasses import dataclass, replace
 from itertools import combinations
+from typing import Final
 
 from balatro_bot.core.cards import Card, Rank, Suit, effective_suits, standard_deck
 from balatro_bot.core.hands import HandModifiers, evaluate
@@ -39,8 +59,8 @@ from balatro_bot.core.state import GameState
 from balatro_bot.solver.play import MAX_PLAYED, advise
 
 __all__ = [
+    "MAX_DISCARD_COMPOSITIONS",
     "MAX_DISCARD_SIZE",
-    "MAX_DRAW_COMBINATIONS",
     "SAMPLE_HANDS_PER_BUCKET",
     "DiscardOption",
     "DiscardOutcome",
@@ -49,14 +69,22 @@ __all__ = [
     "advise_discard",
     "discard_outcome",
     "known_deck",
+    "rank_discards",
     "rank_single_discards",
 ]
 
-#: При таком числе комбинаций честный перебор укладывается в разумное время
-#: (секунды, не минуты) даже с джокерами в конвейере. Больше — не гадать
-#: эвристикой и не сэмплировать втихую, а честно отказаться, как и с
-#: перебором порядка джокеров (`solver.play.MAX_JOKERS_FOR_ORDER_SEARCH`).
-MAX_DRAW_COMBINATIONS = 2000
+#: Сколько различных композиций классов эквивалентности (не сырых доборов —
+#: см. модульный докстринг) готовы честно перебрать на одного кандидата
+#: сброса. Композиция всегда не больше сырых доборов и обычно сильно меньше
+#: (сжатие помогает ровно тогда, когда в колоде вообще есть что схлопывать —
+#: повторяющиеся ранги под неактивными мастями), поэтому кэп унаследован от
+#: прежнего предела на сырые доборы: он не должен быть *строже* старого
+#: поведения, а лишь снимать потолок там, где сжатие даёт запас. Каждая
+#: композиция — один вызов `advise()` (единицы миллисекунд на реальных
+#: джокерах), так что даже верхняя граница держится в пределах секунд на
+#: кандидата. Больше — честный отказ (`None`), как и с перебором порядка
+#: джокеров (`solver.play.MAX_JOKERS_FOR_ORDER_SEARCH`), а не догадка.
+MAX_DISCARD_COMPOSITIONS = 2000
 
 
 def known_deck(state: GameState) -> tuple[tuple[Card, ...], bool]:
@@ -90,30 +118,205 @@ class DiscardOutcome:
     draws_considered: int
 
 
-def discard_outcome(state: GameState, discard: tuple[Card, ...]) -> DiscardOutcome | None:
+#: Джокеры, чей эффект различает конкретные масти карт (не только их набор
+#: как таковой — флеш и без них уже завязан на масть в `core/hands.py`, это
+#: справедливо всегда и здесь ни при чём). При любом из них в раскладке
+#: масть карты нельзя схлопывать в общую корзину классов эквивалентности —
+#: иначе можно тихо усреднить два по-разному считающихся исхода в один.
+#: Список сверен вручную по всем случаям `Suit.`/`has_suit(`/`suits_of(` в
+#: `core/jokers/implementations.py`; покрытие проверяет
+#: `tests/test_discard.py` сканированием исходника джокеров, чтобы новый
+#: suit-джокер не выпал из списка молча.
+_SUIT_SENSITIVE_JOKER_KEYS: frozenset[str] = frozenset(
+    {
+        "j_greedy_joker",
+        "j_lusty_joker",
+        "j_wrathful_joker",
+        "j_gluttenous_joker",
+        "j_arrowhead",
+        "j_onyx_agate",
+        "j_ancient",
+        "j_idol",
+        "j_flower_pot",
+        "j_seeing_double",
+        "j_bloodstone",
+        "j_blackboard",
+    }
+)
+
+
+def _joker_suit_conditioned(jokers: tuple[Joker, ...]) -> bool:
+    return any(joker.key in _SUIT_SENSITIVE_JOKER_KEYS for joker in jokers)
+
+
+def _flush_active_suits(
+    keep: tuple[Card, ...], unseen: tuple[Card, ...], k: int, mods: HandModifiers
+) -> frozenset[Suit]:
+    """Масти, которые ещё могут дособраться во флеш в пределах `k` карт добора.
+
+    Все остальные масти гарантированно не влияют на исход через флеш при
+    этом сбросе — либо флеш уже собран (или недостижим) независимо от
+    добора, либо аутов физически не хватит на `needed` карт из `k`
+    добираемых. Такие масти можно безопасно схлопнуть в одну корзину классов
+    эквивалентности (`_card_class_key`), не теряя точности: логика идентична
+    `_flush_targets` выше, только относительно произвольного `keep`, а не
+    только тех, что естественно возникают как отдельные цели.
+    """
+    flush_size = 4 if mods.four_fingers else 5
+    groups = _SMEARED_GROUPS if mods.smeared else tuple(frozenset({suit}) for suit in Suit)
+
+    active: set[Suit] = set()
+    for group in groups:
+        kept_count = sum(1 for card in keep if effective_suits(card, smeared=mods.smeared) & group)
+        needed = flush_size - kept_count
+        if needed <= 0 or needed > k:
+            continue
+        outs = sum(1 for card in unseen if effective_suits(card, smeared=mods.smeared) & group)
+        if needed > outs:
+            continue
+        active |= group
+    return frozenset(active)
+
+
+def _relevant_suits(
+    jokers: tuple[Joker, ...],
+    mods: HandModifiers,
+    keep: tuple[Card, ...],
+    unseen: tuple[Card, ...],
+    k: int,
+) -> frozenset[Suit]:
+    """Масти, которые нельзя схлопывать при построении классов эквивалентности.
+
+    Джокер, различающий масти, форсирует полную детализацию (все 4 масти по
+    отдельности) — это всегда безопасно, просто дороже. Без такого джокера
+    достаточно не схлопывать только те масти, что реально могут собраться во
+    флеш при этом сбросе (`_flush_active_suits`).
+    """
+    if _joker_suit_conditioned(jokers):
+        return frozenset(Suit)
+    return _flush_active_suits(keep, unseen, k, mods)
+
+
+def _card_class_key(card: Card, active_suits: frozenset[Suit], smeared: bool) -> tuple[object, ...]:
+    """Ключ класса эквивалентности карты.
+
+    Две карты с одинаковым ключом провально дают один и тот же счёт при
+    подстановке друг вместо друга в добор — ранг, улучшение, издание, печать
+    и дебафф всегда различаются (они напрямую входят в подсчёт), масть — только
+    если входит в `active_suits` (см. `_relevant_suits`); иначе все карты с
+    «неактивной» мастью схлопываются в одну корзину с ключом масти `None`.
+    """
+    matched = effective_suits(card, smeared=smeared) & active_suits
+    suit_key: frozenset[Suit] | None = frozenset(matched) if matched else None
+    return (card.rank, suit_key, card.enhancement, card.edition, card.seal, card.debuffed)
+
+
+def _build_classes(
+    cards: tuple[Card, ...], active_suits: frozenset[Suit], smeared: bool
+) -> dict[tuple[object, ...], list[Card]]:
+    classes: dict[tuple[object, ...], list[Card]] = {}
+    for card in cards:
+        classes.setdefault(_card_class_key(card, active_suits, smeared), []).append(card)
+    return classes
+
+
+def _enumerate_compositions(sizes: list[int], k: int, cap: int) -> list[tuple[int, ...]] | None:
+    """Все векторы «сколько карт добрать из каждого класса», в сумме дающие `k`.
+
+    Не сырые доборы — сама композиция уже представляет все доборы, которые ей
+    соответствуют (см. модульный докстринг), включая комбинаторный вес
+    (`math.comb(размер_класса, взято)` на класс), который считает вызывающий
+    код. Возвращает `None`, если результатов набралось больше `cap`: считать
+    дальше — не укладываться по времени, а не гадать эвристикой.
+    """
+    results: list[tuple[int, ...]] = []
+    suffix_capacity = [0] * (len(sizes) + 1)
+    for i in range(len(sizes) - 1, -1, -1):
+        suffix_capacity[i] = suffix_capacity[i + 1] + sizes[i]
+
+    current: list[int] = []
+
+    def backtrack(idx: int, remaining: int) -> bool:
+        """`False` — кэп превышен, перебор надо прекратить немедленно."""
+        if idx == len(sizes):
+            if remaining == 0:
+                results.append(tuple(current))
+                if len(results) > cap:
+                    return False
+            return True
+        min_take = max(0, remaining - suffix_capacity[idx + 1])
+        max_take = min(sizes[idx], remaining)
+        for take in range(min_take, max_take + 1):
+            current.append(take)
+            if not backtrack(idx + 1, remaining - take):
+                return False
+            current.pop()
+        return True
+
+    if not backtrack(0, k):
+        return None
+    return results
+
+
+def discard_outcome(
+    state: GameState,
+    discard: tuple[Card, ...],
+    max_compositions: int = MAX_DISCARD_COMPOSITIONS,
+) -> DiscardOutcome | None:
     """EV розыгрыша после сброса `discard` и добора той же длины из колоды.
 
-    Перебирает все возможные наборы добора точно — без повторов и без учёта
-    порядка (порядок добора на итоговый счёт не влияет, важен только состав
-    руки), и для каждого берёт лучший счёт из `advise`. Возвращает `None`,
-    если число комбинаций добора больше `MAX_DRAW_COMBINATIONS`: перебор
-    стал бы слишком долгим, а угадывать эвристикой в этом проекте не заведено.
+    Точный, но не через перебор сырых доборов, а через перебор композиций
+    классов эквивалентности (см. модульный докстринг и `_build_classes`) —
+    математически тот же результат, что честный перебор `combinations(deck,
+    k)`, просто с на порядки меньшим числом вызовов `advise()`. Возвращает
+    `None`, если даже после сжатия композиций больше `max_compositions`:
+    угадывать эвристикой в этом проекте не заведено.
+
+    `max_compositions` переопределяется вызывающим кодом, которому нужен
+    более жёсткий бюджет на кандидата, чем разовый явный `--discard`, —
+    см. `rank_discards`, который перебирает до 218 кандидатов подряд.
     """
     kept = tuple(card for card in state.hand if card not in discard)
     deck, exact_deck = known_deck(state)
 
-    draws = list(combinations(deck, len(discard)))
-    if not draws or len(draws) > MAX_DRAW_COMBINATIONS:
+    k = len(discard)
+    n = len(deck)
+    if k == 0 or k > n:
+        return None
+    total_raw = math.comb(n, k)
+    if total_raw == 0:
         return None
 
-    total = sum(advise(replace(state, hand=kept + draw), limit=1).best.score for draw in draws)
+    jokers = build_jokers(state)
+    mods = modifiers_from(jokers)
+    active_suits = _relevant_suits(jokers, mods, kept, deck, k)
+    classes = _build_classes(deck, active_suits, mods.smeared)
+    keys = list(classes)
+    sizes = [len(classes[key]) for key in keys]
+
+    compositions = _enumerate_compositions(sizes, k, max_compositions)
+    if compositions is None:
+        return None
+
+    weight_total = 0
+    score_total = 0.0
+    for vector in compositions:
+        weight = 1
+        draw: list[Card] = []
+        for key, take in zip(keys, vector, strict=True):
+            if take:
+                weight *= math.comb(len(classes[key]), take)
+                draw.extend(classes[key][:take])
+        score = advise(replace(state, hand=kept + tuple(draw)), limit=1).best.score
+        weight_total += weight
+        score_total += weight * score
 
     return DiscardOutcome(
         discarded=discard,
         kept=kept,
-        expected=total / len(draws),
+        expected=score_total / weight_total,
         exact=exact_deck,
-        draws_considered=len(draws),
+        draws_considered=total_raw,
     )
 
 
@@ -140,8 +343,57 @@ def rank_single_discards(state: GameState) -> tuple[DiscardOutcome, ...]:
 
 
 #: Больше пяти карт сбросить нельзя — игровое правило, не запас
-#: производительности (в отличие от `MAX_DRAW_COMBINATIONS` выше).
+#: производительности (в отличие от `MAX_DISCARD_COMPOSITIONS` выше).
 MAX_DISCARD_SIZE = 5
+
+
+#: Бюджет композиций НА ОДНОГО кандидата внутри `rank_discards` — заметно
+#: строже, чем `MAX_DISCARD_COMPOSITIONS` для разового явного `--discard`.
+#: Разница по смыслу, не по надёжности: один явный кандидат может себе
+#: позволить редкий кандидат в тысячи композиций (это по-прежнему секунды),
+#: а `rank_discards` таких кандидатов честно перебирает до 218 подряд — тот
+#: же бюджет на каждого умножил бы редкие тысячи на сотни кандидатов и
+#: превратил бы явную команду в многоминутное ожидание. Кандидат, срезанный
+#: этим более жёстким бюджетом, просто выпадает из результата — как и
+#: везде, честный пропуск, не догадка; сам по себе он всё ещё доступен через
+#: `discard_outcome(state, discard)` с более широким бюджетом по умолчанию.
+_RANK_DISCARDS_MAX_COMPOSITIONS: Final[int] = 200
+
+
+def rank_discards(
+    state: GameState, limit: int = 5, max_size: int = MAX_DISCARD_SIZE
+) -> tuple[DiscardOutcome, ...]:
+    """Точный перебор ВСЕХ сбросов размера 1..`max_size`, а не только целей.
+
+    В отличие от `advise_discard` (перебор целей, `DiscardOption.exact`
+    всегда `False`), каждый кандидат здесь — конкретный набор карт руки, и
+    его EV — честный `discard_outcome` (сжатый перебор добора по классам
+    эквивалентности, см. модульный докстринг), а не оценка по
+    представительной выборке. До 218 кандидатов при полной руке в 8 карт —
+    столько же, сколько `rank_plays` перебирает для розыгрыша, но здесь
+    каждый кандидат ещё и не бесплатный сам по себе (перебор добора внутри),
+    поэтому функция осознанно не входит в `advise` по умолчанию и не
+    вызывается из `watch` — только явно (`advise --discard-search`).
+
+    Кандидат, для которого перебор добора превысил
+    `_RANK_DISCARDS_MAX_COMPOSITIONS` даже после сжатия по классам
+    эквивалентности, просто выпадает из результата — тот же честный `None`
+    от `discard_outcome`, не порча этой функции.
+    """
+    if state.discards_left <= 0 or len(state.hand) < 2:
+        return ()
+
+    upper = min(max_size, len(state.hand))
+    outcomes: list[DiscardOutcome] = []
+    for size in range(1, upper + 1):
+        for discard in combinations(state.hand, size):
+            outcome = discard_outcome(state, discard, _RANK_DISCARDS_MAX_COMPOSITIONS)
+            if outcome is not None:
+                outcomes.append(outcome)
+
+    outcomes.sort(key=lambda item: -item.expected)
+    return tuple(outcomes[:limit])
+
 
 #: Сколько представительных рук перебирать на одну корзину «пришло ровно i
 #: аутов» (раздел 4.5 спеки). Прототип спеки использовал 6 и получал до 16%

@@ -15,8 +15,8 @@ from balatro_bot.solver.shop import JokerOffer, ShopAdvice
 from balatro_bot.solver.skip import SkipAdvice
 from balatro_bot.ui.render import (
     format_card,
+    render_discard_ranking,
     render_shop_advice,
-    render_single_discard_ranking,
     render_skip_advice,
     render_top_actions,
 )
@@ -57,7 +57,7 @@ class TestИзданияИПечатиВВыводе:
 class TestРанжированиеСброса:
     def test_пустой_список_ничего_не_печатает(self, capsys: pytest.CaptureFixture[str]) -> None:
         state = build_state("AH KH QH JH 9H")
-        render_single_discard_ranking((), advise(state).best)
+        render_discard_ranking((), advise(state).best)
         assert capsys.readouterr().out == ""
 
     def test_показывает_карту_и_отметку_выгоднее(self, capsys: pytest.CaptureFixture[str]) -> None:
@@ -70,7 +70,7 @@ class TestРанжированиеСброса:
             exact=True,
             draws_considered=10,
         )
-        render_single_discard_ranking((выгодный,), play_now)
+        render_discard_ranking((выгодный,), play_now)
         out = capsys.readouterr().out
         assert "2S" in out
         assert "выгоднее, чем сыграть сейчас" in out
@@ -85,7 +85,7 @@ class TestРанжированиеСброса:
             exact=False,
             draws_considered=10,
         )
-        render_single_discard_ranking((неточный,), play_now)
+        render_discard_ranking((неточный,), play_now)
         assert "колода приближена" in capsys.readouterr().out
 
 
@@ -274,6 +274,7 @@ class TestРендерСоветаПоМагазину:
                     expected_uplift=12.5,
                     exact_deck=False,
                     samples=12,
+                    interest_lost=0,
                 ),
             ),
             vouchers=(),
@@ -298,6 +299,7 @@ class TestРендерСоветаПоМагазину:
                     expected_uplift=None,
                     exact_deck=False,
                     samples=0,
+                    interest_lost=0,
                 ),
             ),
             vouchers=(),
@@ -318,6 +320,7 @@ class TestРендерСоветаПоМагазину:
                     expected_uplift=4.0,
                     exact_deck=True,
                     samples=12,
+                    interest_lost=1,
                 ),
             ),
             vouchers=(),
@@ -328,6 +331,7 @@ class TestРендерСоветаПоМагазину:
         out = capsys.readouterr().out
         assert "не хватает денег" in out
         assert "нет слота" in out
+        assert "−$1 процентов в конце раунда" in out
 
     def test_ваучеры_и_паки_показаны_текстом(self, capsys: pytest.CaptureFixture[str]) -> None:
         advice = ShopAdvice(

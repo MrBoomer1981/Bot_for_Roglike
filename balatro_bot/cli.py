@@ -37,7 +37,7 @@ from balatro_bot.install import (
     verify,
 )
 from balatro_bot.solver.actions import rank_actions
-from balatro_bot.solver.discard import discard_outcome
+from balatro_bot.solver.discard import discard_outcome, rank_discards
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import evaluate_skip
@@ -45,6 +45,7 @@ from balatro_bot.ui import tui
 from balatro_bot.ui.render import (
     format_cards,
     render_discard_outcome,
+    render_discard_ranking,
     render_joker_order,
     render_shop_advice,
     render_skip_advice,
@@ -207,6 +208,12 @@ def _advise(bridge: ModBridge, args: argparse.Namespace) -> int:
         if state.discards_left <= 0:
             print("\nсбросов не осталось — считаю чисто гипотетически")
         render_discard_outcome(discard_outcome(state, discard), discard, advice.best)
+    if args.discard_search:
+        print(
+            "\nищу точный сброс честным перебором всех наборов до 5 карт (может занять время) — "
+            "кандидат, где даже сжатый перебор добора не уложился в бюджет, тихо пропускается..."
+        )
+        render_discard_ranking(rank_discards(state), advice.best, top=args.top)
     return 0
 
 
@@ -297,6 +304,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     tip.add_argument(
         "--discard",
         help='карты из руки для сравнения "сыграть сейчас" со сбросом, например "3S 2S"',
+    )
+    tip.add_argument(
+        "--discard-search",
+        action="store_true",
+        help=(
+            "точный перебор ВСЕХ сбросов до 5 карт (не только целей advise_discard) — "
+            "медленнее, обычно секунды; кандидат вне бюджета честно пропускается"
+        ),
     )
 
     follow = commands.add_parser("watch", help="следить за игрой — советы обновляются сами")

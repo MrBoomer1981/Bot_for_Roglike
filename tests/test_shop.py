@@ -11,7 +11,7 @@ from dataclasses import replace
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
-from balatro_bot.solver.shop import SAMPLE_HANDS, evaluate_shop
+from balatro_bot.solver.shop import SAMPLE_HANDS, _interest, evaluate_shop
 
 
 def _shop_state(**overrides: object) -> GameState:
@@ -155,3 +155,65 @@ class TestEvaluateShop:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.jokers == ()
+
+
+class TestПроценты:
+    """Формула — `interest_amount * min(floor(dollars/5), interest_cap/5)`,
+    выписана из `functions/state_events.lua` игры (`_interest` в
+    `solver/shop.py`), не по памяти. По умолчанию `interest_amount=1`,
+    `interest_cap=25` → максимум $5 за раунд, шаг — $1 за каждые $5."""
+
+    def test_меньше_пяти_долларов_без_процентов(self) -> None:
+        assert _interest(0, None) == 0
+        assert _interest(4, None) == 0
+
+    def test_шаг_один_доллар_на_каждые_пять(self) -> None:
+        assert _interest(5, None) == 1
+        assert _interest(9, None) == 1
+        assert _interest(24, None) == 4
+
+    def test_потолок_на_25_долларах(self) -> None:
+        assert _interest(25, None) == 5
+        assert _interest(1000, None) == 5  # выше потолка не растёт
+
+    def test_green_deck_отключает_проценты_полностью(self) -> None:
+        assert _interest(1000, "GREEN") == 0
+
+    def test_отрицательные_деньги_не_ломают_формулу(self) -> None:
+        # Гипотетическая покупка дороже кошелька — не должно случиться в
+        # реальной игре, но формула не должна давать отрицательные проценты.
+        assert _interest(-3, None) == 0
+
+    def test_упущенные_проценты_джокера_в_общем_совете(self) -> None:
+        # $10 -> $2 процента; после покупки за $3 останется $7 -> $1.
+        # Упущено $1.
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].interest_lost == 1
+
+    def test_покупка_ниже_потолка_не_теряет_проценты(self) -> None:
+        # $100 -> $5 (потолок), после покупки за $3 всё ещё $97 -> $5.
+        state = _shop_state(
+            money=100,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].interest_lost == 0
+
+    def test_green_deck_в_общем_совете_тоже_ноль(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            deck_type="GREEN",
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].interest_lost == 0
