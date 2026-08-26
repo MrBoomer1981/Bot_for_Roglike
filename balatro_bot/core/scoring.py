@@ -12,6 +12,8 @@
 Порядок из плана, раздел 5:
 
 1. тип руки → базовые chips/mult по текущему уровню;
+1.5. боссовый модификатор всего счёта, если применим (сейчас — только `The Flint`:
+     уполовинивание базового значения, см. `_apply_boss_score_modifier`);
 2. дебафф боссового блайнда отключает карты;
 3. сыгранные карты слева направо, с ретриггерами;
 4. карты, оставшиеся в руке;
@@ -25,6 +27,7 @@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import product
@@ -475,6 +478,47 @@ def _score_joker_edition(joker: Joker, ctx: ScoreContext) -> None:
         ctx.apply(XMult(factor), joker.name, f"×{factor:g} множителя ({edition.value})")
 
 
+#: Совпадает с `BOSSES["bl_flint"].name` в `core/bosses.py` — тот же
+#: английский идентификатор, что мод отдаёт в `BlindInfo.name` независимо
+#: от локали интерфейса (см. докстринг `core/bosses.py`).
+_FLINT_BOSS_NAME = "The Flint"
+
+
+def _apply_boss_score_modifier(ctx: ScoreContext) -> None:
+    """Боссовые эффекты, меняющие сам подсчёт — не только отключающие карты.
+
+    Пока единственный такой босс — `The Flint`: базовые фишки и множитель
+    уполовиниваются (`floor(x*0.5+0.5)`, минимум 0 у фишек и 1 у множителя —
+    формула из `blind.lua`'s `Blind:modify_hand`, см. `core/bosses.py`).
+
+    В самой игре это происходит ПОСЛЕ хендовых джокеров вроде `Joker`/`Jolly
+    Joker` (безусловных или условных по составу руки бонусов), но ДО
+    подсчёта отдельных карт. Наш конвейер джокеров идёт последним шагом
+    (раздел 5 выше, ради `Blueprint`/`Brainstorm` и порядка `XMult`), поэтому
+    точно воспроизвести это разделение «до/после» здесь нельзя: без
+    джокеров в раскладке результат точен (уполовинивать больше нечего, кроме
+    базового значения), а с любым джокером — расчёт честно помечается
+    неточным (`mark_unknown`) вместо того, чтобы тихо занизить или завысить
+    настоящий эффект уполовинивания.
+    """
+    blind = ctx.state.blind
+    if blind is None or blind.name != _FLINT_BOSS_NAME:
+        return
+
+    chips = max(math.floor(ctx.chips * 0.5 + 0.5), 0)
+    mult = max(math.floor(ctx.mult * 0.5 + 0.5), 1)
+    ctx.chips, ctx.mult = float(chips), float(mult)
+    ctx.trace.append(
+        TraceStep(_FLINT_BOSS_NAME, "фишки и множитель уполовинены", ctx.chips, ctx.mult)
+    )
+    if ctx.jokers:
+        ctx.mark_unknown(
+            f"{_FLINT_BOSS_NAME}: уполовинивание применено только к базовому значению "
+            "руки — в игре порядок относительно джокеров другой, наш конвейер не делит "
+            "их на «до» и «после» подсчёта карт"
+        )
+
+
 # ---------------------------------------------------------------------------
 # Конвейер
 # ---------------------------------------------------------------------------
@@ -510,6 +554,9 @@ def _run_once(
         # базовый счёт выглядит необъяснимым скачком.
         label = f"{label} (уровень {hand_info.level})"
     ctx.trace.append(TraceStep("рука", label, ctx.chips, ctx.mult))
+
+    # 1.5. Боссовый модификатор всего счёта (сейчас — только The Flint).
+    _apply_boss_score_modifier(ctx)
 
     # 1-2. Тип руки объявлен, дебаффнутые карты выбывают.
     ctx.emit(HandDetermined(result.hand_type, result.scoring_cards))

@@ -29,7 +29,7 @@ from balatro_bot.core.catalogue import JOKERS
 from balatro_bot.core.hands import HandType
 from balatro_bot.core.jokers.implementations import _JOKER_RARITY
 from balatro_bot.core.scoring import ScoreOutcome, score_play
-from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo
 
 
 def сыграть(
@@ -138,6 +138,53 @@ class TestДебафф:
         # Обе карты образуют пару, но одна отключена боссом: (10 + 11) × 2
         hand = [карта(), карта(Rank.ACE, Suit.DIAMONDS, debuffed=True)]
         assert сыграть(hand, [0, 1]).expected == 42
+
+
+def _flint(required_score: int = 300) -> BlindInfo:
+    return BlindInfo("BOSS", "The Flint", "", required_score)
+
+
+def _other_boss(required_score: int = 300) -> BlindInfo:
+    return BlindInfo("BOSS", "The Wall", "", required_score)
+
+
+class TestБоссФлинт:
+    """`The Flint` уполовинивает базовые фишки/множитель руки — формула из
+    `blind.lua`'s `Blind:modify_hand`, см. `core/bosses.py` и
+    `core/scoring.py._apply_boss_score_modifier`."""
+
+    def test_уполовинивает_базовые_фишки_и_множитель(self) -> None:
+        # Пара: база 10/2 -> уполовинена до 5/1. Две карты по 11 очков:
+        # (5 + 11 + 11) × 1 = 27, вместо (10 + 11 + 11) × 2 = 64 без Флинта.
+        hand = parse_cards("AH AD")
+        assert сыграть(hand, [0, 1], blind=_flint()).expected == 27
+        assert сыграть(hand, [0, 1]).expected == 64
+
+    def test_минимум_один_у_множителя_и_ноль_у_фишек(self) -> None:
+        # Высокая карта: база 5/1 -> floor(5*0.5+0.5)=3, floor(1*0.5+0.5)=1
+        # (минимум мультипликатора и так 1). (3 + 11) × 1 = 14.
+        assert сыграть(parse_cards("AH"), [0], blind=_flint()).expected == 14
+
+    def test_другой_босс_не_уполовинивает(self) -> None:
+        hand = parse_cards("AH AD")
+        assert сыграть(hand, [0, 1], blind=_other_boss()).expected == 64
+
+    def test_без_блайнда_не_уполовинивает(self) -> None:
+        assert сыграть(parse_cards("AH"), [0]).expected == 16
+
+    def test_без_джокеров_расчёт_точный(self) -> None:
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], blind=_flint(), hand_info=info)
+        assert outcome.exact is True
+
+    def test_с_джокером_расчёт_честно_помечен_неточным(self) -> None:
+        # Наш конвейер считает джокеров последним шагом (раздел 5 плана), а
+        # в игре The Flint срабатывает до хендовых джокеров вроде "Joker" —
+        # точно воспроизвести порядок нельзя, поэтому это честно unknown,
+        # а не тихо неверное число.
+        info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_joker"], blind=_flint(), hand_info=info)
+        assert outcome.exact is False
 
 
 class TestРетриггеры:
