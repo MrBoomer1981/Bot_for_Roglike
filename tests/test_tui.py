@@ -280,3 +280,61 @@ class TestAutoplay:
         assert "skip" not in методы
         out = capsys.readouterr().out
         assert "выбрал блайнд" in out
+
+    def test_на_round_eval_забирает_награду(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "ROUND_EVAL"
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "cash_out" in методы
+        out = capsys.readouterr().out
+        assert "забрал награду" in out
+
+    def test_в_магазине_покупает_доступного_джокера(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "SHOP"
+        state["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 3},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "buy" in методы
+        buy_call = next(call for call in FakeMod.calls if call["method"] == "buy")
+        assert buy_call["params"] == {"card": 0}
+        out = capsys.readouterr().out
+        assert "купил в магазине: Joker" in out
+
+    def test_в_магазине_без_покупок_уходит(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "SHOP"
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "next_round" in методы
+        assert "buy" not in методы
+        out = capsys.readouterr().out
+        assert "ушёл из магазина" in out

@@ -30,9 +30,36 @@
 гадает. Когда скип не обоснован числом (включая случай, когда скипать
 вообще нельзя — на очереди Boss Blind), решение — выбрать блайнд и играть.
 
-Любая другая фаза (`SHOP`, `*_PACK`, ...) намеренно не закрыта — решения там
-ещё не замкнуты до вердикта (раздел 6, «Автопилот», пп. 9.2–9.4: магазин
-по-прежнему просто показывает числа, не выбор; вскрытие паков не
+**Магазин (`SHOP`, п. 9.2, второй кусок) и `ROUND_EVAL`.** Между «выиграл
+раунд» и «зашёл в магазин» есть фаза `ROUND_EVAL` («забрать награду за
+раунд») — решать там нечего (`cash_out` всегда нужен, чтобы вообще
+продолжить), но без явного вызова автопилот застрял бы там навсегда, ровно
+как без `select`/`skip` на выборе блайнда. В магазине решение — покупать
+джокеров: `solver.shop.evaluate_shop` уже считает `expected_uplift` (прирост
+счёта) на каждого, отсортированных по убыванию. Политика максимально
+простая и честная — купить лучшего по приросту, если он известен движку
+(`known`), карман потянет (`affordable`), есть слот (`has_slot`) и прирост
+строго положителен; ни один из этих четырёх флагов не эвристика, все уже
+посчитаны в `evaluate_shop`. `interest_lost` (упущенные проценты, раздел
+«Магазин и порядок джокеров» плана) сознательно не участвует в самом
+решении «покупать ли» — это несоизмеримая с приростом счёта величина
+(доллары против очков, тот же принцип, что у `decide_skip`), только
+показывается человеку рядом. Покупка — не более одной за вызов
+`decide_action`: `evaluate_shop`'s контрфактум для второго джокера не
+учитывает уже купленного первого (a `Blueprint`, например, зависит от
+соседей), поэтому правильно пересчитывать заново после каждой покупки, а
+не набирать корзину по одному-единственному снимку `evaluate_shop` — цикл
+опроса (`ui/tui.py.autoplay`) и так перечитывает состояние на каждой
+итерации, задача `decide_action` тут не в том, чтобы копить решения, а
+в том, чтобы каждый раз отвечать честно по свежим числам. Когда покупать
+больше нечего — решение `next_round`, уйти из магазина. Ваучеры, паки и
+реролл намеренно не тронуты вовсе (раздел 6, «Автопилот», п. 9.2/9.3
+плана): `evaluate_shop` не даёт им числовой оценки, а `ShopAdvice.reroll_cost`
+— цена без вердикта (раздел 8 плана, «Момент рерола») — оценивать их
+здесь значило бы гадать.
+
+Любая другая фаза (`*_PACK`, ...) намеренно не закрыта — решения там ещё
+не замкнуты до вердикта (раздел 6, «Автопилот», п. 9.2: вскрытие паков не
 реализовано вовсе). `decide_action` честно возвращает `None` на этих
 фазах, и цикл (`ui/tui.py.autoplay`) на них ведёт себя как обычный `watch`
 — показывает состояние и ничего не трогает, пока эти решения не будут
@@ -45,35 +72,59 @@ from dataclasses import dataclass, field
 from typing import Literal
 
 from balatro_bot.core.cards import Card
-from balatro_bot.core.state import GameState
+from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
-__all__ = ["BLIND_SELECT", "SELECTING_HAND", "Action", "decide_action", "decide_skip"]
+__all__ = [
+    "BLIND_SELECT",
+    "ROUND_EVAL",
+    "SELECTING_HAND",
+    "SHOP",
+    "Action",
+    "decide_action",
+    "decide_skip",
+]
 
 #: Фаза мода (`GameState.phase`, значение `state` в схеме мода), где в руке
-#: есть карты для розыгрыша или сброса. Остальные значения `State` из
-#: `openrpc.json` (магазин, вскрытие паков, ...) сюда не входят.
+#: есть карты для розыгрыша или сброса.
 SELECTING_HAND = "SELECTING_HAND"
 
 #: Фаза мода, где показывается экран выбора блайнда (сыграть или скипнуть
 #: Small/Big; Boss нужно только выбрать — скипнуть нельзя).
 BLIND_SELECT = "BLIND_SELECT"
 
+#: Фаза мода сразу после победы над блайндом, до магазина — нужен `cash_out`,
+#: чтобы вообще продолжить (см. модульный докстринг).
+ROUND_EVAL = "ROUND_EVAL"
+
+#: Фаза мода внутри магазина.
+SHOP = "SHOP"
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
-    """Одно решённое действие: что вызвать у моста и какими картами.
+    """Одно решённое действие: что вызвать у моста и с каким параметром.
 
-    `cards`/`indices` пустые для `select`/`skip` — там RPC мода вообще не
-    принимает параметров (см. `ModBridge.select`/`.skip`), решать нечего,
-    кроме самого факта вызова."""
+    Только одно из `cards`/`indices`/`shop_index` заполнено осмысленно —
+    какое именно, зависит от `kind`; для `select`/`skip`/`next_round`/
+    `cash_out` не нужно ничего, RPC мода вообще не принимает параметров."""
 
-    kind: Literal["play", "discard", "select", "skip"]
+    kind: Literal["play", "discard", "select", "skip", "buy", "next_round", "cash_out"]
     cards: tuple[Card, ...] = field(default=())
     indices: tuple[int, ...] = field(default=())
     """0-based индексы `cards` в `GameState.hand` — то, что реально ждёт RPC
     мода (`play`/`discard` принимают индексы в руке, не сами карты)."""
+
+    shop_index: int | None = None
+    """0-based индекс предмета в `GameState.shop` — то, что ждёт `buy` (см.
+    `openrpc.json`'s `buy`: `card`/`voucher`/`pack`, здесь всегда `card`,
+    покупка ваучеров/паков не входит в этот срез)."""
+
+    label: str = ""
+    """Название купленного предмета для лога автопилота (`buy` — иначе
+    показать было бы нечего, `shop_index` сам по себе не читается человеком)."""
 
 
 def _indices_of(hand: tuple[Card, ...], cards: tuple[Card, ...]) -> tuple[int, ...]:
@@ -95,6 +146,13 @@ def _indices_of(hand: tuple[Card, ...], cards: tuple[Card, ...]) -> tuple[int, .
     return tuple(indices)
 
 
+def _shop_index_of(shop: tuple[ShopItem, ...], item: ShopItem) -> int:
+    for index, candidate in enumerate(shop):
+        if candidate == item:
+            return index
+    raise ValueError(f"{item!r} не найден в текущем предложении магазина")
+
+
 def decide_skip(advice: SkipAdvice) -> bool:
     """Скипнуть ли блайнд — предельно консервативная политика, см. модульный
     докстринг. `True` только когда денежная цена тега точно известна и
@@ -113,6 +171,27 @@ def _decide_blind_action(state: GameState) -> Action:
     return Action(kind="select")
 
 
+def _decide_shop_action(state: GameState) -> Action:
+    """В магазине решение — купить лучшего по приросту джокера или уйти
+    (`next_round`), см. модульный докстринг про политику и её границы."""
+    advice = evaluate_shop(state)
+    if advice is not None:
+        for offer in advice.jokers:
+            if (
+                offer.known
+                and offer.affordable
+                and offer.has_slot
+                and offer.expected_uplift is not None
+                and offer.expected_uplift > 0
+            ):
+                return Action(
+                    kind="buy",
+                    shop_index=_shop_index_of(state.shop, offer.item),
+                    label=offer.item.label,
+                )
+    return Action(kind="next_round")
+
+
 def decide_action(state: GameState, *, include_discards: bool = True) -> Action | None:
     """Решить, что сделать прямо сейчас — `None`, если эта фаза ещё не закрыта.
 
@@ -121,6 +200,12 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
     флаг): автопилот тогда никогда не решает сбросить, только играть."""
     if state.phase == BLIND_SELECT:
         return _decide_blind_action(state)
+
+    if state.phase == ROUND_EVAL:
+        return Action(kind="cash_out")
+
+    if state.phase == SHOP:
+        return _decide_shop_action(state)
 
     if state.phase == SELECTING_HAND:
         if not state.hand:

@@ -16,7 +16,7 @@ import pytest
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.autopilot import Action, _indices_of, decide_action, decide_skip
 from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
-from balatro_bot.core.state import BlindInfo, GameState
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
 from balatro_bot.solver.skip import evaluate_skip
 
 
@@ -39,8 +39,9 @@ class TestIndicesOf:
 
 class TestDecideAction:
     def test_не_фаза_selecting_hand_ничего_не_решает(self) -> None:
+        # Вскрытие паков ещё не замкнуто до вердикта (раздел 6, п. 9.2).
         state = build_state("AH KH QH JH 9H")
-        state = replace(state, phase="SHOP")
+        state = replace(state, phase="TAROT_PACK")
         assert decide_action(state) is None
 
     def test_пустая_рука_ничего_не_решает(self) -> None:
@@ -183,3 +184,74 @@ class TestDecideActionНаВыбореБлайнда:
         )
         action = decide_action(state)
         assert action == Action(kind="select")
+
+
+class TestDecideActionНаRoundEval:
+    def test_всегда_cash_out(self) -> None:
+        # Решать нечего — без явного вызова автопилот застрял бы здесь
+        # навсегда (модульный докстринг, раздел про ROUND_EVAL).
+        assert decide_action(GameState(phase="ROUND_EVAL")) == Action(kind="cash_out")
+
+
+class TestDecideActionВМагазине:
+    """Политика: купить лучшего по приросту джокера, если он известен движку,
+    по карману и есть слот, и прирост строго положителен — иначе уйти
+    (`next_round`). См. модульный докстринг про то, почему `interest_lost`
+    не участвует в самом решении."""
+
+    def test_покупает_известного_доступного_джокера(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),),
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "buy"
+        assert action.shop_index == 0
+        assert action.label == "Joker"
+
+    def test_пустой_магазин_уходит(self) -> None:
+        state = GameState(phase="SHOP", money=10, joker_slots=5)
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_не_хватает_денег_уходит(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=1,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 99, "+4 Mult"),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_нет_слота_уходит(self) -> None:
+        existing = tuple(JokerCard(key="j_joker") for _ in range(3))
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            jokers=existing,
+            joker_slots=3,
+            shop=(ShopItem("j_greedy_joker", "Greedy Joker", "JOKER", 4),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_неизвестный_джокер_не_покупается(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_ваучеры_и_паки_не_покупаются(self) -> None:
+        # Нет числовой оценки — evaluate_shop не даёт им expected_uplift,
+        # decide_action не выдумывает вердикт.
+        state = GameState(
+            phase="SHOP",
+            money=100,
+            shop_vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10),),
+            shop_packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
+        )
+        assert decide_action(state) == Action(kind="next_round")

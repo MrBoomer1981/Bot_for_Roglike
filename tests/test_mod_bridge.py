@@ -377,6 +377,29 @@ class TestКлиент:
         assert FakeMod.calls[-1]["method"] == "skip"
         assert "params" not in FakeMod.calls[-1]
 
+    def test_buy_передаёт_индекс_карты(self, bridge: ModBridge) -> None:
+        bridge.buy(card=2)
+        assert FakeMod.calls[-1]["method"] == "buy"
+        assert FakeMod.calls[-1]["params"] == {"card": 2}
+
+    def test_buy_передаёт_индекс_ваучера(self, bridge: ModBridge) -> None:
+        bridge.buy(voucher=1)
+        assert FakeMod.calls[-1]["params"] == {"voucher": 1}
+
+    def test_buy_передаёт_индекс_пака(self, bridge: ModBridge) -> None:
+        bridge.buy(pack=0)
+        assert FakeMod.calls[-1]["params"] == {"pack": 0}
+
+    def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.next_round()
+        assert FakeMod.calls[-1]["method"] == "next_round"
+        assert "params" not in FakeMod.calls[-1]
+
+    def test_cash_out_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.cash_out()
+        assert FakeMod.calls[-1]["method"] == "cash_out"
+        assert "params" not in FakeMod.calls[-1]
+
     def test_идентификаторы_запросов_растут(self, bridge: ModBridge) -> None:
         bridge.is_alive()
         bridge.is_alive()

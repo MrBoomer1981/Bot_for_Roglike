@@ -142,7 +142,13 @@ def _describe_action(action: Action) -> str:
         return f"сбросил {format_cards(action.cards)}"
     if action.kind == "select":
         return "выбрал блайнд — играет"
-    return "скипнул блайнд ради тега"
+    if action.kind == "skip":
+        return "скипнул блайнд ради тега"
+    if action.kind == "cash_out":
+        return "забрал награду за раунд"
+    if action.kind == "buy":
+        return f"купил в магазине: {action.label}"
+    return "ушёл из магазина"
 
 
 def _read_key() -> str | None:
@@ -254,8 +260,14 @@ def _autoplay_loop(
                         state = bridge.discard(action.indices)
                     elif action.kind == "select":
                         state = bridge.select()
-                    else:
+                    elif action.kind == "skip":
                         state = bridge.skip()
+                    elif action.kind == "buy":
+                        state = bridge.buy(card=action.shop_index)
+                    elif action.kind == "next_round":
+                        state = bridge.next_round()
+                    else:
+                        state = bridge.cash_out()
                 except ModBridgeError as error:
                     # Мод отказал в честно посчитанном ходе — например,
                     # ограничение босса, которое `_is_legal_play` ещё не

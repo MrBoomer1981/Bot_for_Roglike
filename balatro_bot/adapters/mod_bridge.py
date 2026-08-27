@@ -517,3 +517,27 @@ class ModBridge:
         """Скипнуть текущий блайнд (только Small/Big — Boss скипнуть нельзя,
         мод ответит ошибкой сам, без параметров)."""
         return parse_game_state(self.call("skip"))
+
+    def buy(
+        self, *, card: int | None = None, voucher: int | None = None, pack: int | None = None
+    ) -> GameState:
+        """Купить предмет из магазина — ровно один из трёх индексов должен
+        быть задан (`card` — область `shop`, `voucher` — `shop_vouchers`,
+        `pack` — `shop_packs`), остальные `None`, как того требует схема
+        мода (`openrpc.json`'s `buy`)."""
+        params: dict[str, int] = {}
+        if card is not None:
+            params["card"] = card
+        if voucher is not None:
+            params["voucher"] = voucher
+        if pack is not None:
+            params["pack"] = pack
+        return parse_game_state(self.call("buy", params))
+
+    def next_round(self) -> GameState:
+        """Уйти из магазина — экран выбора следующего блайнда."""
+        return parse_game_state(self.call("next_round"))
+
+    def cash_out(self) -> GameState:
+        """Забрать награду за раунд и перейти в магазин (без параметров)."""
+        return parse_game_state(self.call("cash_out"))
