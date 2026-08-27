@@ -11,7 +11,8 @@ from __future__ import annotations
 
 import pytest
 
-from balatro_bot.adapters.mod_bridge import ModBridge
+from balatro_bot.adapters.mod_bridge import ModBridge, parse_game_state
+from balatro_bot.autopilot import decide_action
 from balatro_bot.ui import tui
 from tests.fake_mod import FakeMod, sample_state
 
@@ -183,3 +184,67 @@ class TestWatch:
         out = capsys.readouterr().out
         assert "не отвечает" in out
         assert out.count(tui._CLEAR) == 2
+
+
+class TestAutoplay:
+    """`balatro-bot autoplay` — Фаза 9, п. 9.1 (узкий срез: только
+    `SELECTING_HAND`). Фальшивый мод не симулирует реальный розыгрыш — на
+    любой вызов отвечает тем же `FakeMod.state`, — поэтому проверяется не
+    смена состояния, а сам факт и содержимое RPC-вызова (`FakeMod.calls`)."""
+
+    def test_по_умолчанию_играет_сам(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "play" in методы or "discard" in методы
+        out = capsys.readouterr().out
+        assert "автопилот" in out
+        assert "АВТОПИЛОТ" in out
+
+    def test_пауза_останавливает_действия(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: "p")
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "play" not in методы
+        assert "discard" not in методы
+        out = capsys.readouterr().out
+        assert "ПАУЗА" in out
+
+    def test_снятие_паузы_возвращает_действия(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Первое нажатие 'p' ставит на паузу, второе — снимает.
+        нажатия = iter(["p", "p"])
+        tui.autoplay(
+            bridge,
+            iterations=2,
+            sleep=lambda _: None,
+            key_reader=lambda: next(нажатия, None),
+        )
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "play" in методы or "discard" in методы
+
+    def test_не_selecting_hand_не_действует(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        shop_state = sample_state()
+        shop_state["state"] = "SHOP"
+        FakeMod.state = shop_state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "play" not in методы
+        assert "discard" not in методы
+
+    def test_отказ_мода_не_роняет_цикл(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        action = decide_action(parse_game_state(sample_state()))
+        assert action is not None
+        FakeMod.error_for = action.kind
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        out = capsys.readouterr().out
+        assert "мод отказал в ходе" in out

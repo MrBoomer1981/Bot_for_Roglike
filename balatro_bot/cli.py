@@ -5,6 +5,7 @@
     balatro-bot install         поставить мод-стек одной командой
     balatro-bot advise          посоветовать ход: из игры или по набранной руке
     balatro-bot watch           следить за игрой — советы обновляются сами
+    balatro-bot autoplay        играть самому — розыгрыш/сброс автоматически, пауза клавишей p
     balatro-bot doctor          проверить, что мод отвечает, и показать состояние
     balatro-bot record ИМЯ      записать текущее состояние как эталонный случай
 
@@ -234,6 +235,27 @@ def _watch(bridge: ModBridge, args: argparse.Namespace) -> int:
     return 0
 
 
+def _autoplay(bridge: ModBridge, args: argparse.Namespace) -> int:
+    """Играть самому: розыгрыш/сброс — автоматически, остальные фазы — как `watch`.
+
+    Раздел 6 плана, «Автопилот», п. 9.1 (первый, узкий срез — только фаза
+    `SELECTING_HAND`, см. `balatro_bot/autopilot.py`). Пауза/перехват — клавиша
+    `p` прямо во время работы, а не отдельная команда."""
+    try:
+        tui.autoplay(
+            bridge,
+            interval=args.interval,
+            top=args.top,
+            explain=args.explain,
+            joker_order=args.joker_order,
+            consider_discards=args.consider_discards,
+            consider_shop=args.consider_shop,
+        )
+    except KeyboardInterrupt:
+        print("\nостановлено")
+    return 0
+
+
 def _doctor(bridge: ModBridge) -> int:
     print(f"мод: {bridge.url}")
     try:
@@ -339,6 +361,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="не оценивать джокеров в магазине (несколько advise() на каждого предложенного)",
     )
 
+    auto = commands.add_parser(
+        "autoplay",
+        help="играть самому — розыгрыш/сброс автоматически (Фаза 9, узкий срез: только эта фаза)",
+    )
+    auto.add_argument(
+        "--interval", type=float, default=1.0, help="как часто опрашивать мод, в секундах"
+    )
+    auto.add_argument("--top", type=int, default=5, help="сколько вариантов показывать")
+    auto.add_argument("--explain", action="store_true", help="показывать разбор лучшего варианта")
+    auto.add_argument(
+        "--no-joker-order",
+        dest="joker_order",
+        action="store_false",
+        help="не проверять порядок джокеров (перебор до 720 перестановок на каждый опрос)",
+    )
+    auto.add_argument(
+        "--no-discard",
+        dest="consider_discards",
+        action="store_false",
+        help="не рассматривать сбросы среди действий автопилота (пропустить advise_discard)",
+    )
+    auto.add_argument(
+        "--no-shop",
+        dest="consider_shop",
+        action="store_false",
+        help="не оценивать джокеров в магазине (несколько advise() на каждого предложенного)",
+    )
+
     commands.add_parser("doctor", help="проверить связь с игрой и показать состояние")
     record = commands.add_parser("record", help="записать состояние как эталонный случай")
     record.add_argument("name", help="короткое имя случая, например flush-with-blueprint")
@@ -352,6 +402,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _advise(bridge, args)
     if args.command == "watch":
         return _watch(bridge, args)
+    if args.command == "autoplay":
+        return _autoplay(bridge, args)
     if args.command == "record":
         return _record(bridge, str(args.name))
     return _doctor(bridge)
