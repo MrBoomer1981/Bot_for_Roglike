@@ -248,3 +248,35 @@ class TestAutoplay:
         tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
         out = capsys.readouterr().out
         assert "мод отказал в ходе" in out
+
+    def test_на_выборе_блайнда_скипает_ради_доказанного_тега(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "BLIND_SELECT"
+        state["blinds"]["big"]["status"] = "SELECT"
+        state["blinds"]["big"]["tag_name"] = "Investment Tag"
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "skip" in методы
+        assert "select" not in методы
+        out = capsys.readouterr().out
+        assert "скипнул блайнд" in out
+
+    def test_на_выборе_блайнда_играет_без_доказанного_тега(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "BLIND_SELECT"
+        state["blinds"]["big"]["status"] = "SELECT"
+        state["blinds"]["big"]["tag_name"] = "Rare Tag"
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "select" in методы
+        assert "skip" not in методы
+        out = capsys.readouterr().out
+        assert "выбрал блайнд" in out

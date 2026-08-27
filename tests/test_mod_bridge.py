@@ -367,6 +367,16 @@ class TestКлиент:
         bridge.discard([1, 3])
         assert FakeMod.calls[-1]["params"] == {"cards": [1, 3]}
 
+    def test_select_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.select()
+        assert FakeMod.calls[-1]["method"] == "select"
+        assert "params" not in FakeMod.calls[-1]
+
+    def test_skip_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.skip()
+        assert FakeMod.calls[-1]["method"] == "skip"
+        assert "params" not in FakeMod.calls[-1]
+
     def test_идентификаторы_запросов_растут(self, bridge: ModBridge) -> None:
         bridge.is_alive()
         bridge.is_alive()

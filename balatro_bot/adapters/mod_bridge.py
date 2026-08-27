@@ -507,3 +507,13 @@ class ModBridge:
     def discard(self, indices: Sequence[int]) -> GameState:
         """Сбросить карты по индексам в руке (нумерация с нуля)."""
         return parse_game_state(self.call("discard", {"cards": list(indices)}))
+
+    def select(self) -> GameState:
+        """Выбрать текущий блайнд — начать раунд (без параметров: мод сам
+        знает, какой блайнд сейчас можно выбрать)."""
+        return parse_game_state(self.call("select"))
+
+    def skip(self) -> GameState:
+        """Скипнуть текущий блайнд (только Small/Big — Boss скипнуть нельзя,
+        мод ответит ошибкой сам, без параметров)."""
+        return parse_game_state(self.call("skip"))

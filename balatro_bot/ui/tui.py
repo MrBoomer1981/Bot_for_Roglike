@@ -7,9 +7,10 @@
 появляются сами. Только читает состояние: `ModBridge.play`/`.discard` здесь
 не вызываются вовсе.
 
-`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, п. 9.1):
-на фазе `SELECTING_HAND` вызывает `ModBridge.play`/`.discard` по решению
-`autopilot.decide_action`, на любой другой фазе ведёт себя ровно как
+`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, пп. 9.1–9.2):
+на фазе `SELECTING_HAND` вызывает `ModBridge.play`/`.discard`, на фазе
+`BLIND_SELECT` — `.select`/`.skip`, всё по решению `autopilot.decide_action`;
+на любой другой фазе (магазин, вскрытие паков, ...) ведёт себя ровно как
 `watch` (решения там ещё не замкнуты, см. `balatro_bot/autopilot.py`).
 Переключатель «пауза/перехват» (клавиша `p`, раздел 2 и раздел 6 п. 9.1
 плана — обязательное требование, не побочный эффект) проверяется на каждой
@@ -133,6 +134,17 @@ def _cbreak_stdin() -> Iterator[bool]:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
 
 
+def _describe_action(action: Action) -> str:
+    """Строка для лога автопилота — что именно он только что сделал."""
+    if action.kind == "play":
+        return f"сыграл {format_cards(action.cards)}"
+    if action.kind == "discard":
+        return f"сбросил {format_cards(action.cards)}"
+    if action.kind == "select":
+        return "выбрал блайнд — играет"
+    return "скипнул блайнд ради тега"
+
+
 def _read_key() -> str | None:
     """Клавиша, если она уже ждёт во входном буфере, иначе `None` — не
     блокирует цикл опроса."""
@@ -238,8 +250,12 @@ def _autoplay_loop(
                 try:
                     if action.kind == "play":
                         state = bridge.play(action.indices)
-                    else:
+                    elif action.kind == "discard":
                         state = bridge.discard(action.indices)
+                    elif action.kind == "select":
+                        state = bridge.select()
+                    else:
+                        state = bridge.skip()
                 except ModBridgeError as error:
                     # Мод отказал в честно посчитанном ходе — например,
                     # ограничение босса, которое `_is_legal_play` ещё не
@@ -258,8 +274,7 @@ def _autoplay_loop(
                 f"«{_PAUSE_KEY}» — пауза/продолжить, Ctrl+C — выйти\n"
             )
             if action_taken is not None:
-                глагол = "сыграл" if action_taken.kind == "play" else "сбросил"
-                print(f"автопилот {глагол}: {format_cards(action_taken.cards)}\n")
+                print(f"автопилот: {_describe_action(action_taken)}\n")
             render_state(state)
             skip_advice = evaluate_skip(state)
             if skip_advice is not None:
