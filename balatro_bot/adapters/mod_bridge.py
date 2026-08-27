@@ -421,6 +421,7 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         discards_left=int(round_info.get("discards_left", 0)),
         hands_played=int(round_info.get("hands_played", 0)),
         chips_scored=int(round_info.get("chips", 0)),
+        reroll_cost=int(round_info["reroll_cost"]) if "reroll_cost" in round_info else None,
         joker_slots=int(joker_slots) if joker_slots is not None else None,
         unknown_keys=tuple(unknown),
     )

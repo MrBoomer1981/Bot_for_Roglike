@@ -280,6 +280,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=10,
+            reroll_cost=5,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -287,6 +288,7 @@ class TestРендерСоветаПоМагазину:
         assert "$3" in out
         assert "прирост" in out
         assert "колода приближена" in out
+        assert "цена рерола: $5" in out
 
     def test_неизвестный_джокер_помечен(self, capsys: pytest.CaptureFixture[str]) -> None:
         advice = ShopAdvice(
@@ -305,9 +307,12 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=10,
+            reroll_cost=None,
         )
         render_shop_advice(advice)
-        assert "эффект не реализован" in capsys.readouterr().out
+        out = capsys.readouterr().out
+        assert "эффект не реализован" in out
+        assert "цена рерола" not in out
 
     def test_нехватка_денег_и_слота_отмечены(self, capsys: pytest.CaptureFixture[str]) -> None:
         advice = ShopAdvice(
@@ -326,6 +331,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=1,
+            reroll_cost=5,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -339,6 +345,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10, "+1 слот в магазине"),),
             packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
             money=10,
+            reroll_cost=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out

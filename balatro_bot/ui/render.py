@@ -177,6 +177,8 @@ def render_shop_advice(advice: ShopAdvice) -> None:
     ваучеры и паки — текстом как есть (раздел `solver/shop.py`: им не с чем
     сравнить контрфактум, в отличие от джокеров)."""
     print(f"\nмагазин: денег ${advice.money}")
+    if advice.reroll_cost is not None:
+        print(f"цена рерола: ${advice.reroll_cost}")
 
     if advice.jokers:
         print("\nджокеры:")

@@ -144,6 +144,13 @@ class TestРазборСостояния:
         state = parse_game_state(sample_state())
         assert state.hands_left == 3
         assert state.discards_left == 2
+        assert state.reroll_cost == 5
+
+    def test_без_reroll_cost_в_области_round_пусто(self) -> None:
+        raw = sample_state()
+        del raw["round"]["reroll_cost"]
+        state = parse_game_state(raw)
+        assert state.reroll_cost is None
 
     def test_пустое_состояние_не_падает(self) -> None:
         state = parse_game_state({})

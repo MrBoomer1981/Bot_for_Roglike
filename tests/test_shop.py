@@ -217,3 +217,30 @@ class TestПроценты:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.jokers[0].interest_lost == 0
+
+
+class TestЦенаРерола:
+    """`ShopAdvice.reroll_cost` — только показ живой цены (`GameState.reroll_cost`,
+    область `round` мода), без вердикта «рероллить или нет» — см. модульный
+    докстринг `solver/shop.py`."""
+
+    def test_цена_рерола_передаётся_как_есть(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            reroll_cost=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.reroll_cost == 5
+
+    def test_без_reroll_cost_в_состоянии_пусто(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.reroll_cost is None
