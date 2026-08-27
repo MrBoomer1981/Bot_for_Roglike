@@ -58,12 +58,29 @@
 — цена без вердикта (раздел 8 плана, «Момент рерола») — оценивать их
 здесь значило бы гадать.
 
-Любая другая фаза (`*_PACK`, ...) намеренно не закрыта — решения там ещё
-не замкнуты до вердикта (раздел 6, «Автопилот», п. 9.2: вскрытие паков не
-реализовано вовсе). `decide_action` честно возвращает `None` на этих
-фазах, и цикл (`ui/tui.py.autoplay`) на них ведёт себя как обычный `watch`
-— показывает состояние и ничего не трогает, пока эти решения не будут
-закрыты отдельно.
+**Вскрытие пака (`PLANET_PACK`, последний кусок 9.2).** Единственный
+честно замкнутый тип пака — Celestial/Planet: `solver.pack.evaluate_pack`
+считает тот же контрфактум, что и джокеры в магазине (поднять уровень
+типа руки, пересчитать `advise()` на представительных руках, взять
+разницу), а поднятие уровня руки по построению не может ухудшить лучший
+достижимый счёт — значит вопроса «а вдруг она не нужна» тут в принципе
+нет, в отличие от скипа блайнда или покупки джокера: решение — взять
+карту с максимальным приростом, если в паке нашлась хоть одна опознанная
+планета (`_decide_pack_action`), и `skip` (весь пак целиком, у эндпоинта
+мода `pack` нет способа скипнуть одну конкретную карту) только в
+защитном случае, когда в паке не нашлось ни одной. Джамбо/мега-паки
+(выбор 1 из 5 / до 2 из 5) не требуют отдельной ветки: цикл опроса и так
+перечитывает состояние на каждой итерации, и если после выбора одной
+карты пак остаётся открытым с оставшимися картами, `decide_action`
+посчитает следующий выбор заново на уже обновлённом состоянии — ровно та
+же логика, что «одна покупка за вызов» в магазине.
+
+Любая другая фаза (`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK`/
+`BUFFOON_PACK`, ...) намеренно не закрыта — решения там ещё не замкнуты
+до вердикта (раздел 6, «Автопилот», п. 9.3/9.4). `decide_action` честно
+возвращает `None` на этих фазах, и цикл (`ui/tui.py.autoplay`) на них
+ведёт себя как обычный `watch` — показывает состояние и ничего не
+трогает, пока эти решения не будут закрыты отдельно.
 """
 
 from __future__ import annotations
@@ -74,6 +91,7 @@ from typing import Literal
 from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.pack import PLANET_PACK, evaluate_pack
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
@@ -107,24 +125,30 @@ SHOP = "SHOP"
 class Action:
     """Одно решённое действие: что вызвать у моста и с каким параметром.
 
-    Только одно из `cards`/`indices`/`shop_index` заполнено осмысленно —
+    Только одно из `cards`/`indices`/`item_index` заполнено осмысленно —
     какое именно, зависит от `kind`; для `select`/`skip`/`next_round`/
-    `cash_out` не нужно ничего, RPC мода вообще не принимает параметров."""
+    `cash_out`/`skip_pack` не нужно ничего, RPC мода вообще не принимает
+    параметров (кроме самого факта скипа у `skip_pack` — `open_pack(skip=True)`,
+    без индекса)."""
 
-    kind: Literal["play", "discard", "select", "skip", "buy", "next_round", "cash_out"]
+    kind: Literal[
+        "play", "discard", "select", "skip", "buy", "next_round", "cash_out", "pack", "skip_pack"
+    ]
     cards: tuple[Card, ...] = field(default=())
     indices: tuple[int, ...] = field(default=())
     """0-based индексы `cards` в `GameState.hand` — то, что реально ждёт RPC
     мода (`play`/`discard` принимают индексы в руке, не сами карты)."""
 
-    shop_index: int | None = None
-    """0-based индекс предмета в `GameState.shop` — то, что ждёт `buy` (см.
-    `openrpc.json`'s `buy`: `card`/`voucher`/`pack`, здесь всегда `card`,
-    покупка ваучеров/паков не входит в этот срез)."""
+    item_index: int | None = None
+    """0-based индекс предмета в `GameState.shop` (`buy`) или в
+    `GameState.pack` (`pack`) — в обоих случаях один и тот же `ShopItem`,
+    индексирующий один и тот же по форме `tuple[ShopItem, ...]`, поэтому
+    поле общее, не отдельное на каждый RPC-метод."""
 
     label: str = ""
-    """Название купленного предмета для лога автопилота (`buy` — иначе
-    показать было бы нечего, `shop_index` сам по себе не читается человеком)."""
+    """Название выбранного предмета для лога автопилота (`buy`/`pack` —
+    иначе показать было бы нечего, `item_index` сам по себе не читается
+    человеком)."""
 
 
 def _indices_of(hand: tuple[Card, ...], cards: tuple[Card, ...]) -> tuple[int, ...]:
@@ -146,11 +170,11 @@ def _indices_of(hand: tuple[Card, ...], cards: tuple[Card, ...]) -> tuple[int, .
     return tuple(indices)
 
 
-def _shop_index_of(shop: tuple[ShopItem, ...], item: ShopItem) -> int:
-    for index, candidate in enumerate(shop):
+def _item_index_of(items: tuple[ShopItem, ...], item: ShopItem) -> int:
+    for index, candidate in enumerate(items):
         if candidate == item:
             return index
-    raise ValueError(f"{item!r} не найден в текущем предложении магазина")
+    raise ValueError(f"{item!r} не найден в текущем предложении")
 
 
 def decide_skip(advice: SkipAdvice) -> bool:
@@ -186,10 +210,27 @@ def _decide_shop_action(state: GameState) -> Action:
             ):
                 return Action(
                     kind="buy",
-                    shop_index=_shop_index_of(state.shop, offer.item),
+                    item_index=_item_index_of(state.shop, offer.item),
                     label=offer.item.label,
                 )
     return Action(kind="next_round")
+
+
+def _decide_pack_action(state: GameState) -> Action:
+    """На вскрытии Celestial/Planet Pack решение — взять карту с наибольшим
+    приростом (см. модульный докстринг: подъём уровня руки не может
+    ухудшить счёт, так что вопрос тут не «а стоит ли», а только «какую
+    из предложенных»). `skip_pack` — защитный случай, когда в паке не
+    нашлось ни одной опознанной планеты (не должно происходить для
+    настоящего Celestial Pack, но `evaluate_pack` тогда и оценить нечего)."""
+    for offer in evaluate_pack(state):
+        if offer.expected_uplift is not None:
+            return Action(
+                kind="pack",
+                item_index=_item_index_of(state.pack, offer.item),
+                label=offer.item.label,
+            )
+    return Action(kind="skip_pack")
 
 
 def decide_action(state: GameState, *, include_discards: bool = True) -> Action | None:
@@ -206,6 +247,9 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
 
     if state.phase == SHOP:
         return _decide_shop_action(state)
+
+    if state.phase == PLANET_PACK:
+        return _decide_pack_action(state)
 
     if state.phase == SELECTING_HAND:
         if not state.hand:

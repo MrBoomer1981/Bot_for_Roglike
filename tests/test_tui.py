@@ -338,3 +338,63 @@ class TestAutoplay:
         assert "buy" not in методы
         out = capsys.readouterr().out
         assert "ушёл из магазина" in out
+
+    def test_на_вскрытии_пака_берёт_лучшую_планету(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "PLANET_PACK"
+        state["pack"] = {
+            "count": 1,
+            "limit": 3,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "c_mercury",
+                    "set": "PLANET",
+                    "label": "Mercury",
+                    "value": {"effect": "Increases Pair hand value by +1 Mult and +15 Chips"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 0},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "pack" in методы
+        pack_call = next(call for call in FakeMod.calls if call["method"] == "pack")
+        assert pack_call["params"] == {"card": 0}
+        out = capsys.readouterr().out
+        assert "взял из пака: Mercury" in out
+
+    def test_на_вскрытии_пака_без_опознанных_планет_скипает(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["state"] = "PLANET_PACK"
+        state["pack"] = {
+            "count": 1,
+            "limit": 3,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "c_совсем_новый",
+                    "set": "PLANET",
+                    "label": "???",
+                    "value": {"effect": ""},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 0},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        pack_call = next(call for call in FakeMod.calls if call["method"] == "pack")
+        assert pack_call["params"] == {"skip": True}
+        out = capsys.readouterr().out
+        assert "скипнул пак" in out

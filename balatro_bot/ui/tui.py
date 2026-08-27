@@ -9,9 +9,11 @@
 
 `autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, пп. 9.1–9.2):
 на фазе `SELECTING_HAND` вызывает `ModBridge.play`/`.discard`, на фазе
-`BLIND_SELECT` — `.select`/`.skip`, всё по решению `autopilot.decide_action`;
-на любой другой фазе (магазин, вскрытие паков, ...) ведёт себя ровно как
-`watch` (решения там ещё не замкнуты, см. `balatro_bot/autopilot.py`).
+`BLIND_SELECT` — `.select`/`.skip`, на `SHOP`/`ROUND_EVAL` — `.buy`/
+`.next_round`/`.cash_out`, на `PLANET_PACK` — `.open_pack`, всё по решению
+`autopilot.decide_action`; на любой другой фазе (открытие Tarot/Spectral/
+Standard/Buffoon-пака, ...) ведёт себя ровно как `watch` (решения там ещё
+не замкнуты, см. `balatro_bot/autopilot.py`).
 Переключатель «пауза/перехват» (клавиша `p`, раздел 2 и раздел 6 п. 9.1
 плана — обязательное требование, не побочный эффект) проверяется на каждой
 итерации, то есть между каждым отдельным действием, а не только между
@@ -32,12 +34,14 @@ from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import Action, decide_action
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.pack import evaluate_pack
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui.render import (
     format_cards,
     render_joker_order,
+    render_pack_advice,
     render_shop_advice,
     render_skip_advice,
     render_state,
@@ -102,6 +106,7 @@ def watch(
                     shop_advice = evaluate_shop(state)
                     if shop_advice is not None:
                         render_shop_advice(shop_advice)
+                render_pack_advice(evaluate_pack(state))
                 if state.hand:
                     print()
                     result = advise(state)
@@ -148,7 +153,11 @@ def _describe_action(action: Action) -> str:
         return "забрал награду за раунд"
     if action.kind == "buy":
         return f"купил в магазине: {action.label}"
-    return "ушёл из магазина"
+    if action.kind == "next_round":
+        return "ушёл из магазина"
+    if action.kind == "pack":
+        return f"взял из пака: {action.label}"
+    return "скипнул пак"
 
 
 def _read_key() -> str | None:
@@ -263,11 +272,15 @@ def _autoplay_loop(
                     elif action.kind == "skip":
                         state = bridge.skip()
                     elif action.kind == "buy":
-                        state = bridge.buy(card=action.shop_index)
+                        state = bridge.buy(card=action.item_index)
                     elif action.kind == "next_round":
                         state = bridge.next_round()
-                    else:
+                    elif action.kind == "cash_out":
                         state = bridge.cash_out()
+                    elif action.kind == "pack":
+                        state = bridge.open_pack(card=action.item_index)
+                    else:
+                        state = bridge.open_pack(skip=True)
                 except ModBridgeError as error:
                     # Мод отказал в честно посчитанном ходе — например,
                     # ограничение босса, которое `_is_legal_play` ещё не
@@ -295,6 +308,7 @@ def _autoplay_loop(
                 shop_advice = evaluate_shop(state)
                 if shop_advice is not None:
                     render_shop_advice(shop_advice)
+            render_pack_advice(evaluate_pack(state))
             if state.hand:
                 print()
                 result = advise(state)

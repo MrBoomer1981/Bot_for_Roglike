@@ -140,6 +140,32 @@ class TestРазборСостояния:
         assert state.shop_packs[0].label == "Arcana Pack"
         assert state.shop_packs[0].price == 4
 
+    def test_без_открытого_пака_пустая_область(self) -> None:
+        assert parse_game_state(sample_state()).pack == ()
+
+    def test_открытый_пак_разбирается(self) -> None:
+        raw = sample_state()
+        raw["pack"] = {
+            "count": 1,
+            "limit": 3,
+            "cards": [
+                {
+                    "id": 3,
+                    "key": "c_mercury",
+                    "set": "PLANET",
+                    "label": "Mercury",
+                    "value": {"effect": "Increases Pair hand value by +1 Mult and +15 Chips"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 0},
+                }
+            ],
+        }
+        item = parse_game_state(raw).pack[0]
+        assert item.key == "c_mercury"
+        assert item.kind == "PLANET"
+        assert item.label == "Mercury"
+
     def test_ресурсы_раунда(self) -> None:
         state = parse_game_state(sample_state())
         assert state.hands_left == 3
@@ -389,6 +415,15 @@ class TestКлиент:
     def test_buy_передаёт_индекс_пака(self, bridge: ModBridge) -> None:
         bridge.buy(pack=0)
         assert FakeMod.calls[-1]["params"] == {"pack": 0}
+
+    def test_open_pack_передаёт_индекс_карты(self, bridge: ModBridge) -> None:
+        bridge.open_pack(card=1)
+        assert FakeMod.calls[-1]["method"] == "pack"
+        assert FakeMod.calls[-1]["params"] == {"card": 1}
+
+    def test_open_pack_передаёт_скип(self, bridge: ModBridge) -> None:
+        bridge.open_pack(skip=True)
+        assert FakeMod.calls[-1]["params"] == {"skip": True}
 
     def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
         bridge.next_round()

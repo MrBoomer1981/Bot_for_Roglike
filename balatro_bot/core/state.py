@@ -159,6 +159,14 @@ class GameState:
     shop_vouchers: tuple[ShopItem, ...] = ()
     shop_packs: tuple[ShopItem, ...] = ()
 
+    pack: tuple[ShopItem, ...] = ()
+    """Карты открытого сейчас бустер-пака — область `pack` мода, непустая
+    только в фазах `*_PACK` (`TAROT_PACK`/`PLANET_PACK`/`SPECTRAL_PACK`/
+    `STANDARD_PACK`/`BUFFOON_PACK`). Те же `ShopItem` (одна и та же форма
+    карты у мода что в магазине, что в паке), `price` тут просто 0 —
+    выбор карты из пака ничего не стоит сам по себе, пак уже оплачен
+    (`solver/pack.py`)."""
+
     reroll_cost: int | None = None
     """Текущая цена рерола магазина — область `round` мода (`reroll_cost`,
     та же, что даёт `hands_left`/`discards_left`), растёт с каждым роллом.

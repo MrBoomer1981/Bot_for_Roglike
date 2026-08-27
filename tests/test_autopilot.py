@@ -19,6 +19,11 @@ from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
 from balatro_bot.solver.skip import evaluate_skip
 
+#: Та же детерминированная колода без флеша/стрита/троек, что в
+#: `tests/test_pack.py` — единственная собираемая рука сильнее хай-карты
+#: здесь пара тузов.
+_ПАРА_ТУЗОВ = parse_cards("AH AS 2C 4D 6S 9H TC KD")
+
 
 class TestIndicesOf:
     def test_находит_индексы_по_порядку(self) -> None:
@@ -209,7 +214,7 @@ class TestDecideActionВМагазине:
         action = decide_action(state)
         assert action is not None
         assert action.kind == "buy"
-        assert action.shop_index == 0
+        assert action.item_index == 0
         assert action.label == "Joker"
 
     def test_пустой_магазин_уходит(self) -> None:
@@ -255,3 +260,32 @@ class TestDecideActionВМагазине:
             shop_packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
         )
         assert decide_action(state) == Action(kind="next_round")
+
+
+class TestDecideActionНаВскрытииПака:
+    """Celestial/Planet Pack — единственный сейчас замкнутый тип пака.
+
+    Подъём уровня руки по построению не может ухудшить счёт (см. докстринг
+    `solver/pack.py`), поэтому политика проще, чем у скипа/магазина: всегда
+    брать карту с максимальным приростом, скип пака — только защитный
+    случай, когда в паке не нашлось ни одной опознанной планеты."""
+
+    def test_берёт_карту_с_максимальным_приростом(self) -> None:
+        state = GameState(
+            phase="PLANET_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(
+                ShopItem("c_jupiter", "Jupiter", "PLANET", 0),
+                ShopItem("c_mercury", "Mercury", "PLANET", 0),
+            ),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="pack", item_index=1, label="Mercury")
+
+    def test_неопознанные_карты_приводят_к_скипу_пака(self) -> None:
+        state = GameState(
+            phase="PLANET_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("c_совсем_новый", "???", "PLANET", 0),),
+        )
+        assert decide_action(state) == Action(kind="skip_pack")

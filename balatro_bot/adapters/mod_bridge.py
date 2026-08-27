@@ -414,6 +414,7 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         shop=_parse_shop_area(payload.get("shop"), unknown),
         shop_vouchers=_parse_shop_area(payload.get("vouchers"), unknown),
         shop_packs=_parse_shop_area(payload.get("packs"), unknown),
+        pack=_parse_shop_area(payload.get("pack"), unknown),
         deck_type=str(payload["deck"]) if payload.get("deck") else None,
         deck=deck,
         full_deck=full_deck,
@@ -533,6 +534,19 @@ class ModBridge:
         if pack is not None:
             params["pack"] = pack
         return parse_game_state(self.call("buy", params))
+
+    def open_pack(self, *, card: int | None = None, skip: bool | None = None) -> GameState:
+        """Выбрать карту из открытого пака (индекс в `GameState.pack`) или
+        скипнуть пак целиком — ровно один из двух, как того требует схема
+        мода (`openrpc.json`'s `pack`; RPC-метод называется `pack`, клиентский
+        метод — `open_pack`, чтобы не путать с `buy(pack=...)` — индексом
+        пака в витрине магазина, это другое понятие)."""
+        params: dict[str, int | bool] = {}
+        if card is not None:
+            params["card"] = card
+        if skip is not None:
+            params["skip"] = skip
+        return parse_game_state(self.call("pack", params))
 
     def next_round(self) -> GameState:
         """Уйти из магазина — экран выбора следующего блайнда."""

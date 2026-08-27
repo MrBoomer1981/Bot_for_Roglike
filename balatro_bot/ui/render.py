@@ -14,6 +14,7 @@ from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.discard import MAX_DISCARD_COMPOSITIONS, DiscardOutcome
+from balatro_bot.solver.pack import PlanetOffer
 from balatro_bot.solver.play import (
     MAX_JOKERS_FOR_ORDER_SEARCH,
     Advice,
@@ -32,6 +33,7 @@ __all__ = [
     "render_discard_ranking",
     "render_explanation",
     "render_joker_order",
+    "render_pack_advice",
     "render_shop_advice",
     "render_skip_advice",
     "render_state",
@@ -209,6 +211,23 @@ def render_shop_advice(advice: ShopAdvice) -> None:
         print("\nпаки:")
         for item in advice.packs:
             print(f"  {item.label:<24} ${item.price}")
+
+
+def render_pack_advice(offers: Sequence[PlanetOffer]) -> None:
+    """Показать оценку карт открытого Celestial/Planet Pack — пусто, если
+    сейчас открыт не он (`solver/pack.py`: `evaluate_pack` тогда сама
+    возвращает пустой кортеж, рисовать нечего)."""
+    if not offers:
+        return
+    print("\nвскрытие пака:")
+    ширина = max(len(offer.item.label) for offer in offers)
+    for offer in offers:
+        if offer.expected_uplift is None:
+            оценка = "не оценено"
+        else:
+            приближено = "" if offer.exact_deck else ", колода приближена"
+            оценка = f"прирост ~{format_number(offer.expected_uplift)}{приближено}"
+        print(f"  {offer.item.label:<{ширина}}  {offer.hand_type.value:<15} {оценка}")
 
 
 def render_advice(advice: Advice, top: int, explain: bool) -> None:
