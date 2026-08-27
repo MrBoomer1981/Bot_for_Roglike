@@ -34,7 +34,8 @@ class TestEvaluateShop:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.jokers == ()
-        assert advice.vouchers[0].label == "Overstock"
+        assert advice.vouchers[0].item.label == "Overstock"
+        assert advice.vouchers[0].expected_uplift is None
         assert advice.packs[0].label == "Arcana Pack"
 
     def test_известный_джокер_получает_положительную_оценку(self) -> None:

@@ -13,6 +13,7 @@ from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import JokerOffer, ShopAdvice
 from balatro_bot.solver.skip import SkipAdvice
+from balatro_bot.solver.vouchers import VoucherOffer
 from balatro_bot.ui.render import (
     format_card,
     render_discard_ranking,
@@ -339,10 +340,17 @@ class TestРендерСоветаПоМагазину:
         assert "нет слота" in out
         assert "−$1 процентов в конце раунда" in out
 
-    def test_ваучеры_и_паки_показаны_текстом(self, capsys: pytest.CaptureFixture[str]) -> None:
+    def test_ваучеры_без_оценки_показаны_текстом(self, capsys: pytest.CaptureFixture[str]) -> None:
         advice = ShopAdvice(
             jokers=(),
-            vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10, "+1 слот в магазине"),),
+            vouchers=(
+                VoucherOffer(
+                    item=ShopItem("v_overstock", "Overstock", "VOUCHER", 10, "+1 слот в магазине"),
+                    expected_uplift=None,
+                    exact_deck=False,
+                    samples=0,
+                ),
+            ),
             packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
             money=10,
             reroll_cost=None,
@@ -352,3 +360,26 @@ class TestРендерСоветаПоМагазину:
         assert "Overstock" in out
         assert "+1 слот в магазине" in out
         assert "Arcana Pack" in out
+
+    def test_ваучер_с_оценкой_показывает_прирост_и_примечание(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        advice = ShopAdvice(
+            jokers=(),
+            vouchers=(
+                VoucherOffer(
+                    item=ShopItem("v_wasteful", "Wasteful", "VOUCHER", 10),
+                    expected_uplift=15.0,
+                    exact_deck=True,
+                    samples=4,
+                    note="нижняя граница: учтён только один лучший одиночный сброс",
+                ),
+            ),
+            packs=(),
+            money=10,
+            reroll_cost=None,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "прирост ~15" in out
+        assert "нижняя граница" in out

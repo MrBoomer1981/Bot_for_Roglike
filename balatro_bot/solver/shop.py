@@ -15,12 +15,18 @@
 `advise()` на каждой выборке, не приближённый подсчёт, приближена только
 сама выборка рук, а не сам счёт.
 
-Ваучеры и паки не переводятся в очки: ваучер — это постоянное изменение
-правил рана (скидки, слоты, шансы), а не прибавка к конкретной руке, и
-считать это тем же контрфактумом не на чем. Здесь честный текст важнее
-выдуманного числа (раздел 8 CLAUDE.md — то же решение, что для тегов в
-`core/tags.py`, только эффект уже даёт сама игра текстом, а не наша
-таблица).
+Часть ваучеров теперь тоже переводится в очки — Фаза 9.3, первый (самый
+честный) из трёх уровней: `solver/vouchers.py`'s `evaluate_vouchers` считает
+контрфактум для прямых игровых ресурсов (лишняя рука/сброс за раунд, лишняя
+карта в руке), тем же способом, что джокеры здесь. Остальные ваучеры —
+которые меняют не счёт конкретной руки, а правила рана целиком (скидки,
+слоты, шансы редких изданий, будущий горизонт денег) — по-прежнему получают
+`expected_uplift = None` с честным пояснением вместо выдуманного числа
+(`VoucherOffer.note`), см. модульный докстринг `solver/vouchers.py` и
+PLAN.md, 9.3, для оставшихся двух уровней. Паки не переводятся в очки вовсе
+(кроме уже вскрытого Celestial/Planet — `solver/pack.py`, отдельная фаза, а
+не витрина магазина): магазин показывает только тип и цену, содержимое
+генерируется только при вскрытии, посчитать контрфактум не на чем заранее.
 
 Поправка на экономику (раздел 8.1 плана, было отложено при закрытии
 основной части Фазы 7): покупка джокера — это не только `item.price`
@@ -67,6 +73,7 @@ from balatro_bot.core.cards import Card, standard_deck
 from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
 from balatro_bot.solver.play import advise
+from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 
 __all__ = ["JokerOffer", "ShopAdvice", "evaluate_shop"]
 
@@ -148,7 +155,12 @@ class ShopAdvice:
     jokers: tuple[JokerOffer, ...]
     """Отсортированы по `expected_uplift` по убыванию; неоценённые — в конце."""
 
-    vouchers: tuple[ShopItem, ...]
+    vouchers: tuple[VoucherOffer, ...]
+    """В порядке `GameState.shop_vouchers`, без сортировки по приросту — в
+    отличие от `jokers`, у половины ваучеров прироста нет вовсе (`None`, не
+    ноль), сортировать по частично отсутствующей величине было бы честнее
+    показать как есть, чем изобретать порядок."""
+
     packs: tuple[ShopItem, ...]
     money: int
 
@@ -187,7 +199,7 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
 
     return ShopAdvice(
         jokers=tuple(offers),
-        vouchers=state.shop_vouchers,
+        vouchers=evaluate_vouchers(state, samples),
         packs=state.shop_packs,
         money=state.money,
         reroll_cost=state.reroll_cost,

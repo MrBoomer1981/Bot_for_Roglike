@@ -175,9 +175,10 @@ def render_skip_advice(advice: SkipAdvice) -> None:
 
 
 def render_shop_advice(advice: ShopAdvice) -> None:
-    """Показать, что предлагает магазин: джокеры с оценкой прироста счёта,
-    ваучеры и паки — текстом как есть (раздел `solver/shop.py`: им не с чем
-    сравнить контрфактум, в отличие от джокеров)."""
+    """Показать, что предлагает магазин: джокеры и часть ваучеров — с
+    оценкой прироста счёта, остальные ваучеры и паки — текстом как есть
+    (раздел `solver/shop.py`/`solver/vouchers.py`: части из них не с чем
+    сравнить контрфактум)."""
     print(f"\nмагазин: денег ${advice.money}")
     if advice.reroll_cost is not None:
         print(f"цена рерола: ${advice.reroll_cost}")
@@ -204,8 +205,17 @@ def render_shop_advice(advice: ShopAdvice) -> None:
 
     if advice.vouchers:
         print("\nваучеры:")
-        for item in advice.vouchers:
-            print(f"  {item.label:<24} ${item.price:<4} {item.effect}")
+        ширина_в = max(len(voucher.item.label) for voucher in advice.vouchers)
+        for voucher in advice.vouchers:
+            item = voucher.item
+            if voucher.expected_uplift is None:
+                оценка = voucher.note or item.effect
+            else:
+                приближено = "" if voucher.exact_deck else ", колода приближена"
+                оценка = f"прирост ~{format_number(voucher.expected_uplift)}{приближено}"
+                if voucher.note:
+                    оценка += f" ({voucher.note})"
+            print(f"  {item.label:<{ширина_в}}  ${item.price:<4} {оценка}")
 
     if advice.packs:
         print("\nпаки:")
