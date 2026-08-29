@@ -28,18 +28,51 @@
   честная нижняя граница: настоящий выигрыш от сброса нескольких карт разом
   может быть больше.
 
-Остальные 24 ваучера (второй и третий уровень честности — денежные формулы с
-горизонтом и эвристические константы, `Hieroglyph`/`Petroglyph` в том числе:
-их «−1 анте» требует формулы требований блайнда по анте, которой в проекте
-пока нет вовсе, — см. PLAN.md, 9.3) получают `expected_uplift = None` с
-поясняющим `note`, а не тихо пропускаются и не гадаются."""
+Второй уровень честности — денежная формула с явным (постулированным)
+горизонтом, а не сведение к очкам:
+
+- **`v_seed_money`/`v_money_tree`** (потолок процентов до $50/$100) —
+  горизонт здесь не выдуман, а взят из самого состояния: число оставшихся
+  раундов **этого анте** (`_rounds_left_in_ante`, по статусам
+  `GameState.blinds`, вплоть до `DEFEATED`), не «до конца рана» — дальше
+  этого анте бот не знает даже, будут ли деньги на руках расти или падать.
+  Ценность — `(проценты с новым потолком − проценты со старым) × горизонт`,
+  при явном допущении, что сумма денег на конец каждого будущего раунда
+  этого анте останется примерно такой же, как сейчас (`note` говорит об
+  этом прямо) — реальная сумма может вырасти (тогда ценность выше) или
+  упасть (тогда ниже).
+- **`v_reroll_surplus`/`v_reroll_glut`** (дешевле реролл на $2 каждый) —
+  честно ещё уже: считается только экономия на *ближайшем* реролле по
+  текущей цене (`GameState.reroll_cost`), не на всех рероллах до конца
+  рана — тот же принцип неполноты, что у `JokerOffer.interest_lost`
+  (раздел выше), только для реролла, а не для процентов.
+- **`v_clearance_sale`/`v_liquidation`** (скидка 25%/50% на карты и паки
+  в магазине) — горизонт тоже не выдуман, а взят из уже показанного:
+  сколько удалось бы сэкономить, купив *весь* товар, уже показанный в этом
+  заходе в магазин (`GameState.shop` + `shop_packs`, ваучеры не входят —
+  игра скидывает только «cards and packs»), а не спроецированный на
+  будущие визиты. Обратный пересчёт цены без скидки из уже показанной
+  (`core.economy.discount_percent(state.used_vouchers)`, если скидка уже
+  частично активна) неточен из-за `floor()` в исходной формуле цены — на
+  единицы долларов, не более, и `note` говорит об этом прямо.
+
+`Hieroglyph`/`Petroglyph` (−1 анте, третья пара «точного» уровня по
+изначальному плану) остаются честно отложенными, не третьим уровнем: их
+«−1 анте» требует формулы требований блайнда по анте, которой в проекте
+пока нет вовсе, — см. PLAN.md, 9.3. Третий уровень (эвристическая
+константа — `Hone`/`Glow Up`, `Overstock`, `Crystal Ball`, `Antimatter`,
+`Telescope`/`Observatory`, ...) тоже не начат. Все они получают
+`expected_uplift = None` с поясняющим `note`, а не тихо пропускаются и не
+гадаются."""
 
 from __future__ import annotations
 
+import math
 import random
 from dataclasses import dataclass, replace
 from typing import Final
 
+from balatro_bot.core import economy
 from balatro_bot.core.cards import Card, standard_deck
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.discard import rank_single_discards
@@ -61,12 +94,26 @@ _DISCARD_SAMPLE_HANDS: Final[int] = 4
 _EXTRA_HAND_VOUCHERS: Final[frozenset[str]] = frozenset({"v_grabber", "v_nacho_tong"})
 _EXTRA_DISCARD_VOUCHERS: Final[frozenset[str]] = frozenset({"v_wasteful", "v_recyclomancy"})
 _EXTRA_HAND_SIZE_VOUCHERS: Final[frozenset[str]] = frozenset({"v_paint_brush", "v_palette"})
+_INTEREST_CAP_VOUCHERS: Final[frozenset[str]] = frozenset({"v_seed_money", "v_money_tree"})
+_REROLL_DISCOUNT_VOUCHERS: Final[dict[str, int]] = {"v_reroll_surplus": 2, "v_reroll_glut": 2}
+_SHOP_DISCOUNT_VOUCHERS: Final[frozenset[str]] = frozenset({"v_clearance_sale", "v_liquidation"})
 
 _DISCARD_NOTE: Final[str] = (
     "нижняя граница: учтён только один лучший одиночный сброс, не полный перебор до 5 карт сразу"
 )
 _NOT_YET_SCOPED_NOTE: Final[str] = "пока не оценивается — Фаза 9.3, следующие уровни честности"
 _SMALL_DECK_NOTE: Final[str] = "колода для выборки слишком мала"
+_NO_ANTE_HORIZON_NOTE: Final[str] = (
+    "не оценено — неизвестно, сколько раундов осталось в этом анте (нет области blinds)"
+)
+_NO_REROLL_COST_NOTE: Final[str] = "не оценено — текущая цена рерола неизвестна"
+_REROLL_DISCOUNT_NOTE: Final[str] = (
+    "только экономия на ближайшем реролле по текущей цене, не на всех до конца рана"
+)
+_SHOP_DISCOUNT_NOTE: Final[str] = (
+    "оценено по товару, уже показанному в этом заходе в магазин, не по будущим визитам; "
+    "обратный пересчёт исходной цены приближённый (округление в формуле игры)"
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -113,6 +160,12 @@ def _evaluate_voucher(
         return _evaluate_extra_hand_size(state, item, deck_source, exact_deck, samples)
     if item.key in _EXTRA_DISCARD_VOUCHERS:
         return _evaluate_extra_discard(state, item, deck_source, exact_deck)
+    if item.key in _INTEREST_CAP_VOUCHERS:
+        return _evaluate_interest_cap(state, item)
+    if item.key in _REROLL_DISCOUNT_VOUCHERS:
+        return _evaluate_reroll_discount(state, item)
+    if item.key in _SHOP_DISCOUNT_VOUCHERS:
+        return _evaluate_shop_discount(state, item)
     return VoucherOffer(item, None, exact_deck, 0, _NOT_YET_SCOPED_NOTE)
 
 
@@ -196,3 +249,57 @@ def _evaluate_extra_discard(
         counted += 1
 
     return VoucherOffer(item, total / counted, exact_deck, counted, _DISCARD_NOTE)
+
+
+def _rounds_left_in_ante(state: GameState) -> int | None:
+    """Сколько раундов этого анте ещё не сыграно (`small`/`big`/`boss`, все
+    статусы кроме `DEFEATED`) — горизонт для денежных ваучеров второго
+    уровня, взятый из самого состояния, а не выдуманный. `None`, если
+    область `blinds` не пришла вовсе (ручной ввод) — тогда честно нечего
+    посчитать, а не ноль или произвольная константа."""
+    if not state.blinds:
+        return None
+    return sum(1 for blind in state.blinds.values() if blind.status != "DEFEATED")
+
+
+def _evaluate_interest_cap(state: GameState, item: ShopItem) -> VoucherOffer:
+    rounds_left = _rounds_left_in_ante(state)
+    if rounds_left is None:
+        return VoucherOffer(item, None, True, 0, _NO_ANTE_HORIZON_NOTE)
+
+    current_cap = economy.interest_cap(state.used_vouchers)
+    new_cap = economy.interest_cap(state.used_vouchers | {item.key})
+    per_round = economy.interest(state.money, state.deck_type, new_cap) - economy.interest(
+        state.money, state.deck_type, current_cap
+    )
+    note = (
+        f"горизонт: {rounds_left} раунд(ов) до конца анте, при допущении, что сумма "
+        "денег на конец раунда не изменится"
+    )
+    return VoucherOffer(item, float(per_round * rounds_left), True, 1, note)
+
+
+def _evaluate_reroll_discount(state: GameState, item: ShopItem) -> VoucherOffer:
+    if state.reroll_cost is None:
+        return VoucherOffer(item, None, True, 0, _NO_REROLL_COST_NOTE)
+
+    extra = _REROLL_DISCOUNT_VOUCHERS[item.key]
+    savings = min(extra, state.reroll_cost)
+    return VoucherOffer(item, float(savings), True, 1, _REROLL_DISCOUNT_NOTE)
+
+
+def _evaluate_shop_discount(state: GameState, item: ShopItem) -> VoucherOffer:
+    priced_items = tuple(state.shop) + tuple(state.shop_packs)
+    if not priced_items:
+        return VoucherOffer(item, 0.0, True, 0, _SHOP_DISCOUNT_NOTE)
+
+    current_discount = economy.discount_percent(state.used_vouchers)
+    new_discount = economy.discount_percent(state.used_vouchers | {item.key})
+
+    total_savings = 0.0
+    for shop_item in priced_items:
+        base_cost = shop_item.price / (1 - current_discount / 100)
+        new_price = max(1, math.floor((base_cost + 0.5) * (100 - new_discount) / 100))
+        total_savings += max(0, shop_item.price - new_price)
+
+    return VoucherOffer(item, total_savings, True, len(priced_items), _SHOP_DISCOUNT_NOTE)

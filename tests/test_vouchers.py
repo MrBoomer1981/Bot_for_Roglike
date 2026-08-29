@@ -8,12 +8,16 @@
 from __future__ import annotations
 
 from balatro_bot.core.cards import parse_cards, standard_deck
-from balatro_bot.core.state import GameState, ShopItem
+from balatro_bot.core.state import BlindInfo, GameState, ShopItem
 from balatro_bot.solver.vouchers import evaluate_vouchers
 
 
 def _voucher_state(**overrides: object) -> GameState:
     return GameState(phase="SHOP", **overrides)  # type: ignore[arg-type]
+
+
+def _blind(status: str) -> BlindInfo:
+    return BlindInfo(kind="SMALL", name="Small Blind", effect="", required_score=300, status=status)
 
 
 class TestEvaluateVouchers:
@@ -101,3 +105,112 @@ class TestEvaluateVouchers:
         )
         offers = evaluate_vouchers(state, samples=4)
         assert offers[0].expected_uplift is None
+
+
+class TestПотолокПроцентов:
+    """Второй уровень честности: горизонт — реальное число оставшихся
+    раундов анте (`GameState.blinds`), не выдуманная константа."""
+
+    def test_seed_money_с_известным_горизонтом(self) -> None:
+        # $30 -> потолок 25 даёт $5, потолок 50 даёт $6: +$1 за раунд, 2 раунда осталось.
+        state = _voucher_state(
+            money=30,
+            blinds={"big": _blind("SELECT"), "boss": _blind("UPCOMING")},
+            shop_vouchers=(ShopItem("v_seed_money", "Seed Money", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        offer = offers[0]
+        assert offer.expected_uplift == 2.0
+        assert "горизонт" in offer.note
+
+    def test_money_tree_учитывает_уже_выкупленный_seed_money(self) -> None:
+        # $60: потолок 50 -> $10, потолок 100 -> $12: +$2 за раунд, 1 раунд осталось.
+        state = _voucher_state(
+            money=60,
+            used_vouchers=frozenset({"v_seed_money"}),
+            blinds={"boss": _blind("SELECT")},
+            shop_vouchers=(ShopItem("v_money_tree", "Money Tree", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 2.0
+
+    def test_без_области_blinds_честно_не_оценивает(self) -> None:
+        state = _voucher_state(
+            money=30, shop_vouchers=(ShopItem("v_seed_money", "Seed Money", "VOUCHER", 10),)
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift is None
+        assert "раундов осталось" in offers[0].note
+
+    def test_уже_defeated_блайнды_не_считаются_в_горизонт(self) -> None:
+        state = _voucher_state(
+            money=30,
+            blinds={"small": _blind("DEFEATED"), "big": _blind("SELECT")},
+            shop_vouchers=(ShopItem("v_seed_money", "Seed Money", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 1.0
+
+
+class TestСкидкаНаРероллы:
+    def test_экономия_ограничена_текущей_ценой(self) -> None:
+        state = _voucher_state(
+            reroll_cost=1,
+            shop_vouchers=(ShopItem("v_reroll_surplus", "Reroll Surplus", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 1.0
+
+    def test_полная_экономия_когда_цена_выше_шага(self) -> None:
+        state = _voucher_state(
+            reroll_cost=5,
+            shop_vouchers=(ShopItem("v_reroll_glut", "Reroll Glut", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 2.0
+
+    def test_без_известной_цены_рерола_честно_не_оценивает(self) -> None:
+        state = _voucher_state(
+            shop_vouchers=(ShopItem("v_reroll_surplus", "Reroll Surplus", "VOUCHER", 10),)
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift is None
+
+
+class TestСкидкаВМагазине:
+    def test_clearance_sale_на_видимом_товаре(self) -> None:
+        state = _voucher_state(
+            shop=(
+                ShopItem("j_joker", "Joker", "JOKER", 10),
+                ShopItem("j_greedy_joker", "Greedy Joker", "JOKER", 20),
+            ),
+            shop_vouchers=(ShopItem("v_clearance_sale", "Clearance Sale", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 8.0
+
+    def test_liquidation_даёт_бОльшую_скидку(self) -> None:
+        state = _voucher_state(
+            shop=(
+                ShopItem("j_joker", "Joker", "JOKER", 10),
+                ShopItem("j_greedy_joker", "Greedy Joker", "JOKER", 20),
+            ),
+            shop_vouchers=(ShopItem("v_liquidation", "Liquidation", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 15.0
+
+    def test_паки_тоже_считаются(self) -> None:
+        state = _voucher_state(
+            shop_packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 10),),
+            shop_vouchers=(ShopItem("v_clearance_sale", "Clearance Sale", "VOUCHER", 10),),
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 3.0
+
+    def test_пустой_магазин_даёт_ноль_а_не_none(self) -> None:
+        state = _voucher_state(
+            shop_vouchers=(ShopItem("v_clearance_sale", "Clearance Sale", "VOUCHER", 10),)
+        )
+        offers = evaluate_vouchers(state)
+        assert offers[0].expected_uplift == 0.0

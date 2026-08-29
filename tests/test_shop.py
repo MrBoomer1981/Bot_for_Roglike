@@ -11,7 +11,7 @@ from dataclasses import replace
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
-from balatro_bot.solver.shop import SAMPLE_HANDS, _interest, evaluate_shop
+from balatro_bot.solver.shop import SAMPLE_HANDS, evaluate_shop
 
 
 def _shop_state(**overrides: object) -> GameState:
@@ -159,31 +159,8 @@ class TestEvaluateShop:
 
 
 class TestПроценты:
-    """Формула — `interest_amount * min(floor(dollars/5), interest_cap/5)`,
-    выписана из `functions/state_events.lua` игры (`_interest` в
-    `solver/shop.py`), не по памяти. По умолчанию `interest_amount=1`,
-    `interest_cap=25` → максимум $5 за раунд, шаг — $1 за каждые $5."""
-
-    def test_меньше_пяти_долларов_без_процентов(self) -> None:
-        assert _interest(0, None) == 0
-        assert _interest(4, None) == 0
-
-    def test_шаг_один_доллар_на_каждые_пять(self) -> None:
-        assert _interest(5, None) == 1
-        assert _interest(9, None) == 1
-        assert _interest(24, None) == 4
-
-    def test_потолок_на_25_долларах(self) -> None:
-        assert _interest(25, None) == 5
-        assert _interest(1000, None) == 5  # выше потолка не растёт
-
-    def test_green_deck_отключает_проценты_полностью(self) -> None:
-        assert _interest(1000, "GREEN") == 0
-
-    def test_отрицательные_деньги_не_ломают_формулу(self) -> None:
-        # Гипотетическая покупка дороже кошелька — не должно случиться в
-        # реальной игре, но формула не должна давать отрицательные проценты.
-        assert _interest(-3, None) == 0
+    """Сама формула теперь в `core/economy.py` (`tests/test_economy.py`) —
+    здесь только сквозные тесты через `evaluate_shop`."""
 
     def test_упущенные_проценты_джокера_в_общем_совете(self) -> None:
         # $10 -> $2 процента; после покупки за $3 останется $7 -> $1.
@@ -218,6 +195,21 @@ class TestПроценты:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.jokers[0].interest_lost == 0
+
+    def test_выкупленный_seed_money_поднимает_потолок_в_расчёте(self) -> None:
+        # $60 при потолке 50 -> $10; после покупки за $3 всё ещё $57 -> $10.
+        # Без учёта ваучера потолок 25 дал бы $5 -> $5 (тоже 0), поэтому
+        # берём сумму, где разница между потолками 25 и 50 реально заметна.
+        state = _shop_state(
+            money=60,
+            joker_slots=5,
+            used_vouchers=frozenset({"v_seed_money"}),
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 15),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        # $60 -> $10 (потолок 50), после покупки за $15 -> $45 -> $9. Упущен $1.
+        assert advice.jokers[0].interest_lost == 1
 
 
 class TestЦенаРерола:

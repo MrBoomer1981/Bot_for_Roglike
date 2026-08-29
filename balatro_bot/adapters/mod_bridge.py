@@ -354,6 +354,15 @@ def _parse_shop_area(area: Any, unknown: list[str]) -> tuple[ShopItem, ...]:
     return tuple(_parse_shop_item(raw, unknown) for raw in _area_cards(area))
 
 
+def _parse_used_vouchers(payload: Any) -> frozenset[str]:
+    """Ключи уже выкупленных ваучеров — мод присылает их ключом (`v_seed_money`,
+    подтверждено по `card.lua`'s `Card:add_to_deck`, где записывает именно
+    `self.config.center_key`), текст-описание рядом нам не нужен."""
+    if not isinstance(payload, Mapping):
+        return frozenset()
+    return frozenset(str(key) for key in payload)
+
+
 def parse_game_state(payload: Mapping[str, Any]) -> GameState:
     """Разобрать ответ метода `gamestate` в наше состояние.
 
@@ -423,6 +432,7 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         hands_played=int(round_info.get("hands_played", 0)),
         chips_scored=int(round_info.get("chips", 0)),
         reroll_cost=int(round_info["reroll_cost"]) if "reroll_cost" in round_info else None,
+        used_vouchers=_parse_used_vouchers(payload.get("used_vouchers")),
         joker_slots=int(joker_slots) if joker_slots is not None else None,
         unknown_keys=tuple(unknown),
     )

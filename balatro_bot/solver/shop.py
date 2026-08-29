@@ -31,23 +31,25 @@ PLAN.md, 9.3, для оставшихся двух уровней. Паки не
 Поправка на экономику (раздел 8.1 плана, было отложено при закрытии
 основной части Фазы 7): покупка джокера — это не только `item.price`
 долларов, но и упущенные проценты в конце ближайшего раунда. Формула
-процентов (`_interest`) выписана из исходника игры, не по памяти —
-`functions/state_events.lua`: `interest_amount * min(floor(dollars/5),
-interest_cap/5)`, с константами по умолчанию `interest_amount=1`,
-`interest_cap=25` из `game.lua`'s `GAME_MOD.interest_cap`/`interest_amount`.
-Это не сводится к самой оценке счёта (`expected_uplift`) — доллары и очки
-несоизмеримы без произвольного курса обмена, тот же принцип, что и у
-`core/tags.py`/`solver/skip.py`. `JokerOffer.interest_lost` — честная,
-но заведомо **неполная** цифра: она про упущенные проценты только
-ближайшего конца раунда, а не про весь остаток рана (для этого нужно было
-бы знать число оставшихся раундов и весь будущий денежный поток — это уже
-не размер задачи витрины магазина, а Фаза 9). Она также предполагает
-`interest_cap=25` по умолчанию — `GameState` не хранит уже выкупленные
-ваучеры (`Seed Money`/`Money Tree` поднимают потолок до $50/$100), поэтому
-на раскачанной экономике эта цифра — не переоценка, а честная нижняя
-граница. Единственное исключение, которое код различает явно, — `Green
-Deck` (`deck_type == "GREEN"`), где `game.lua` отключает проценты вовсе
-(`no_interest=true`): там `interest_lost` всегда 0, а не догадка.
+процентов и потолка (`core/economy.py`, теперь общая с `solver/vouchers.py`)
+выписана из исходника игры, не по памяти. Это не сводится к самой оценке
+счёта (`expected_uplift`) — доллары и очки несоизмеримы без произвольного
+курса обмена, тот же принцип, что и у `core/tags.py`/`solver/skip.py`.
+`JokerOffer.interest_lost` — честная, но заведомо **неполная** цифра: она
+про упущенные проценты только ближайшего конца раунда, а не про весь
+остаток рана (для этого нужно было бы знать число оставшихся раундов и
+весь будущий денежный поток — это уже не размер задачи витрины магазина, а
+Фаза 9). Потолок процентов теперь берётся точно, не по умолчанию: раньше
+здесь предполагался `interest_cap=25` всегда, потому что `GameState` не
+хранил уже выкупленные ваучеры — начиная с Фазы 9.3 мост парсит область
+мода `used_vouchers`, и `core.economy.interest_cap(state.used_vouchers)`
+честно поднимает потолок до $50/$100, если `Seed Money`/`Money Tree` уже
+выкуплены. Приближением к умолчанию это остаётся только при ручном вводе
+(`used_vouchers` тогда всегда пуст, тот же принцип неразличимости, что у
+`GameState.deck`). Единственное исключение, которое код различает явно
+независимо от ваучеров, — `Green Deck` (`deck_type == "GREEN"`), где
+`game.lua` отключает проценты вовсе (`no_interest=true`): там
+`interest_lost` всегда 0, а не догадка.
 
 Второй кусок «экономики» из раздела 8.1 плана — момент рерола магазина.
 `ShopAdvice.reroll_cost` (из `GameState.reroll_cost`, область `round` мода —
@@ -69,6 +71,7 @@ import random
 from dataclasses import dataclass, replace
 from typing import Final
 
+from balatro_bot.core import economy
 from balatro_bot.core.cards import Card, standard_deck
 from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
@@ -93,29 +96,15 @@ _HAND_SIZE: Final[int] = 8
 #: вызовами.
 _SAMPLE_SEED: Final[int] = 0
 
-#: Формула и константы процентов на конец раунда — выписаны из
-#: `functions/state_events.lua` игры, не по памяти:
-#: `interest_amount * min(floor(dollars/5), interest_cap/5)`. Значения по
-#: умолчанию (без выкупленных ваучеров) — из `game.lua`'s `GAME_MOD`.
-#: `Seed Money`/`Money Tree` поднимают `interest_cap` до 50/100, но
-#: `GameState` не хранит уже выкупленные ваучеры этого рана — числа ниже
-#: поэтому дают нижнюю границу, а не переоценку, см. модульный докстринг.
-_INTEREST_AMOUNT: Final[int] = 1
-_INTEREST_CAP: Final[int] = 25
-_INTEREST_STEP: Final[int] = 5
 
-#: `Green Deck` (`b_green` в `game.lua`) отключает проценты полностью
-#: (`config.no_interest = true`) — единственный отслеживаемый в `GameState`
-#: (`deck_type`) случай, где реальный ответ — гарантированный ноль, а не
-#: наше приближение по умолчанию.
-_NO_INTEREST_DECK: Final[str] = "GREEN"
-
-
-def _interest(money: int, deck_type: str | None) -> int:
-    """Проценты, которые накапало бы в конце раунда при данной сумме денег."""
-    if deck_type == _NO_INTEREST_DECK or money < _INTEREST_STEP:
-        return 0
-    return _INTEREST_AMOUNT * min(money // _INTEREST_STEP, _INTEREST_CAP // _INTEREST_STEP)
+def _interest_lost(state: GameState, price: int) -> int:
+    """Упущенные проценты в конце ближайшего раунда, если потратить `price`
+    прямо сейчас — потолок процентов берётся точно, по уже выкупленным
+    ваучерам (`core.economy.interest_cap`), см. модульный докстринг."""
+    cap = economy.interest_cap(state.used_vouchers)
+    return economy.interest(state.money, state.deck_type, cap) - economy.interest(
+        state.money - price, state.deck_type, cap
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -142,10 +131,9 @@ class JokerOffer:
 
     interest_lost: int
     """Упущенные проценты в конце ближайшего раунда, если купить именно
-    этого джокера (`_interest(money) - _interest(money - price)`) — честная,
-    но заведомо неполная цифра, см. модульный докстринг. Не переводится в
-    единицы `expected_uplift` (доллары и очки несоизмеримы), показывается
-    отдельно."""
+    этого джокера (`_interest_lost`) — честная, но заведомо неполная цифра,
+    см. модульный докстринг. Не переводится в единицы `expected_uplift`
+    (доллары и очки несоизмеримы), показывается отдельно."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -216,9 +204,7 @@ def _evaluate_joker_offer(
     affordable = state.money >= item.price
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
     known = is_known_joker(item.key)
-    interest_lost = _interest(state.money, state.deck_type) - _interest(
-        state.money - item.price, state.deck_type
-    )
+    interest_lost = _interest_lost(state, item.price)
 
     if not known or len(deck_source) < _HAND_SIZE:
         return JokerOffer(item, affordable, has_slot, known, None, exact_deck, 0, interest_lost)

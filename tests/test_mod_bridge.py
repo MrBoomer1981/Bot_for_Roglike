@@ -178,6 +178,16 @@ class TestРазборСостояния:
         state = parse_game_state(raw)
         assert state.reroll_cost is None
 
+    def test_выкупленные_ваучеры_разбираются_по_ключам(self) -> None:
+        raw = sample_state()
+        raw["used_vouchers"] = {"v_seed_money": "", "v_clearance_sale": "some text"}
+        state = parse_game_state(raw)
+        assert state.used_vouchers == frozenset({"v_seed_money", "v_clearance_sale"})
+
+    def test_без_used_vouchers_пустое_множество(self) -> None:
+        state = parse_game_state(sample_state())
+        assert state.used_vouchers == frozenset()
+
     def test_пустое_состояние_не_падает(self) -> None:
         state = parse_game_state({})
         assert state.hand == ()
