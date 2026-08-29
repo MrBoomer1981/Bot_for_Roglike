@@ -46,6 +46,15 @@ class JokerCard:
     label: str = ""
     edition: Edition = Edition.BASE
     eternal: bool = False
+    debuffed: bool = False
+    """Джокер отключён игрой (`state.debuff` мода) — эффекта не даёт вовсе, но
+    слот занимает. В базовой игре это бывает только когда у «портящегося»
+    (`perishable`) джокера истёк счётчик раундов (`card.lua`'s
+    `Card:calculate_perishable` → `set_debuff`; ставка `ORANGE`+). Движок
+    подсчёта такого джокера пропускает — не реагирует на события, не
+    применяет издание, не даёт правило-модификатор (`core/scoring.py`,
+    `core/jokers/__init__.py`), но `Joker Stencil`/`Baseball Card` и т.п.
+    по-прежнему видят его в списке (карта физически в слоте, как и в игре)."""
     sell_value: int | None = None
     """Цена продажи. Нужна `Swashbuckler` (`j_swashbuckler`); `None`, если
     источник состояния её не прислал (например, ручной ввод)."""
@@ -130,6 +139,24 @@ class ShopItem:
     """Значимо только для `JOKER`: издание, за которое магазин просит цену
     в `price`, влияет на реальную ценность покупки (`solver/shop.py`)."""
 
+    eternal: bool = False
+    """Значимо только для `JOKER` (стикер ставки, `BLACK`+): вечного джокера
+    нельзя продать — купив неудачного, слот уже не освободить продажей
+    (`solver/shop.py`, «бюджет слотов при неудачной покупке»)."""
+    perishable_rounds: int | None = None
+    """Значимо только для `JOKER` (стикер ставки, `ORANGE`+): сколько раундов
+    джокер ещё проработает, прежде чем игра его отключит — не уничтожит, слот
+    останется занят неработающим джокером (`card.lua`'s
+    `Card:calculate_perishable` → `set_debuff` на нуле счётчика). Мод
+    присылает уже остаточный счётчик (`modifier.perishable`, «> 0 only»), а
+    не стартовые пять. `None` — джокер не «портящийся»."""
+    rental: bool = False
+    """Значимо только для `JOKER` (стикер ставки, `GOLD`): арендный джокер
+    стоит `economy.RENTAL_RATE` в конце каждого раунда владения (`card.lua`'s
+    `Card:calculate_rental`). Цену покупки таких джокеров игра принудительно
+    опускает до $1 (`Card:set_cost`), поэтому дешевизна `price` обманчива —
+    реальная цена в постоянном оттоке (`solver/shop.py`)."""
+
 
 @dataclass(frozen=True, slots=True)
 class GameState:
@@ -139,6 +166,12 @@ class GameState:
     ante: int = 1
     round_number: int = 1
     money: int = 0
+
+    won: bool = False
+    """Победа в ране (`ante_num` дошёл до 8 и финальный босс побеждён) —
+    поле `won` мода. Нужно ран-раннеру (`balatro_bot/runner.py`, Фаза 9.7),
+    чтобы отличить победу от `phase == "GAME_OVER"` (поражение). В остальном
+    коде не используется — обычный розыгрыш до победы не доходит."""
 
     hand: tuple[Card, ...] = ()
     jokers: tuple[JokerCard, ...] = ()

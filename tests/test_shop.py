@@ -237,3 +237,67 @@ class TestЦенаРерола:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.reroll_cost is None
+
+
+class TestСтикерыСтавок:
+    """Фаза 9.6: `eternal`/`perishable`/`rental` из `ShopItem` доходят до
+    `JokerOffer` отдельными полями (по образцу `interest_lost`), не
+    сворачиваясь в `expected_uplift`."""
+
+    def test_без_стикеров_поля_по_умолчанию(self) -> None:
+        state = _shop_state(
+            money=10, joker_slots=5, shop=(ShopItem("j_joker", "Joker", "JOKER", 3),)
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        offer = advice.jokers[0]
+        assert offer.rental_cost_per_round == 0
+        assert offer.perishable_rounds is None
+        assert offer.eternal is False
+
+    def test_арендный_джокер_несёт_цену_за_раунд(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 1, rental=True),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        offer = advice.jokers[0]
+        assert offer.rental_cost_per_round == 3
+        # Оценка счёта считается как обычно — аренда в неё не вплавлена.
+        assert offer.expected_uplift is not None
+        assert offer.expected_uplift > 0
+
+    def test_портящийся_джокер_несёт_остаточный_срок(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3, perishable_rounds=2),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].perishable_rounds == 2
+
+    def test_вечный_джокер_помечен(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3, eternal=True),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].eternal is True
+
+    def test_неоценённый_джокер_всё_равно_несёт_стикеры(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop=(ShopItem("j_совсем_новый", "???", "JOKER", 1, rental=True, eternal=True),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        offer = advice.jokers[0]
+        assert offer.expected_uplift is None
+        assert offer.rental_cost_per_round == 3
+        assert offer.eternal is True

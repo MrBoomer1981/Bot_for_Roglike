@@ -14,10 +14,19 @@ from dataclasses import replace
 import pytest
 
 from balatro_bot.adapters.manual import build_state
-from balatro_bot.autopilot import Action, _indices_of, decide_action, decide_skip
+from balatro_bot.adapters.mod_bridge import ModBridge
+from balatro_bot.autopilot import (
+    Action,
+    _indices_of,
+    decide_action,
+    decide_skip,
+    describe_action,
+    dispatch_action,
+)
 from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
 from balatro_bot.solver.skip import evaluate_skip
+from tests.fake_mod import FakeMod
 
 #: Та же детерминированная колода без флеша/стрита/троек, что в
 #: `tests/test_pack.py` — единственная собираемая рука сильнее хай-карты
@@ -327,3 +336,71 @@ class TestDecideActionНаВскрытииПака:
             pack=(ShopItem("c_совсем_новый", "???", "PLANET", 0),),
         )
         assert decide_action(state) == Action(kind="skip_pack")
+
+
+class TestDispatchAction:
+    """Общий перевод `Action.kind` -> RPC-метод (`autopilot.dispatch_action`),
+    раньше жил внутри цикла `ui/tui.py`. Игры нет — проверяется имя вызванного
+    метода и параметры (`FakeMod.calls`)."""
+
+    def test_play_зовёт_play_с_индексами(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="play", indices=(0, 2)))
+        assert FakeMod.calls[-1]["method"] == "play"
+        assert FakeMod.calls[-1]["params"] == {"cards": [0, 2]}
+
+    def test_discard_зовёт_discard(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="discard", indices=(1,)))
+        assert FakeMod.calls[-1]["method"] == "discard"
+
+    def test_select_и_skip_без_параметров(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="select"))
+        assert FakeMod.calls[-1]["method"] == "select"
+        dispatch_action(bridge, Action(kind="skip"))
+        assert FakeMod.calls[-1]["method"] == "skip"
+
+    def test_buy_зовёт_buy_с_индексом_карты(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="buy", item_index=2, label="Joker"))
+        assert FakeMod.calls[-1]["method"] == "buy"
+        assert FakeMod.calls[-1]["params"] == {"card": 2}
+
+    def test_next_round_и_cash_out(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="next_round"))
+        assert FakeMod.calls[-1]["method"] == "next_round"
+        dispatch_action(bridge, Action(kind="cash_out"))
+        assert FakeMod.calls[-1]["method"] == "cash_out"
+
+    def test_pack_и_skip_pack_зовут_метод_pack(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="pack", item_index=0, label="Mercury"))
+        assert FakeMod.calls[-1]["method"] == "pack"
+        assert FakeMod.calls[-1]["params"] == {"card": 0}
+        dispatch_action(bridge, Action(kind="skip_pack"))
+        assert FakeMod.calls[-1]["params"] == {"skip": True}
+
+    def test_use_зовёт_use_с_индексом(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="use", item_index=1, label="Mercury"))
+        assert FakeMod.calls[-1]["method"] == "use"
+        assert FakeMod.calls[-1]["params"] == {"consumable": 1}
+
+
+class TestDescribeAction:
+    def test_розыгрыш_перечисляет_карты(self) -> None:
+        cards = parse_cards("AH KS")
+        assert describe_action(Action(kind="play", cards=cards)) == "сыграл AH KS"
+
+    def test_покупка_называет_предмет(self) -> None:
+        assert describe_action(Action(kind="buy", label="Joker")) == "купил в магазине: Joker"
+
+    def test_каждый_вид_даёт_непустую_строку(self) -> None:
+        for action in (
+            Action(kind="play"),
+            Action(kind="discard"),
+            Action(kind="select"),
+            Action(kind="skip"),
+            Action(kind="buy"),
+            Action(kind="next_round"),
+            Action(kind="cash_out"),
+            Action(kind="pack"),
+            Action(kind="skip_pack"),
+            Action(kind="use"),
+        ):
+            assert describe_action(action)

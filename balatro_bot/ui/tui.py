@@ -32,7 +32,7 @@ from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
-from balatro_bot.autopilot import Action, decide_action
+from balatro_bot.autopilot import Action, decide_action, describe_action, dispatch_action
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
@@ -41,7 +41,6 @@ from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui.render import (
-    format_cards,
     render_consumable_advice,
     render_joker_order,
     render_pack_advice,
@@ -141,29 +140,6 @@ def _cbreak_stdin() -> Iterator[bool]:
         yield True
     finally:
         termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-
-
-def _describe_action(action: Action) -> str:
-    """Строка для лога автопилота — что именно он только что сделал."""
-    if action.kind == "play":
-        return f"сыграл {format_cards(action.cards)}"
-    if action.kind == "discard":
-        return f"сбросил {format_cards(action.cards)}"
-    if action.kind == "select":
-        return "выбрал блайнд — играет"
-    if action.kind == "skip":
-        return "скипнул блайнд ради тега"
-    if action.kind == "cash_out":
-        return "забрал награду за раунд"
-    if action.kind == "buy":
-        return f"купил в магазине: {action.label}"
-    if action.kind == "next_round":
-        return "ушёл из магазина"
-    if action.kind == "pack":
-        return f"взял из пака: {action.label}"
-    if action.kind == "skip_pack":
-        return "скипнул пак"
-    return f"использовал консумабль: {action.label}"
 
 
 def _read_key() -> str | None:
@@ -269,27 +245,7 @@ def _autoplay_loop(
             action = decide_action(state, include_discards=consider_discards)
             if action is not None:
                 try:
-                    if action.kind == "play":
-                        state = bridge.play(action.indices)
-                    elif action.kind == "discard":
-                        state = bridge.discard(action.indices)
-                    elif action.kind == "select":
-                        state = bridge.select()
-                    elif action.kind == "skip":
-                        state = bridge.skip()
-                    elif action.kind == "buy":
-                        state = bridge.buy(card=action.item_index)
-                    elif action.kind == "next_round":
-                        state = bridge.next_round()
-                    elif action.kind == "cash_out":
-                        state = bridge.cash_out()
-                    elif action.kind == "pack":
-                        state = bridge.open_pack(card=action.item_index)
-                    elif action.kind == "skip_pack":
-                        state = bridge.open_pack(skip=True)
-                    else:
-                        assert action.item_index is not None
-                        state = bridge.use(action.item_index)
+                    state = dispatch_action(bridge, action)
                 except ModBridgeError as error:
                     # Мод отказал в честно посчитанном ходе — например,
                     # ограничение босса, которое `_is_legal_play` ещё не
@@ -308,7 +264,7 @@ def _autoplay_loop(
                 f"«{_PAUSE_KEY}» — пауза/продолжить, Ctrl+C — выйти\n"
             )
             if action_taken is not None:
-                print(f"автопилот: {_describe_action(action_taken)}\n")
+                print(f"автопилот: {describe_action(action_taken)}\n")
             render_state(state)
             skip_advice = evaluate_skip(state)
             if skip_advice is not None:

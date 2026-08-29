@@ -140,6 +140,69 @@ class TestДебафф:
         assert сыграть(hand, [0, 1]).expected == 42
 
 
+class TestОтключённыйДжокер:
+    """`JokerCard.debuffed` — джокер отключён игрой (истёкший `perishable`
+    на ставке `ORANGE`+). Эффекта не даёт, но слот занимает — как в самой
+    игре (`card.lua`'s `calculate_joker`: `if self.debuff then return nil`)."""
+
+    def test_отключённый_джокер_не_даёт_эффекта(self) -> None:
+        hand = parse_cards("AH KD")
+        base = score_play(GameState(hand=hand), [hand[0]]).expected
+        with_active = score_play(
+            GameState(hand=hand, jokers=(JokerCard("j_joker"),)), [hand[0]]
+        ).expected
+        with_debuffed = score_play(
+            GameState(hand=hand, jokers=(JokerCard("j_joker", debuffed=True),)), [hand[0]]
+        ).expected
+        assert with_active > base  # +4 множителя от активного
+        assert with_debuffed == base  # отключённый не считается
+
+    def test_отключённый_нереализованный_джокер_не_добавляет_причину_неточности(self) -> None:
+        # Отключённый джокер эффекта не даёт независимо от того, реализован
+        # ли он — значит `UnimplementedJoker` за него `unknown` не ставит
+        # (провизорная таблица рук — отдельная, не связанная причина).
+        hand = parse_cards("AH KD")
+        outcome = score_play(
+            GameState(hand=hand, jokers=(JokerCard("j_совсем_новый", debuffed=True),)), [hand[0]]
+        )
+        assert not any("реализован" in reason for reason in outcome.unknown)
+
+    def test_отключённое_издание_джокера_не_применяется(self) -> None:
+        hand = parse_cards("AH KD")
+        base = score_play(GameState(hand=hand), [hand[0]]).expected
+        outcome = score_play(
+            GameState(
+                hand=hand,
+                jokers=(JokerCard("j_joker", edition=Edition.FOIL, debuffed=True),),
+            ),
+            [hand[0]],
+        )
+        assert outcome.expected == base  # ни +4 множителя, ни +50 очков от Foil
+
+    def test_отключённый_правило_модификатор_не_меняет_правил(self) -> None:
+        # j_four_fingers обычно разрешает флеш из 4 карт. Отключённый — нет:
+        # 4 несмежные червы дают хай-карту, а не флеш.
+        hand = parse_cards("AH KH QH 9H")
+        active = score_play(GameState(hand=hand, jokers=(JokerCard("j_four_fingers"),)), list(hand))
+        debuffed = score_play(
+            GameState(hand=hand, jokers=(JokerCard("j_four_fingers", debuffed=True),)), list(hand)
+        )
+        assert active.hand_type is HandType.FLUSH
+        assert debuffed.hand_type is HandType.HIGH_CARD
+
+    def test_отключённый_джокер_виден_считающим_джокеров(self) -> None:
+        # j_abstract: «+3 множителя за каждую карту-джокер». Отключённый
+        # джокер физически в слоте — как и в игре (`#G.jokers.cards`), он
+        # входит в счёт, хотя своего эффекта не даёт.
+        hand = parse_cards("AH KD")
+        alone = score_play(GameState(hand=hand, jokers=(JokerCard("j_abstract"),)), [hand[0]])
+        pair = (JokerCard("j_abstract"), JokerCard("j_joker", debuffed=True))
+        with_debuffed = score_play(GameState(hand=hand, jokers=pair), [hand[0]])
+        # alone: +3 множителя (1 джокер). with_debuffed: +6 (2 джокера),
+        # и ничего от отключённого j_joker.
+        assert with_debuffed.expected > alone.expected
+
+
 def _flint(required_score: int = 300) -> BlindInfo:
     return BlindInfo("BOSS", "The Flint", "", required_score)
 

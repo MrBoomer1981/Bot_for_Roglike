@@ -197,6 +197,12 @@ def render_shop_advice(advice: ShopAdvice) -> None:
                 пометки.append("нет слота")
             if offer.interest_lost:
                 пометки.append(f"−${offer.interest_lost} процентов в конце раунда")
+            if offer.rental_cost_per_round:
+                пометки.append(f"аренда −${offer.rental_cost_per_round} каждый раунд")
+            if offer.perishable_rounds is not None:
+                пометки.append(f"отключится через {offer.perishable_rounds} раунд(ов)")
+            if offer.eternal:
+                пометки.append("вечный — не продать")
             хвост = f"  ({', '.join(пометки)})" if пометки else ""
             if offer.expected_uplift is None:
                 оценка = "не оценено" if offer.known else "эффект не реализован"

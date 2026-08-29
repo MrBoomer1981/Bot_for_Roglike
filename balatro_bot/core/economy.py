@@ -18,6 +18,13 @@
 - `card.lua`'s `Card:calculate_cost`: `cost = max(1, floor((base_cost +
   extra_cost + 0.5) * (100 - discount_percent) / 100))` — как скидка
   применяется к цене товара.
+- `game.lua`'s `GAME_MOD`: `rental_rate = 3`, `perishable_rounds = 5` —
+  значения по умолчанию; ни то, ни другое нигде в исходнике игры не
+  переприсваивается (ставка `GOLD`/`ORANGE` включает *появление* стикера,
+  но не меняет ставку аренды или срок). `card.lua`'s `Card:calculate_rental`
+  снимает `rental_rate` долларов в конце каждого раунда, пока джокером
+  владеешь; `Card:calculate_perishable` каждый раунд уменьшает остаточный
+  счётчик и на нуле отключает джокера (`set_debuff`, слот не освобождается).
 
 `used_vouchers` (ключи уже выкупленных ваучеров, `GameState.used_vouchers`
 — область мода `used_vouchers`, доступна только через мост, см.
@@ -38,6 +45,7 @@ __all__ = [
     "INTEREST_CAP_DEFAULT",
     "INTEREST_STEP",
     "NO_INTEREST_DECK",
+    "RENTAL_RATE",
     "discount_percent",
     "interest",
     "interest_cap",
@@ -46,6 +54,14 @@ __all__ = [
 INTEREST_AMOUNT: Final[int] = 1
 INTEREST_CAP_DEFAULT: Final[int] = 25
 INTEREST_STEP: Final[int] = 5
+
+#: Сколько долларов снимается в конце каждого раунда за каждого арендного
+#: джокера (`game.lua`'s `GAME_MOD.rental_rate = 3`, `card.lua`'s
+#: `Card:calculate_rental`). Постоянная величина: в исходнике игры нигде не
+#: переприсваивается. Остаточный срок «портящегося» джокера (`perishable`)
+#: константой не нужен — мод присылает уже актуальный счётчик, а не
+#: стартовые `perishable_rounds = 5`.
+RENTAL_RATE: Final[int] = 3
 
 #: `Green Deck` (`b_green` в `game.lua`) отключает проценты полностью
 #: (`config.no_interest = true`) — единственный отслеживаемый в `GameState`

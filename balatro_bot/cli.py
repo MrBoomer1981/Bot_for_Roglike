@@ -26,6 +26,7 @@ from pathlib import Path
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import DEFAULT_HOST, DEFAULT_PORT, ModBridge, ModBridgeError
 from balatro_bot.core.cards import parse_cards
+from balatro_bot.core.state import GameState
 from balatro_bot.install import (
     InstallError,
     Paths,
@@ -36,6 +37,15 @@ from balatro_bot.install import (
     plan,
     resolve_paths,
     verify,
+)
+from balatro_bot.runner import (
+    DECKS,
+    STAKES,
+    DecisionEntry,
+    play_run,
+    render_batch_summary,
+    render_run_report,
+    run_batch,
 )
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
@@ -240,21 +250,72 @@ def _watch(bridge: ModBridge, args: argparse.Namespace) -> int:
 
 
 def _autoplay(bridge: ModBridge, args: argparse.Namespace) -> int:
-    """Играть самому: розыгрыш/сброс — автоматически, остальные фазы — как `watch`.
+    """Два режима одной команды (см. `--help`):
 
-    Раздел 6 плана, «Автопилот», п. 9.1 (первый, узкий срез — только фаза
-    `SELECTING_HAND`, см. `balatro_bot/autopilot.py`). Пауза/перехват — клавиша
-    `p` прямо во время работы, а не отдельная команда."""
+    - без `--deck` — живой режим: следить за уже идущей игрой и играть
+      розыгрыш/сброс/магазин/паки автоматически, пауза/перехват клавишей
+      `p` прямо во время работы (`ui/tui.py`);
+    - с `--deck` — управляемый ран: начать новый ран через `ModBridge.start`
+      и доиграть его автопилотом до конца с отчётом и логом решений
+      (`balatro_bot/runner.py`, Фаза 9.7). `--all-stakes`/`--runs` — пакетный
+      прогон с винрейтом по каждой ставке."""
+    if args.deck is None:
+        try:
+            tui.autoplay(
+                bridge,
+                interval=args.interval,
+                top=args.top,
+                explain=args.explain,
+                joker_order=args.joker_order,
+                consider_discards=args.consider_discards,
+                consider_shop=args.consider_shop,
+            )
+        except KeyboardInterrupt:
+            print("\nостановлено")
+        return 0
+
+    return _autoplay_managed(bridge, args)
+
+
+def _print_run_step(_state: GameState, entry: DecisionEntry) -> None:
+    """Живой прогресс одиночного управляемого рана — по строке на решение,
+    чтобы длинный ран не выглядел зависшим."""
+    метка = " [отказ]" if entry.rejected else ""
+    print(
+        f"  [{entry.step:>3}] анте {entry.ante} р{entry.round_number} "
+        f"${entry.money:<4} {entry.action}{метка}"
+    )
+
+
+def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
+    """Управляемый ран (или пакет ранов) — ветка `autoplay --deck`."""
+    stakes = STAKES if args.all_stakes else (args.stake,)
+    batch = args.all_stakes or args.runs > 1
+
     try:
-        tui.autoplay(
-            bridge,
-            interval=args.interval,
-            top=args.top,
-            explain=args.explain,
-            joker_order=args.joker_order,
-            consider_discards=args.consider_discards,
-            consider_shop=args.consider_shop,
-        )
+        if batch:
+            summaries = run_batch(
+                bridge,
+                deck=args.deck,
+                stakes=stakes,
+                runs_per_stake=args.runs,
+                seed=args.seed,
+                include_discards=args.consider_discards,
+                max_steps=args.max_steps,
+                on_run=lambda report: render_run_report(report, verbose=args.explain),
+            )
+            render_batch_summary(summaries)
+        else:
+            report = play_run(
+                bridge,
+                deck=args.deck,
+                stake=args.stake,
+                seed=args.seed,
+                include_discards=args.consider_discards,
+                max_steps=args.max_steps,
+                on_step=_print_run_step,
+            )
+            render_run_report(report, verbose=args.explain)
     except KeyboardInterrupt:
         print("\nостановлено")
     return 0
@@ -369,10 +430,38 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     auto = commands.add_parser(
         "autoplay",
-        help="играть самому — розыгрыш/сброс автоматически (Фаза 9, узкий срез: только эта фаза)",
+        help="играть самому — вживую (пауза клавишей p) либо управляемый ран целиком (--deck)",
     )
     auto.add_argument(
         "--interval", type=float, default=1.0, help="как часто опрашивать мод, в секундах"
+    )
+    auto.add_argument(
+        "--deck",
+        choices=DECKS,
+        help="начать новый ран этой колодой и играть до конца (без --deck — живой режим)",
+    )
+    auto.add_argument(
+        "--stake", choices=STAKES, default="WHITE", help="ставка для управляемого рана"
+    )
+    auto.add_argument(
+        "--seed", help="сид рана (по умолчанию случайный — нужен для честного замера винрейта)"
+    )
+    auto.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="сколько ранов сыграть (на каждой ставке, если задан --all-stakes)",
+    )
+    auto.add_argument(
+        "--all-stakes",
+        action="store_true",
+        help=f"прогнать все восемь ставок ({' → '.join(STAKES)}), по --runs на каждую",
+    )
+    auto.add_argument(
+        "--max-steps",
+        type=int,
+        default=2000,
+        help="потолок шагов на ран, чтобы зациклившийся ран не крутился вечно",
     )
     auto.add_argument("--top", type=int, default=5, help="сколько вариантов показывать")
     auto.add_argument("--explain", action="store_true", help="показывать разбор лучшего варианта")

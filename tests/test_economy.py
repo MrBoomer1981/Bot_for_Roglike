@@ -7,7 +7,7 @@
 
 from __future__ import annotations
 
-from balatro_bot.core.economy import discount_percent, interest, interest_cap
+from balatro_bot.core.economy import RENTAL_RATE, discount_percent, interest, interest_cap
 
 
 class TestInterest:
@@ -58,6 +58,16 @@ class TestInterestCap:
         # В реальной игре Money Tree требует Seed Money заранее, но сама
         # формула не складывает — берёт большее значение напрямую.
         assert interest_cap(frozenset({"v_money_tree"})) == 100
+
+
+class TestRentalRate:
+    """`game.lua`'s `GAME_MOD.rental_rate = 3` — постоянная величина,
+    нигде в исходнике не переприсваивается (см. модульный докстринг
+    `core/economy.py`). Отдельный тест-«якорь», чтобы правка константы
+    не прошла молча."""
+
+    def test_ставка_аренды_три_доллара(self) -> None:
+        assert RENTAL_RATE == 3
 
 
 class TestDiscountPercent:

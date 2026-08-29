@@ -340,6 +340,50 @@ class TestInstall:
         assert "--game-dir" in capsys.readouterr().out
 
 
+class TestAutoplayУправляемый:
+    """`autoplay --deck ...` — управляемый ран через `runner` (Фаза 9.7).
+    Фальшивый мод статичен, поэтому ран быстро упрётся в «состояние не
+    меняется» — здесь проверяется только сквозная проводка CLI → runner →
+    мост, не поведение автопилота."""
+
+    def test_один_ран_печатает_отчёт(
+        self, fake_mod_port: int, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = cli.main(
+            ["--port", str(fake_mod_port), "autoplay", "--deck", "RED", "--stake", "WHITE"]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "RED / WHITE" in out
+        assert "застрял" in out  # фикстура не двигается — честный затык
+
+    def test_пакет_по_ставкам_печатает_винрейт(
+        self, fake_mod_port: int, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        code = cli.main(
+            [
+                "--port",
+                str(fake_mod_port),
+                "autoplay",
+                "--deck",
+                "RED",
+                "--all-stakes",
+                "--runs",
+                "1",
+                "--max-steps",
+                "4",
+            ]
+        )
+        assert code == 0
+        out = capsys.readouterr().out
+        assert "винрейт по ставкам" in out
+        assert "GOLD" in out
+
+    def test_неизвестная_колода_отклоняется_argparse(self) -> None:
+        with pytest.raises(SystemExit):
+            cli.main(["autoplay", "--deck", "НЕТ_ТАКОЙ"])
+
+
 class TestРегрессииВыводе:
     """Мелочи, на которых вывод уже ломался."""
 

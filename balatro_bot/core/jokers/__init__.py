@@ -123,7 +123,9 @@ def modifiers_from(jokers: Iterable[Joker]) -> HandModifiers:
     Модуль `hands` о джокерах не знает — он принимает абстрактные флаги,
     и выставляются они здесь.
     """
-    keys = {joker.key for joker in jokers}
+    # Отключённый джокер (`JokerCard.debuffed`) не меняет и правил
+    # распознавания руки — как и любого другого своего эффекта.
+    keys = {joker.key for joker in jokers if not joker.card.debuffed}
     return HandModifiers(
         four_fingers="j_four_fingers" in keys,
         shortcut="j_shortcut" in keys,

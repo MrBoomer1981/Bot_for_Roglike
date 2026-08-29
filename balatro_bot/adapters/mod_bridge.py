@@ -237,11 +237,13 @@ def _parse_joker(payload: Mapping[str, Any], unknown: list[str]) -> JokerCard:
     sell_value = cost.get("sell") if isinstance(cost, Mapping) else None
     value = payload.get("value") or {}
     effect = value.get("effect")
+    card_state = payload.get("state") or {}
     joker = JokerCard(
         key=str(payload.get("key", "")),
         label=str(payload.get("label", "")),
         edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
         eternal=bool(modifier.get("eternal", False)),
+        debuffed=bool(card_state.get("debuff", False)),
         sell_value=int(sell_value) if sell_value is not None else None,
         current_value=_extract_current_value(effect),
         leading_value=_extract_leading_value(effect),
@@ -331,8 +333,21 @@ def _parse_blinds_map(payload: Any) -> dict[str, BlindInfo]:
     return result
 
 
+def _perish_tally(raw: Any) -> int | None:
+    """Остаточный срок «портящегося» джокера из `modifier.perishable`.
+
+    Мод документирует поле как «number of rounds remaining (only if > 0)» —
+    то есть присылает либо положительное целое, либо `null`/ничего. `bool`
+    отсекаем явно: он подкласс `int` в Python, а `True`/`False` тут был бы
+    мусором, не сроком."""
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        return None
+    return int(raw) if raw > 0 else None
+
+
 def _parse_shop_item(payload: Mapping[str, Any], unknown: list[str]) -> ShopItem:
     modifier = payload.get("modifier")
+    modifier = modifier if isinstance(modifier, Mapping) else {}
     cost = payload.get("cost")
     value = payload.get("value")
     return ShopItem(
@@ -341,9 +356,10 @@ def _parse_shop_item(payload: Mapping[str, Any], unknown: list[str]) -> ShopItem
         kind=str(payload.get("set", "")),
         price=int(cost.get("buy", 0)) if isinstance(cost, Mapping) else 0,
         effect=str(value.get("effect", "")) if isinstance(value, Mapping) else "",
-        edition=_pick(modifier.get("edition"), Edition, "edition", unknown)
-        if isinstance(modifier, Mapping)
-        else Edition.BASE,
+        edition=_pick(modifier.get("edition"), Edition, "edition", unknown),
+        eternal=bool(modifier.get("eternal", False)),
+        perishable_rounds=_perish_tally(modifier.get("perishable")),
+        rental=bool(modifier.get("rental", False)),
     )
 
 
@@ -415,6 +431,7 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         ante=int(payload.get("ante_num", 1)),
         round_number=int(payload.get("round_num", 1)),
         money=int(payload.get("money", 0)),
+        won=bool(payload.get("won", False)),
         hand=tuple(hand),
         jokers=tuple(jokers),
         hand_info=_parse_hands(payload.get("hands"), unknown),
@@ -576,3 +593,21 @@ class ModBridge:
     def cash_out(self) -> GameState:
         """Забрать награду за раунд и перейти в магазин (без параметров)."""
         return parse_game_state(self.call("cash_out"))
+
+    def start(self, deck: str, stake: str, *, seed: str | None = None) -> GameState:
+        """Начать новый ран заданной колодой и ставкой (`openrpc.json`'s
+        `start`; `deck` — `Deck`, `stake` — `Stake`, строками как в схеме мода).
+        Возвращает состояние уже на экране выбора первого блайнда
+        (`BLIND_SELECT`). `seed` — опциональный сид рана; без него игра
+        выбирает случайный, что и нужно для замера винрейта по N разным
+        ранам. Нужен ран-раннеру (`balatro_bot/runner.py`, Фаза 9.7)."""
+        params: dict[str, str] = {"deck": deck, "stake": stake}
+        if seed is not None:
+            params["seed"] = seed
+        return parse_game_state(self.call("start", params))
+
+    def menu(self) -> GameState:
+        """Вернуться в главное меню из любого состояния (`openrpc.json`'s
+        `menu`). Ран-раннер зовёт его между ранами в пакетном прогоне, прежде
+        чем начать следующий ран через `start`."""
+        return parse_game_state(self.call("menu"))

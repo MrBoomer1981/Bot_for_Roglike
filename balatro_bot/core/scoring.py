@@ -292,8 +292,15 @@ class ScoreContext:
         self.trace.append(TraceStep(source, note, self.chips, self.mult))
 
     def emit(self, event: Event) -> None:
-        """Разослать событие джокерам по порядку слотов."""
+        """Разослать событие джокерам по порядку слотов.
+
+        Отключённый игрой джокер (`JokerCard.debuffed`, «портящийся» с
+        истёкшим счётчиком) эффекта не даёт — событие ему не отправляем, как
+        и в самой игре (`card.lua`'s `calculate_joker`: `if self.debuff then
+        return nil`)."""
         for joker in self.jokers:
+            if joker.card.debuffed:
+                continue
             for effect in joker.react(event, self):
                 if not isinstance(effect, Retrigger):
                     self.apply(effect, joker.name)
@@ -303,6 +310,8 @@ class ScoreContext:
         extra = 1 if card.seal is Seal.RED else 0
         query = RetriggerQuery(card, in_hand=in_hand, index=index)
         for joker in self.jokers:
+            if joker.card.debuffed:
+                continue
             for effect in joker.react(query, self):
                 if isinstance(effect, Retrigger):
                     extra += effect.times
@@ -581,8 +590,12 @@ def _run_once(
             _hold_card(card, ctx)
             ctx.emit(CardHeld(card, repeat))
 
-    # 5. Джокеры слева направо.
+    # 5. Джокеры слева направо. Отключённый джокер пропускаем целиком —
+    #    ни издания, ни хода (см. `ScoreContext.emit`).
     for joker in jokers:
+        if joker.card.debuffed:
+            ctx.trace.append(TraceStep(joker.name, "отключён — не считается", ctx.chips, ctx.mult))
+            continue
         _score_joker_edition(joker, ctx)
         ctx.emit(JokerTurn(joker))
 

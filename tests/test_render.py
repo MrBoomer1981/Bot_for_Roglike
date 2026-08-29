@@ -276,6 +276,9 @@ class TestРендерСоветаПоМагазину:
                     exact_deck=False,
                     samples=12,
                     interest_lost=0,
+                    rental_cost_per_round=0,
+                    perishable_rounds=None,
+                    eternal=False,
                 ),
             ),
             vouchers=(),
@@ -303,6 +306,9 @@ class TestРендерСоветаПоМагазину:
                     exact_deck=False,
                     samples=0,
                     interest_lost=0,
+                    rental_cost_per_round=0,
+                    perishable_rounds=None,
+                    eternal=False,
                 ),
             ),
             vouchers=(),
@@ -327,6 +333,9 @@ class TestРендерСоветаПоМагазину:
                     exact_deck=True,
                     samples=12,
                     interest_lost=1,
+                    rental_cost_per_round=0,
+                    perishable_rounds=None,
+                    eternal=False,
                 ),
             ),
             vouchers=(),
@@ -339,6 +348,34 @@ class TestРендерСоветаПоМагазину:
         assert "не хватает денег" in out
         assert "нет слота" in out
         assert "−$1 процентов в конце раунда" in out
+
+    def test_стикеры_ставок_отмечены(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = ShopAdvice(
+            jokers=(
+                JokerOffer(
+                    item=ShopItem("j_joker", "Joker", "JOKER", 1, "+4 Mult"),
+                    affordable=True,
+                    has_slot=True,
+                    known=True,
+                    expected_uplift=4.0,
+                    exact_deck=True,
+                    samples=12,
+                    interest_lost=0,
+                    rental_cost_per_round=3,
+                    perishable_rounds=5,
+                    eternal=True,
+                ),
+            ),
+            vouchers=(),
+            packs=(),
+            money=10,
+            reroll_cost=None,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "аренда −$3 каждый раунд" in out
+        assert "отключится через 5 раунд(ов)" in out
+        assert "вечный — не продать" in out
 
     def test_ваучеры_без_оценки_показаны_текстом(self, capsys: pytest.CaptureFixture[str]) -> None:
         advice = ShopAdvice(

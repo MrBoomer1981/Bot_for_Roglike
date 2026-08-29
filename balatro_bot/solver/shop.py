@@ -63,7 +63,21 @@ PLAN.md, 9.3, для оставшихся двух уровней. Паки не
 RNG сверх того, что уже видно) и более рискованный по объёму. Тот же
 принцип, что `solver/skip.py`: показать разложенные числа и не сводить
 решение к придуманному вердикту, а не притвориться, что оценка не нужна
-вовсе."""
+вовсе.
+
+Стикеры ставок (Фаза 9.6). На ставках `BLACK`+/`ORANGE`+/`GOLD` джокеры в
+магазине приходят со стикерами `eternal`/`perishable`/`rental` — мост
+парсит их в `ShopItem` из той же области `modifier`, что и издание.
+`JokerOffer` показывает каждый отдельным полем, по образцу `interest_lost`:
+`rental_cost_per_round` ($3 за раунд владения, `card.lua`'s
+`Card:calculate_rental` — ловушка при опущенном до $1 ценнике покупки),
+`perishable_rounds` (через сколько раундов игра отключит джокера, слот при
+этом не освободив), `eternal` (купленного не продать — риск «бюджета слотов
+при неудачной покупке»). Ни один не сворачивается в `expected_uplift`
+(доллары/срок против очков — та же несоизмеримость, что у `interest_lost`) и
+ни один пока не влияет на автопокупку: сделать ли `rental`/`eternal`
+стоп-фактором для `autopilot._decide_shop_action` — отдельное, ещё не
+принятое решение политики, ровно как с автопокупкой ваучеров."""
 
 from __future__ import annotations
 
@@ -135,6 +149,29 @@ class JokerOffer:
     см. модульный докстринг. Не переводится в единицы `expected_uplift`
     (доллары и очки несоизмеримы), показывается отдельно."""
 
+    rental_cost_per_round: int
+    """`economy.RENTAL_RATE` ($3), если джокер арендный (`ShopItem.rental`),
+    иначе 0. Постоянный отток денег за каждый раунд владения, не разовый как
+    `interest_lost`. По той же причине, что `interest_lost`, не сворачивается
+    в `expected_uplift` и не участвует в автопокупке (`autopilot`) —
+    показывается человеку рядом. Цена самой покупки (`item.price`) у арендных
+    джокеров игрой опущена до $1, что и делает флаг важным: без этой пометки
+    дешёвый ценник выглядит выгодной сделкой."""
+
+    perishable_rounds: int | None
+    """Сколько раундов «портящийся» джокер (`ShopItem.perishable_rounds`) ещё
+    проработает до отключения; `None` — не портящийся. Слот после отключения
+    не освобождается. `expected_uplift` меряется на текущих руках и остаётся
+    верным для тех раундов, что джокер активен — срок показывается рядом
+    отдельным фактом, а не вычитается из оценки (для этого нужен горизонт
+    оставшихся раундов, за рамками расчёта витрины — тот же принцип неполноты,
+    что у `interest_lost`)."""
+
+    eternal: bool
+    """Вечный джокер (`ShopItem.eternal`) — купленного нельзя продать. Риск
+    «бюджета слотов при неудачной покупке», не величина счёта; показывается,
+    но автопокупку не блокирует (открытый вопрос политики, как и ваучеры)."""
+
 
 @dataclass(frozen=True, slots=True)
 class ShopAdvice:
@@ -204,10 +241,24 @@ def _evaluate_joker_offer(
     affordable = state.money >= item.price
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
     known = is_known_joker(item.key)
-    interest_lost = _interest_lost(state, item.price)
+
+    def _offer(expected_uplift: float | None, used_samples: int) -> JokerOffer:
+        return JokerOffer(
+            item=item,
+            affordable=affordable,
+            has_slot=has_slot,
+            known=known,
+            expected_uplift=expected_uplift,
+            exact_deck=exact_deck,
+            samples=used_samples,
+            interest_lost=_interest_lost(state, item.price),
+            rental_cost_per_round=economy.RENTAL_RATE if item.rental else 0,
+            perishable_rounds=item.perishable_rounds,
+            eternal=item.eternal,
+        )
 
     if not known or len(deck_source) < _HAND_SIZE:
-        return JokerOffer(item, affordable, has_slot, known, None, exact_deck, 0, interest_lost)
+        return _offer(None, 0)
 
     candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
     with_candidate = (*state.jokers, candidate)
@@ -221,6 +272,4 @@ def _evaluate_joker_offer(
         boosted = advise(replace(state, hand=hand, jokers=with_candidate), limit=1).best.score
         total_delta += boosted - baseline
 
-    return JokerOffer(
-        item, affordable, has_slot, known, total_delta / samples, exact_deck, samples, interest_lost
-    )
+    return _offer(total_delta / samples, samples)

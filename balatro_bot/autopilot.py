@@ -101,6 +101,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Literal
 
+from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
@@ -117,6 +118,8 @@ __all__ = [
     "Action",
     "decide_action",
     "decide_skip",
+    "describe_action",
+    "dispatch_action",
 ]
 
 #: Фаза мода (`GameState.phase`, значение `state` в схеме мода), где в руке
@@ -300,3 +303,73 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         return Action(kind=best.kind, cards=best.cards, indices=_indices_of(state.hand, best.cards))
 
     return None
+
+
+def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
+    """Исполнить `action` через мост и вернуть новое состояние.
+
+    Один перевод `Action.kind` -> RPC-метод, общий для живого цикла
+    (`ui/tui.py.autoplay`) и ран-раннера (`balatro_bot/runner.py`) — раньше
+    жил только внутри цикла `tui`. Ошибки моста (`ModBridgeError`) не
+    глотает: и цикл, и раннер обрабатывают отказ по-своему (цикл печатает и
+    продолжает опрос, раннер фиксирует затык в логе решений). Несогласованный
+    `Action` (например, `buy` без `item_index`) — это ошибка в
+    `decide_action`, а не отказ игры: падаем с `ValueError`, не `assert`
+    (который вырезается под `python -O`)."""
+
+    def _index() -> int:
+        if action.item_index is None:
+            raise ValueError(f"{action.kind}: не задан item_index")
+        return action.item_index
+
+    match action.kind:
+        case "play":
+            return bridge.play(action.indices)
+        case "discard":
+            return bridge.discard(action.indices)
+        case "select":
+            return bridge.select()
+        case "skip":
+            return bridge.skip()
+        case "buy":
+            return bridge.buy(card=_index())
+        case "next_round":
+            return bridge.next_round()
+        case "cash_out":
+            return bridge.cash_out()
+        case "pack":
+            return bridge.open_pack(card=_index())
+        case "skip_pack":
+            return bridge.open_pack(skip=True)
+        case "use":
+            return bridge.use(_index())
+
+
+def describe_action(action: Action) -> str:
+    """Короткая человекочитаемая строка о том, что автопилот сделал — для
+    лога живого цикла (`ui/tui.py`) и лога решений ран-раннера
+    (`balatro_bot/runner.py`). Карты — компактно, ранг+масть, без пометок
+    улучшений: полный разбор варианта и так печатает `render_top_actions`."""
+    cards = " ".join(f"{c.rank.value}{c.suit.value}" for c in action.cards)
+    named = f": {action.label}" if action.label else ""
+    match action.kind:
+        case "play":
+            return f"сыграл {cards}"
+        case "discard":
+            return f"сбросил {cards}"
+        case "select":
+            return "выбрал блайнд — играет"
+        case "skip":
+            return "скипнул блайнд ради тега"
+        case "cash_out":
+            return "забрал награду за раунд"
+        case "buy":
+            return f"купил в магазине{named}"
+        case "next_round":
+            return "ушёл из магазина"
+        case "pack":
+            return f"взял из пака{named}"
+        case "skip_pack":
+            return "скипнул пак"
+        case "use":
+            return f"использовал консумабль{named}"

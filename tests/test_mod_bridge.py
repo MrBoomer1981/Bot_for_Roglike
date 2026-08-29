@@ -34,6 +34,12 @@ class TestРазборСостояния:
         state = parse_game_state(sample_state())
         assert state.hand[-1].rank is Rank.TEN
 
+    def test_флаг_победы_разбирается(self) -> None:
+        assert parse_game_state(sample_state()).won is False
+        raw = sample_state()
+        raw["won"] = True
+        assert parse_game_state(raw).won is True
+
     def test_модификаторы_карты(self) -> None:
         card = parse_game_state(sample_state()).hand[4]
         assert card.enhancement is Enhancement.BONUS
@@ -50,6 +56,12 @@ class TestРазборСостояния:
     def test_издание_holo_переименовано(self) -> None:
         # Мод называет издание `HOLO`, у нас оно `HOLOGRAPHIC`.
         assert parse_game_state(sample_state()).jokers[1].edition is Edition.HOLOGRAPHIC
+
+    def test_отключённый_джокер_помечается_debuffed(self) -> None:
+        raw = sample_state()
+        assert parse_game_state(raw).jokers[0].debuffed is False
+        raw["jokers"]["cards"][0].setdefault("state", {})["debuff"] = True
+        assert parse_game_state(raw).jokers[0].debuffed is True
 
     def test_текущий_блайнд_выбирается_по_статусу(self) -> None:
         blind = parse_game_state(sample_state()).blind
@@ -99,6 +111,61 @@ class TestРазборСостояния:
         assert item.price == 3
         assert item.effect == "+4 Mult"
         assert item.edition is Edition.FOIL
+        # Без стикеров ставок в modifier — значения по умолчанию.
+        assert item.eternal is False
+        assert item.perishable_rounds is None
+        assert item.rental is False
+
+    def test_магазин_разбирает_стикеры_ставок(self) -> None:
+        raw = sample_state()
+        raw["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {
+                        "seal": None,
+                        "edition": None,
+                        "enhancement": None,
+                        "eternal": True,
+                        "perishable": 3,
+                        "rental": True,
+                    },
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 1},
+                }
+            ],
+        }
+        item = parse_game_state(raw).shop[0]
+        assert item.eternal is True
+        assert item.perishable_rounds == 3
+        assert item.rental is True
+
+    def test_магазин_перишейбл_ноль_считается_отсутствием(self) -> None:
+        # Мод документирует поле как «only if > 0»: 0 или null — не «портится».
+        raw = sample_state()
+        raw["shop"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 1,
+                    "key": "j_joker",
+                    "set": "JOKER",
+                    "label": "Joker",
+                    "value": {"effect": "+4 Mult"},
+                    "modifier": {"perishable": 0, "rental": False},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 1, "buy": 3},
+                }
+            ],
+        }
+        assert parse_game_state(raw).shop[0].perishable_rounds is None
 
     def test_ваучеры_и_паки_отдельными_областями(self) -> None:
         raw = sample_state()
@@ -478,6 +545,24 @@ class TestКлиент:
     def test_cash_out_без_параметров(self, bridge: ModBridge) -> None:
         bridge.cash_out()
         assert FakeMod.calls[-1]["method"] == "cash_out"
+        assert "params" not in FakeMod.calls[-1]
+
+    def test_start_передаёт_колоду_и_ставку(self, bridge: ModBridge) -> None:
+        bridge.start("RED", "WHITE")
+        assert FakeMod.calls[-1]["method"] == "start"
+        assert FakeMod.calls[-1]["params"] == {"deck": "RED", "stake": "WHITE"}
+
+    def test_start_передаёт_сид_если_задан(self, bridge: ModBridge) -> None:
+        bridge.start("RED", "GOLD", seed="ABCD1234")
+        assert FakeMod.calls[-1]["params"] == {
+            "deck": "RED",
+            "stake": "GOLD",
+            "seed": "ABCD1234",
+        }
+
+    def test_menu_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.menu()
+        assert FakeMod.calls[-1]["method"] == "menu"
         assert "params" not in FakeMod.calls[-1]
 
     def test_идентификаторы_запросов_растут(self, bridge: ModBridge) -> None:
