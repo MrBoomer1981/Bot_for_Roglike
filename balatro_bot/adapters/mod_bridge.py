@@ -424,6 +424,7 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         shop_vouchers=_parse_shop_area(payload.get("vouchers"), unknown),
         shop_packs=_parse_shop_area(payload.get("packs"), unknown),
         pack=_parse_shop_area(payload.get("pack"), unknown),
+        consumables=_parse_shop_area(payload.get("consumables"), unknown),
         deck_type=str(payload["deck"]) if payload.get("deck") else None,
         deck=deck,
         full_deck=full_deck,
@@ -518,6 +519,16 @@ class ModBridge:
     def discard(self, indices: Sequence[int]) -> GameState:
         """Сбросить карты по индексам в руке (нумерация с нуля)."""
         return parse_game_state(self.call("discard", {"cards": list(indices)}))
+
+    def use(self, consumable: int, *, cards: Sequence[int] | None = None) -> GameState:
+        """Применить консумабль (Taro/Planet/Spectral) из `GameState.consumables`
+        по индексу. `cards` — индексы карт руки-целей, только для тех
+        консумаблей, которым они нужны (`openrpc.json`'s `use`; Planet-карты
+        целей не требуют вовсе — `solver/consumables.py` их и не передаёт)."""
+        params: dict[str, object] = {"consumable": consumable}
+        if cards is not None:
+            params["cards"] = list(cards)
+        return parse_game_state(self.call("use", params))
 
     def select(self) -> GameState:
         """Выбрать текущий блайнд — начать раунд (без параметров: мод сам

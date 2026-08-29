@@ -166,6 +166,32 @@ class TestРазборСостояния:
         assert item.kind == "PLANET"
         assert item.label == "Mercury"
 
+    def test_без_консумаблей_пустая_область(self) -> None:
+        assert parse_game_state(sample_state()).consumables == ()
+
+    def test_консумабль_в_инвентаре_разбирается(self) -> None:
+        raw = sample_state()
+        raw["consumables"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 4,
+                    "key": "c_mercury",
+                    "set": "PLANET",
+                    "label": "Mercury",
+                    "value": {"effect": "Increases Pair hand value by +1 Mult and +15 Chips"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 0},
+                }
+            ],
+        }
+        item = parse_game_state(raw).consumables[0]
+        assert item.key == "c_mercury"
+        assert item.kind == "PLANET"
+        assert item.label == "Mercury"
+
     def test_ресурсы_раунда(self) -> None:
         state = parse_game_state(sample_state())
         assert state.hands_left == 3
@@ -434,6 +460,15 @@ class TestКлиент:
     def test_open_pack_передаёт_скип(self, bridge: ModBridge) -> None:
         bridge.open_pack(skip=True)
         assert FakeMod.calls[-1]["params"] == {"skip": True}
+
+    def test_use_передаёт_индекс_консумабля(self, bridge: ModBridge) -> None:
+        bridge.use(2)
+        assert FakeMod.calls[-1]["method"] == "use"
+        assert FakeMod.calls[-1]["params"] == {"consumable": 2}
+
+    def test_use_передаёт_карты_цели(self, bridge: ModBridge) -> None:
+        bridge.use(0, cards=[1, 3])
+        assert FakeMod.calls[-1]["params"] == {"consumable": 0, "cards": [1, 3]}
 
     def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
         bridge.next_round()

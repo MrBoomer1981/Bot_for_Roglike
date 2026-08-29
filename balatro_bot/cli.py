@@ -38,6 +38,7 @@ from balatro_bot.install import (
     verify,
 )
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.discard import discard_outcome, rank_discards
 from balatro_bot.solver.pack import evaluate_pack
 from balatro_bot.solver.play import advise
@@ -46,6 +47,7 @@ from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui import tui
 from balatro_bot.ui.render import (
     format_cards,
+    render_consumable_advice,
     render_discard_outcome,
     render_discard_ranking,
     render_joker_order,
@@ -276,6 +278,7 @@ def _doctor(bridge: ModBridge) -> int:
     if shop_advice is not None:
         render_shop_advice(shop_advice)
     render_pack_advice(evaluate_pack(state))
+    render_consumable_advice(evaluate_planet_consumables(state))
     return 0
 
 

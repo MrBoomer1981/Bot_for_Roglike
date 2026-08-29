@@ -85,6 +85,44 @@ class TestDecideAction:
         assert без_сбросов.kind == "play"
 
 
+class TestDecideActionИспользуетКонсумабль:
+    """Planet-консумабль перед розыгрышем (9.4, первый кусок) — решается
+    раньше play/discard, см. модульный докстринг `autopilot.py`."""
+
+    def test_planet_консумабль_используется_раньше_розыгрыша(self) -> None:
+        state = build_state(
+            "AH KH QH JH 9H 7C 7D 2S",
+            hand_levels=None,
+        )
+        state = replace(
+            state,
+            phase="SELECTING_HAND",
+            consumables=(ShopItem("c_mercury", "Mercury", "PLANET", 0),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="use", item_index=0, label="Mercury")
+
+    def test_без_planet_консумаблей_решает_розыгрыш_как_раньше(self) -> None:
+        state = build_state("AH KH QH JH 9H 7C 7D 2S")
+        state = replace(state, phase="SELECTING_HAND")
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+
+    def test_несколько_консумаблей_выбирает_с_максимальным_приростом(self) -> None:
+        state = build_state("AH AS 2C 4D 6S 9H TC KD")
+        state = replace(
+            state,
+            phase="SELECTING_HAND",
+            consumables=(
+                ShopItem("c_jupiter", "Jupiter", "PLANET", 0),
+                ShopItem("c_mercury", "Mercury", "PLANET", 0),
+            ),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="use", item_index=1, label="Mercury")
+
+
 def _blind(
     kind: str, status: str, score: int, tag_name: str = "", tag_effect: str = ""
 ) -> BlindInfo:

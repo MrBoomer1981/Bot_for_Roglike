@@ -339,6 +339,37 @@ class TestAutoplay:
         out = capsys.readouterr().out
         assert "ушёл из магазина" in out
 
+    def test_planet_консумабль_используется_раньше_розыгрыша(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        state = sample_state()
+        state["consumables"] = {
+            "count": 1,
+            "limit": 2,
+            "cards": [
+                {
+                    "id": 5,
+                    "key": "c_mercury",
+                    "set": "PLANET",
+                    "label": "Mercury",
+                    "value": {"effect": "Increases Pair hand value by +1 Mult and +15 Chips"},
+                    "modifier": {"seal": None, "edition": None, "enhancement": None},
+                    "state": {"debuff": False, "hidden": False, "highlight": False},
+                    "cost": {"sell": 0, "buy": 0},
+                }
+            ],
+        }
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "use" in методы
+        assert "play" not in методы
+        use_call = next(call for call in FakeMod.calls if call["method"] == "use")
+        assert use_call["params"] == {"consumable": 0}
+        out = capsys.readouterr().out
+        assert "использовал консумабль: Mercury" in out
+
     def test_на_вскрытии_пака_берёт_лучшую_планету(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:

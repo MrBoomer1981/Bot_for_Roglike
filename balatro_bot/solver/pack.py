@@ -39,7 +39,7 @@ from balatro_bot.core.hands import PER_LEVEL_VALUES, HandType
 from balatro_bot.core.state import GameState, PokerHandInfo, ShopItem
 from balatro_bot.solver.play import advise
 
-__all__ = ["PLANET_HAND_TYPES", "PlanetOffer", "evaluate_pack"]
+__all__ = ["PLANET_HAND_TYPES", "PlanetOffer", "evaluate_pack", "level_up"]
 
 #: Ключ планеты -> тип руки, который она прокачивает. Выписано из текстов
 #: эффектов в `core/catalogue.py` (`c_pluto`, `c_mercury`, ...), а не по
@@ -87,8 +87,13 @@ class PlanetOffer:
     samples: int
 
 
-def _level_up(state: GameState, hand_type: HandType) -> GameState:
-    """Состояние с этим типом руки, прокачанным на один уровень."""
+def level_up(state: GameState, hand_type: HandType) -> GameState:
+    """Состояние с этим типом руки, прокачанным на один уровень.
+
+    Публична и переиспользуется `solver/consumables.py` (использование
+    Planet-карты из инвентаря перед розыгрышем — тот же самый механический
+    эффект, что и выбор Planet-карты в паке, просто другой вызывающий
+    контекст) — общая формула вместо второй копии."""
     current = state.hand_values(hand_type)
     step = PER_LEVEL_VALUES[hand_type]
     info = state.hand_info.get(hand_type)
@@ -141,7 +146,7 @@ def _evaluate_planet_offer(
     if len(deck_source) < _HAND_SIZE:
         return PlanetOffer(item, hand_type, None, exact_deck, 0)
 
-    boosted_state = _level_up(state, hand_type)
+    boosted_state = level_up(state, hand_type)
 
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)

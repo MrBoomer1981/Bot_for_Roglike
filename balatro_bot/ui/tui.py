@@ -7,13 +7,14 @@
 появляются сами. Только читает состояние: `ModBridge.play`/`.discard` здесь
 не вызываются вовсе.
 
-`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, пп. 9.1–9.2):
-на фазе `SELECTING_HAND` вызывает `ModBridge.play`/`.discard`, на фазе
-`BLIND_SELECT` — `.select`/`.skip`, на `SHOP`/`ROUND_EVAL` — `.buy`/
-`.next_round`/`.cash_out`, на `PLANET_PACK` — `.open_pack`, всё по решению
-`autopilot.decide_action`; на любой другой фазе (открытие Tarot/Spectral/
-Standard/Buffoon-пака, ...) ведёт себя ровно как `watch` (решения там ещё
-не замкнуты, см. `balatro_bot/autopilot.py`).
+`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, пп. 9.1–9.4):
+на фазе `SELECTING_HAND` сперва проверяет Planet-консумабли (`ModBridge.use`),
+затем вызывает `ModBridge.play`/`.discard`, на фазе `BLIND_SELECT` —
+`.select`/`.skip`, на `SHOP`/`ROUND_EVAL` — `.buy`/`.next_round`/`.cash_out`,
+на `PLANET_PACK` — `.open_pack`, всё по решению `autopilot.decide_action`;
+на любой другой фазе (открытие Tarot/Spectral/Standard/Buffoon-пака, ...)
+ведёт себя ровно как `watch` (решения там ещё не замкнуты, см.
+`balatro_bot/autopilot.py`).
 Переключатель «пауза/перехват» (клавиша `p`, раздел 2 и раздел 6 п. 9.1
 плана — обязательное требование, не побочный эффект) проверяется на каждой
 итерации, то есть между каждым отдельным действием, а не только между
@@ -34,12 +35,14 @@ from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import Action, decide_action
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import evaluate_pack
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import evaluate_skip
 from balatro_bot.ui.render import (
     format_cards,
+    render_consumable_advice,
     render_joker_order,
     render_pack_advice,
     render_shop_advice,
@@ -107,6 +110,7 @@ def watch(
                     if shop_advice is not None:
                         render_shop_advice(shop_advice)
                 render_pack_advice(evaluate_pack(state))
+                render_consumable_advice(evaluate_planet_consumables(state))
                 if state.hand:
                     print()
                     result = advise(state)
@@ -157,7 +161,9 @@ def _describe_action(action: Action) -> str:
         return "ушёл из магазина"
     if action.kind == "pack":
         return f"взял из пака: {action.label}"
-    return "скипнул пак"
+    if action.kind == "skip_pack":
+        return "скипнул пак"
+    return f"использовал консумабль: {action.label}"
 
 
 def _read_key() -> str | None:
@@ -279,8 +285,11 @@ def _autoplay_loop(
                         state = bridge.cash_out()
                     elif action.kind == "pack":
                         state = bridge.open_pack(card=action.item_index)
-                    else:
+                    elif action.kind == "skip_pack":
                         state = bridge.open_pack(skip=True)
+                    else:
+                        assert action.item_index is not None
+                        state = bridge.use(action.item_index)
                 except ModBridgeError as error:
                     # Мод отказал в честно посчитанном ходе — например,
                     # ограничение босса, которое `_is_legal_play` ещё не
@@ -309,6 +318,7 @@ def _autoplay_loop(
                 if shop_advice is not None:
                     render_shop_advice(shop_advice)
             render_pack_advice(evaluate_pack(state))
+            render_consumable_advice(evaluate_planet_consumables(state))
             if state.hand:
                 print()
                 result = advise(state)

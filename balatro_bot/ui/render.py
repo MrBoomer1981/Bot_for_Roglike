@@ -13,6 +13,7 @@ from typing import Final
 from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import ActionOption
+from balatro_bot.solver.consumables import PlanetConsumableOffer
 from balatro_bot.solver.discard import MAX_DISCARD_COMPOSITIONS, DiscardOutcome
 from balatro_bot.solver.pack import PlanetOffer
 from balatro_bot.solver.play import (
@@ -29,6 +30,7 @@ __all__ = [
     "format_cards",
     "format_number",
     "render_advice",
+    "render_consumable_advice",
     "render_discard_outcome",
     "render_discard_ranking",
     "render_explanation",
@@ -242,6 +244,21 @@ def render_pack_advice(offers: Sequence[PlanetOffer]) -> None:
         else:
             приближено = "" if offer.exact_deck else ", колода приближена"
             оценка = f"прирост ~{format_number(offer.expected_uplift)}{приближено}"
+        print(f"  {offer.item.label:<{ширина}}  {offer.hand_type.value:<15} {оценка}")
+
+
+def render_consumable_advice(offers: Sequence[PlanetConsumableOffer]) -> None:
+    """Показать оценку Planet-карт в инвентаре перед розыгрышем — пусто,
+    если оценивать нечего (`solver/consumables.py`: не фаза `SELECTING_HAND`,
+    нет текущей руки или нет ни одной Planet-карты)."""
+    if not offers:
+        return
+    print("\nконсумабли (Planet) в инвентаре:")
+    ширина = max(len(offer.item.label) for offer in offers)
+    for offer in offers:
+        оценка = f"прирост на этой руке ~{format_number(offer.expected_uplift)}"
+        if offer.note:
+            оценка += f" ({offer.note})"
         print(f"  {offer.item.label:<{ширина}}  {offer.hand_type.value:<15} {оценка}")
 
 

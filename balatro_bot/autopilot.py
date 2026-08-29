@@ -81,7 +81,20 @@
 возвращает `None` на этих фазах, и цикл (`ui/tui.py.autoplay`) на них
 ведёт себя как обычный `watch` — показывает состояние и ничего не
 трогает, пока эти решения не будут закрыты отдельно.
-"""
+
+**Consumables перед розыгрышем (`SELECTING_HAND`, первый кусок 9.4).**
+Перед тем как решать play/discard, `decide_action` сперва проверяет
+`solver.consumables.evaluate_planet_consumables` — использование
+Planet-карты из инвентаря политически устроено так же просто, как выбор
+карты из Celestial Pack (`_decide_pack_action`): применить карту нельзя
+себе во вред (level-up только добавляет фишки/множитель одному типу руки),
+поэтому политика — использовать любую найденную Planet-карту сразу, не
+дожидаясь положительного числа (в отличие от магазина/скипа, здесь нечего
+взвешивать). Ровно одна карта за вызов `decide_action`, тем же паттерном,
+что «одна покупка за вызов» в магазине: `ModBridge.use()` сразу меняет
+инвентарь, а следующая карта (если такая есть) решится на уже свежем
+состоянии на следующем опросе. Tarot-карты в инвентаре эта проверка не
+трогает вовсе — намеренно, см. модульный докстринг `solver/consumables.py`."""
 
 from __future__ import annotations
 
@@ -91,6 +104,7 @@ from typing import Literal
 from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import PLANET_PACK, evaluate_pack
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
@@ -132,7 +146,16 @@ class Action:
     без индекса)."""
 
     kind: Literal[
-        "play", "discard", "select", "skip", "buy", "next_round", "cash_out", "pack", "skip_pack"
+        "play",
+        "discard",
+        "select",
+        "skip",
+        "buy",
+        "next_round",
+        "cash_out",
+        "pack",
+        "skip_pack",
+        "use",
     ]
     cards: tuple[Card, ...] = field(default=())
     indices: tuple[int, ...] = field(default=())
@@ -140,10 +163,11 @@ class Action:
     мода (`play`/`discard` принимают индексы в руке, не сами карты)."""
 
     item_index: int | None = None
-    """0-based индекс предмета в `GameState.shop` (`buy`) или в
-    `GameState.pack` (`pack`) — в обоих случаях один и тот же `ShopItem`,
-    индексирующий один и тот же по форме `tuple[ShopItem, ...]`, поэтому
-    поле общее, не отдельное на каждый RPC-метод."""
+    """0-based индекс предмета в `GameState.shop` (`buy`), `GameState.pack`
+    (`pack`) или `GameState.consumables` (`use`) — во всех случаях один и
+    тот же `ShopItem`, индексирующий один и тот же по форме
+    `tuple[ShopItem, ...]`, поэтому поле общее, не отдельное на каждый
+    RPC-метод."""
 
     label: str = ""
     """Название выбранного предмета для лога автопилота (`buy`/`pack` —
@@ -233,6 +257,18 @@ def _decide_pack_action(state: GameState) -> Action:
     return Action(kind="skip_pack")
 
 
+def _decide_consumable_action(state: GameState) -> Action | None:
+    """Использовать Planet-карту из инвентаря, если такая есть — см.
+    модульный докстринг про то, почему тут не нужно ждать положительного
+    числа. `None`, если Planet-карт в инвентаре нет — тогда решение
+    переходит к play/discard как обычно."""
+    offers = evaluate_planet_consumables(state)
+    if not offers:
+        return None
+    item = offers[0].item
+    return Action(kind="use", item_index=_item_index_of(state.consumables, item), label=item.label)
+
+
 def decide_action(state: GameState, *, include_discards: bool = True) -> Action | None:
     """Решить, что сделать прямо сейчас — `None`, если эта фаза ещё не закрыта.
 
@@ -254,6 +290,9 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
     if state.phase == SELECTING_HAND:
         if not state.hand:
             return None
+        consumable_action = _decide_consumable_action(state)
+        if consumable_action is not None:
+            return consumable_action
         options = rank_actions(state, top=1, include_discards=include_discards)
         if not options:
             return None
