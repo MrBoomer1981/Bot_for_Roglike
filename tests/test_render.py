@@ -383,3 +383,28 @@ class TestРендерСоветаПоМагазину:
         out = capsys.readouterr().out
         assert "прирост ~15" in out
         assert "нижняя граница" in out
+
+    def test_ваучер_с_эвристикой_показывает_экспертную_оценку(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        advice = ShopAdvice(
+            jokers=(),
+            vouchers=(
+                VoucherOffer(
+                    item=ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),
+                    expected_uplift=None,
+                    exact_deck=True,
+                    samples=0,
+                    note="лишний слот джокера",
+                    heuristic_value=8.0,
+                ),
+            ),
+            packs=(),
+            money=10,
+            reroll_cost=None,
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "экспертно ~8" in out
+        assert "лишний слот джокера" in out
+        assert "прирост" not in out

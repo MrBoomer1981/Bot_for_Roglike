@@ -1,9 +1,7 @@
-"""Тесты оценки ваучеров (`balatro_bot/solver/vouchers.py`).
-
-Фаза 9.3, первый (самый честный) из трёх уровней: только прямые игровые
-ресурсы (лишняя рука/сброс за раунд, лишняя карта в руке) получают числовую
-оценку без новых допущений; остальные 26 ваучеров сознательно получают
-`expected_uplift = None` с пояснением, не молчание и не выдуманное число."""
+"""Тесты оценки ваучеров (`balatro_bot/solver/vouchers.py`), все три уровня
+честности Фазы 9.3: точный расчёт, денежная формула с горизонтом и
+экспертная эвристика (`VoucherOffer.heuristic_value`, структурно отдельная
+от `expected_uplift` — раздел 2 плана, «Третья категория»)."""
 
 from __future__ import annotations
 
@@ -214,3 +212,75 @@ class TestСкидкаВМагазине:
         )
         offers = evaluate_vouchers(state)
         assert offers[0].expected_uplift == 0.0
+
+
+class TestЭвристическийУровень:
+    """Третья категория честности (раздел 2 плана): экспертная оценка по
+    игровому смыслу, структурно отдельная от `expected_uplift` — тот
+    остаётся честным `None`, число живёт в `heuristic_value`."""
+
+    def test_антиматерия_получает_эвристику_а_не_expected_uplift(self) -> None:
+        state = _voucher_state(
+            shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),)
+        )
+        offer = evaluate_vouchers(state)[0]
+        assert offer.expected_uplift is None
+        assert offer.heuristic_value == 8.0
+        assert offer.note
+
+    def test_все_двенадцать_эвристических_ваучеров_дают_число(self) -> None:
+        keys = [
+            "v_antimatter",
+            "v_glow_up",
+            "v_hone",
+            "v_planet_tycoon",
+            "v_tarot_tycoon",
+            "v_planet_merchant",
+            "v_crystal_ball",
+            "v_telescope",
+            "v_overstock_norm",
+            "v_tarot_merchant",
+            "v_overstock_plus",
+            "v_observatory",
+        ]
+        state = _voucher_state(
+            shop_vouchers=tuple(ShopItem(key, key, "VOUCHER", 10) for key in keys)
+        )
+        offers = evaluate_vouchers(state)
+        assert len(offers) == 12
+        for offer in offers:
+            assert offer.expected_uplift is None
+            assert offer.heuristic_value is not None
+            assert offer.heuristic_value > 0
+
+    def test_glow_up_оценен_выше_hone(self) -> None:
+        state = _voucher_state(
+            shop_vouchers=(
+                ShopItem("v_hone", "Hone", "VOUCHER", 10),
+                ShopItem("v_glow_up", "Glow Up", "VOUCHER", 10),
+            )
+        )
+        by_key = {offer.item.key: offer for offer in evaluate_vouchers(state)}
+        glow_up = by_key["v_glow_up"].heuristic_value
+        hone = by_key["v_hone"].heuristic_value
+        assert glow_up is not None and hone is not None
+        assert glow_up > hone
+
+    def test_hieroglyph_остаётся_вне_эвристики(self) -> None:
+        # Отложен по отдельной причине (нужна формула анте) — не входит
+        # в третий уровень даже как эвристика.
+        state = _voucher_state(
+            shop_vouchers=(ShopItem("v_hieroglyph", "Hieroglyph", "VOUCHER", 10),)
+        )
+        offer = evaluate_vouchers(state)[0]
+        assert offer.expected_uplift is None
+        assert offer.heuristic_value is None
+
+
+class TestBlank:
+    def test_blank_получает_подтверждённый_ноль_не_эвристику(self) -> None:
+        state = _voucher_state(shop_vouchers=(ShopItem("v_blank", "Blank", "VOUCHER", 10),))
+        offer = evaluate_vouchers(state)[0]
+        assert offer.expected_uplift == 0.0
+        assert offer.heuristic_value is None
+        assert "ничего не делает" in offer.note

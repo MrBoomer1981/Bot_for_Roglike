@@ -208,13 +208,18 @@ def render_shop_advice(advice: ShopAdvice) -> None:
         ширина_в = max(len(voucher.item.label) for voucher in advice.vouchers)
         for voucher in advice.vouchers:
             item = voucher.item
-            if voucher.expected_uplift is None:
-                оценка = voucher.note or item.effect
-            else:
+            if voucher.expected_uplift is not None:
                 приближено = "" if voucher.exact_deck else ", колода приближена"
                 оценка = f"прирост ~{format_number(voucher.expected_uplift)}{приближено}"
                 if voucher.note:
                     оценка += f" ({voucher.note})"
+            elif voucher.heuristic_value is not None:
+                # Третья категория честности — экспертная оценка, не расчёт
+                # (`solver/vouchers.py`): «~N» намеренно без слова «прирост»,
+                # чтобы не читалось как то же самое, что точный расчёт выше.
+                оценка = f"экспертно ~{format_number(voucher.heuristic_value)} ({voucher.note})"
+            else:
+                оценка = voucher.note or item.effect
             print(f"  {item.label:<{ширина_в}}  ${item.price:<4} {оценка}")
 
     if advice.packs:
