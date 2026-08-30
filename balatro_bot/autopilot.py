@@ -1,20 +1,24 @@
 """Решение «что сделать прямо сейчас» — Фаза 9 плана («Автопилот»).
 
-**Розыгрыш/сброс (`SELECTING_HAND`, п. 9.1)** — решение уже полностью
-посчитано существующим солвером (`solver.actions.rank_actions`) — тем же
-самым списком, что видит человек в `advise`/`watch`. Автопилот не считает
-по-своему и не вводит отдельную политику поверх счёта: `decide_action`
-буквально берёт первый пункт того же ранжированного списка и переводит его в
-вызов RPC мода (`ModBridge.play`/`.discard`, индексы карт в руке, не сами
-карты — так требует схема мода, `openrpc.json`'s `play`/`discard`).
+**Розыгрыш/сброс (`SELECTING_HAND`, п. 9.1)** — в основе тот же
+ранжированный список, что видит человек в `advise`/`watch`
+(`solver.actions.rank_actions`), но с одной поправкой поверх него.
 
-Одна честно отмеченная особенность, не дефект: `rank_actions` сравнивает
-`play` (точный счёт) и `discard` (оценка по построению, `ActionOption.exact
-= False` для сбросов — раздел 8 `docs/Discard Spec.md`) в одном списке по
-числу. Автопилот действует по тому же самому топ-1, что видел бы человек в
-`watch`, — если сброс окажется наверху списка, это та же самая оценка,
-которая и раньше показывалась как совет, автопилот не добавляет новой
-неопределённости, только исполняет то же решение сам.
+`rank_actions` сравнивает розыгрыши и сбросы по матожиданию счёта, а у
+сброса матожидание **оптимистично по построению** (`ActionOption.exact =
+False` — раздел 8 `docs/Discard Spec.md`: это оценка по представительной
+выборке через быструю эвристику, не точный перебор). Поэтому «сбросить к
+флешу» нередко показывает число больше, чем «сыграть эту двойную пару» —
+даже когда пара уже гарантированно закрывает блайнд. Человек, глядя на
+список, видит пометку «хватает на блайнд» и не купится; автопилот же брал
+бы голый топ-1 и разменивал верную победу на ставку. Поэтому
+`decide_action` сначала проверяет `advise(state).cheapest_sufficient` —
+самый экономный ход, чей **нижний предел** (`Candidate.beats`, не среднее)
+уже перекрывает оставшееся требование блайнда, — и если такой есть, играет
+его. Только когда гарантированного хода нет, решение отдаётся топ-1
+`rank_actions` (который тогда может быть и сбросом). Это не новый расчёт
+счёта, а приоритет «верное над вероятным», тот же принцип, что у
+`decide_skip`.
 
 **Скип блайнда (`BLIND_SELECT`, п. 9.2, первый из трёх кусков)** —
 `solver.skip.evaluate_skip` сознательно не даёт вердикта: часть тегов
@@ -109,6 +113,7 @@ from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import PACK_OPEN_PHASES, evaluate_pack
+from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
@@ -321,6 +326,23 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         consumable_action = _decide_consumable_action(state)
         if consumable_action is not None:
             return consumable_action
+
+        # Гарантированная победа бьёт любую ставку на сброс. `rank_actions`
+        # сравнивает розыгрыши и сбросы по матожиданию, а у сброса оно
+        # оптимистично по построению (`ActionOption.exact = False`) — поэтому
+        # «сбросить к флешу» нередко показывает число больше, чем «сыграть
+        # эту двойную пару», даже когда пара уже закрывает блайнд. Если есть
+        # ход, чей нижний предел (`Candidate.beats`) уже перекрывает
+        # оставшееся требование, играем его — не гадаем.
+        plays = advise(state)
+        sure = plays.cheapest_sufficient
+        if sure is not None:
+            return Action(
+                kind="play",
+                cards=sure.cards,
+                indices=_indices_of(state.hand, sure.cards),
+            )
+
         options = rank_actions(state, top=1, include_discards=include_discards)
         if not options:
             return None

@@ -25,6 +25,7 @@ from balatro_bot.autopilot import (
 )
 from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
+from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.skip import evaluate_skip
 from tests.fake_mod import FakeMod
 
@@ -97,6 +98,7 @@ class TestDecideAction:
 
     def test_include_discards_false_никогда_не_сбрасывает(self) -> None:
         # Рука явно тянется к флешу — лучший вариант обычно сброс 2C.
+        # Блайнда нет, поэтому «гарантированная победа» не срабатывает.
         state = build_state("AH KH QH 9H 2C", discards_left=1)
         state = replace(state, phase="SELECTING_HAND")
 
@@ -107,6 +109,27 @@ class TestDecideAction:
         без_сбросов = decide_action(state, include_discards=False)
         assert без_сбросов is not None
         assert без_сбросов.kind == "play"
+
+    def test_гарантированная_победа_бьёт_сброс(self) -> None:
+        # Пара тузов даёт min 64 и закрывает блайнд 60. `rank_actions` при
+        # этом ставит наверх сброс к триплу/каре тузов (оптимистичная оценка
+        # сброса). Автопилот обязан сыграть верную пару, а не гадать.
+        state = build_state("AH AS KH QH 2C", discards_left=1, blind=60)
+        state = replace(state, phase="SELECTING_HAND")
+
+        assert rank_actions(state, top=1)[0].kind == "discard"  # что было бы без поправки
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+
+    def test_нет_гарантии_можно_и_сбросить(self) -> None:
+        # Блайнд велик — ни один ход не закрывает его наверняка, поэтому
+        # решение снова отдаётся общему списку (тут — сброс).
+        state = build_state("AH AS KH QH 2C", discards_left=1, blind=100_000)
+        state = replace(state, phase="SELECTING_HAND")
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "discard"
 
 
 class TestDecideActionИспользуетКонсумабль:
