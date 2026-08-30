@@ -112,14 +112,20 @@
 Spectral в Arcana Pack; ни один не упомянут даже в исходном списке
 третьего уровня плана) по-прежнему получают честный `None` без
 `heuristic_value` — не тихо пропускаются, но и не оцениваются наугад там,
-где даже приблизительного игрового смысла недостаточно."""
+где даже приблизительного игрового смысла недостаточно.
+
+`expected_uplift` у первого уровня — в очках, у второго — в долларах (за
+постулированный горизонт). Поле `VoucherOffer.value_unit` (`"score"` /
+`"dollars"` / `None`) сообщает это машиночитаемо: `note` различие
+объясняет человеку, но `autopilot` (улучшение A4, покупка ваучеров) по
+нему очки с долларами не различил бы."""
 
 from __future__ import annotations
 
 import math
 import random
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Final, Literal
 
 from balatro_bot.core import economy
 from balatro_bot.core.cards import Card, standard_deck
@@ -229,6 +235,15 @@ class VoucherOffer:
     есть настоящая оценка в `expected_uplift` вместо этой. Условные
     «доллары», сравнимые только друг с другом, не с `expected_uplift`."""
 
+    value_unit: Literal["score", "dollars"] | None = None
+    """В каких единицах `expected_uplift`: `"score"` — очки (первый уровень,
+    прямые ресурсы: +рука/+сброс/+размер руки, сравнимо с приростом джокера),
+    `"dollars"` — реальные доллары за постулированный горизонт (второй
+    уровень: потолок процентов, скидки, реролл — сравнимо с ценой предмета,
+    не с очками). `None` — `expected_uplift` не посчитан (третий уровень или
+    вне среза). Нужно, чтобы потребитель (`autopilot`) не смешал очки с
+    долларами — `note` этого различия машине не сообщает."""
+
 
 def evaluate_vouchers(state: GameState, samples: int = SAMPLE_HANDS) -> tuple[VoucherOffer, ...]:
     """Оценить все ваучеры текущего магазина — пустой кортеж вне фазы `SHOP`
@@ -265,7 +280,7 @@ def _evaluate_voucher(
     if item.key in _SHOP_DISCOUNT_VOUCHERS:
         return _evaluate_shop_discount(state, item)
     if item.key == "v_blank":
-        return VoucherOffer(item, 0.0, exact_deck, 0, _BLANK_NOTE)
+        return VoucherOffer(item, 0.0, exact_deck, 0, _BLANK_NOTE, value_unit="score")
     if item.key in _HEURISTIC_VALUES:
         return VoucherOffer(
             item, None, exact_deck, 0, _HEURISTIC_NOTES[item.key], _HEURISTIC_VALUES[item.key]
@@ -293,7 +308,7 @@ def _evaluate_extra_hand(
         return VoucherOffer(item, None, exact_deck, 0, _SMALL_DECK_NOTE)
 
     total = sum(advise(replace(state, hand=hand), limit=1).best.score for hand in hands)
-    return VoucherOffer(item, total / len(hands), exact_deck, len(hands))
+    return VoucherOffer(item, total / len(hands), exact_deck, len(hands), value_unit="score")
 
 
 def _evaluate_extra_hand_size(
@@ -312,7 +327,7 @@ def _evaluate_extra_hand_size(
         boosted = advise(replace(state, hand=hand), limit=1).best.score
         baseline = advise(replace(state, hand=hand[:_HAND_SIZE]), limit=1).best.score
         total += boosted - baseline
-    return VoucherOffer(item, total / len(hands), exact_deck, len(hands))
+    return VoucherOffer(item, total / len(hands), exact_deck, len(hands), value_unit="score")
 
 
 def _sample_hand_and_rest(
@@ -352,7 +367,9 @@ def _evaluate_extra_discard(
         total += max(0.0, best - baseline)
         counted += 1
 
-    return VoucherOffer(item, total / counted, exact_deck, counted, _DISCARD_NOTE)
+    return VoucherOffer(
+        item, total / counted, exact_deck, counted, _DISCARD_NOTE, value_unit="score"
+    )
 
 
 def _rounds_left_in_ante(state: GameState) -> int | None:
@@ -380,7 +397,7 @@ def _evaluate_interest_cap(state: GameState, item: ShopItem) -> VoucherOffer:
         f"горизонт: {rounds_left} раунд(ов) до конца анте, при допущении, что сумма "
         "денег на конец раунда не изменится"
     )
-    return VoucherOffer(item, float(per_round * rounds_left), True, 1, note)
+    return VoucherOffer(item, float(per_round * rounds_left), True, 1, note, value_unit="dollars")
 
 
 def _evaluate_reroll_discount(state: GameState, item: ShopItem) -> VoucherOffer:
@@ -389,13 +406,13 @@ def _evaluate_reroll_discount(state: GameState, item: ShopItem) -> VoucherOffer:
 
     extra = _REROLL_DISCOUNT_VOUCHERS[item.key]
     savings = min(extra, state.reroll_cost)
-    return VoucherOffer(item, float(savings), True, 1, _REROLL_DISCOUNT_NOTE)
+    return VoucherOffer(item, float(savings), True, 1, _REROLL_DISCOUNT_NOTE, value_unit="dollars")
 
 
 def _evaluate_shop_discount(state: GameState, item: ShopItem) -> VoucherOffer:
     priced_items = tuple(state.shop) + tuple(state.shop_packs)
     if not priced_items:
-        return VoucherOffer(item, 0.0, True, 0, _SHOP_DISCOUNT_NOTE)
+        return VoucherOffer(item, 0.0, True, 0, _SHOP_DISCOUNT_NOTE, value_unit="dollars")
 
     current_discount = economy.discount_percent(state.used_vouchers)
     new_discount = economy.discount_percent(state.used_vouchers | {item.key})
@@ -406,4 +423,6 @@ def _evaluate_shop_discount(state: GameState, item: ShopItem) -> VoucherOffer:
         new_price = max(1, math.floor((base_cost + 0.5) * (100 - new_discount) / 100))
         total_savings += max(0, shop_item.price - new_price)
 
-    return VoucherOffer(item, total_savings, True, len(priced_items), _SHOP_DISCOUNT_NOTE)
+    return VoucherOffer(
+        item, total_savings, True, len(priced_items), _SHOP_DISCOUNT_NOTE, value_unit="dollars"
+    )

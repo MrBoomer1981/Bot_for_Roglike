@@ -59,15 +59,27 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 не набирать корзину по одному-единственному снимку `evaluate_shop` — цикл
 опроса (`ui/tui.py.autoplay`) и так перечитывает состояние на каждой
 итерации, задача `decide_action` тут не в том, чтобы копить решения, а
-в том, чтобы каждый раз отвечать честно по свежим числам. Когда покупать
-джокеров брать нечего (либо ни один не проходит порог A2) — пробуем купить
-Buffoon-пак: `ShopAdvice.packs` несёт для него оценку прироста
-(Монте-Карло «лучшие choose из extra», `PackPurchaseOffer`), покупаем при
-положительной оценке, свободном слоте и по карману. Порог здесь остаётся
-«> 0», а не A2-шная доля требования: пак — это выбор из 2–4 (хедж, риск
-ниже разовой покупки джокера вслепую) и единственный оставшийся сток денег
-до улучшений A3/A5, задирать ему планку сейчас значило бы снова копить
-деньги впустую.
+в том, чтобы каждый раз отвечать честно по свежим числам.
+
+Следом (улучшение A4) — ваучер (`_decide_voucher_action`, порог по уровню
+честности оценки из `solver.vouchers`, поле `value_unit`): 1-й уровень
+(`"score"`, прямой ресурс в очках) — тот же порог `_worth_buying`, что у
+джокера; 2-й (`"dollars"`, денежная формула с горизонтом) — чистый плюс в
+долларах, оценка не ниже цены; 3-й (`heuristic_value`, экспертная
+константа — не посчитанное число) — только структурные апгрейды,
+`>= _MIN_HEURISTIC_VOUCHER_VALUE`. Действовать по 3-му уровню — явное
+решение пользователя (иначе это было бы то самое «гадать вместо `None`»,
+что проект запрещает). Ваучер идёт после джокера (джокер — ядро стратегии
+и занимает дефицитный слот), но перед паком (пак — гэмбл). Ваучер слота
+не занимает.
+
+Когда покупать джокеров брать нечего (либо ни один не проходит порог A2) —
+пробуем купить Buffoon/Celestial-пак: `ShopAdvice.packs` несёт оценку
+прироста (Монте-Карло «лучшие choose из extra», `PackPurchaseOffer`),
+покупаем при положительной оценке, `has_slot` (у Celestial всегда `True`) и
+по карману. Порог здесь остаётся «> 0», а не A2-шная доля требования: пак —
+это выбор из нескольких карт (хедж) и сток денег до улучшения A5 (реролл),
+задирать ему планку сейчас значило бы снова копить деньги впустую.
 
 Когда все слоты заняты (`joker_slots`), обычная покупка невозможна — но
 `evaluate_shop` посчитал вклад каждого джокера в слоте и прицепил самого
@@ -79,10 +91,9 @@ Buffoon-пак: `ShopAdvice.packs` несёт для него оценку пр�
 Продажа — отдельное действие: слот освободится, покупку решим на следующем
 шаге по свежим числам, как и всё остальное в магазине.
 
-Когда и менять нечего — `next_round`, уйти. Ваучеры, прочие типы паков
-(Celestial/Arcana/Spectral/Standard) и реролл по-прежнему не тронуты:
-`evaluate_shop`/`evaluate_vouchers` не дают им числа, а `reroll_cost` —
-цена без вердикта (раздел 8 плана, «Момент рерола»).
+Когда и менять нечего — `next_round`, уйти. Arcana/Spectral/Standard-паки
+и реролл по-прежнему не тронуты: `evaluate_shop` не даёт им числа, а
+`reroll_cost` — цена без вердикта (раздел 8 плана, «Момент рерола»).
 
 **Вскрытие пака (Celestial — кусок 9.2; Buffoon — 9.3).** Фаза открытого
 пака у Steamodded — одна общая `SMODS_BOOSTER_OPENED` (не ванильные
@@ -181,6 +192,15 @@ _REPLACE_UPLIFT_RATIO = 2.0
 #: Калибруется на живых прогонах.
 _MIN_BUY_REQ_FRACTION = 0.03
 
+#: Минимальная экспертная оценка ваучера третьего уровня
+#: (`VoucherOffer.heuristic_value`, шкала ~2..8), при которой автопилот его
+#: покупает (улучшение A4). Действовать по этому числу — явное решение
+#: пользователя: это ранжирная оценка «по игровому смыслу», не результат
+#: расчёта. Планка намеренно высокая — только структурные апгрейды
+#: (`Antimatter` +слот джокера 8.0, `Glow Up` 6.0), не «чаще нужный тип в
+#: магазине» (2..4). Калибруется на живых прогонах.
+_MIN_HEURISTIC_VOUCHER_VALUE = 5.0
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
@@ -199,6 +219,7 @@ class Action:
         "skip",
         "buy",
         "buy_pack",
+        "buy_voucher",
         "sell",
         "next_round",
         "cash_out",
@@ -212,7 +233,8 @@ class Action:
     мода (`play`/`discard` принимают индексы в руке, не сами карты)."""
 
     item_index: int | None = None
-    """0-based индекс предмета в `GameState.shop` (`buy`), `GameState.pack`
+    """0-based индекс предмета в `GameState.shop` (`buy`), `GameState.shop_packs`
+    (`buy_pack`), `GameState.shop_vouchers` (`buy_voucher`), `GameState.pack`
     (`pack`), `GameState.consumables` (`use`) или `GameState.jokers`
     (`sell` — какого джокера в слоте продать) — во всех случаях просто
     индекс в одноимённый кортеж состояния, поэтому поле общее, не отдельное
@@ -319,11 +341,47 @@ def _decide_replace_action(
     return None
 
 
+def _decide_voucher_action(
+    state: GameState, advice: ShopAdvice, requirement: int | None
+) -> Action | None:
+    """Купить ваучер (улучшение A4). Порог зависит от уровня честности
+    оценки (`solver.vouchers`, поле `value_unit`):
+
+    - `"score"` (1-й уровень — прямой ресурс в очках, +рука/+сброс/+размер
+      руки): тот же порог, что у джокера (`_worth_buying`);
+    - `"dollars"` (2-й уровень — денежная формула с горизонтом: потолок
+      процентов, скидки): чистый плюс в долларах, оценка не ниже цены;
+    - `heuristic_value` (3-й уровень — экспертная константа, НЕ посчитанное
+      число): только структурные апгрейды, `>= _MIN_HEURISTIC_VOUCHER_VALUE`.
+      Действовать по этому уровню — явное решение пользователя.
+
+    Ваучер слота не занимает — проверяется только `affordable`. `None`,
+    если брать нечего."""
+    for offer in advice.vouchers:
+        if state.money < offer.item.price:
+            continue
+        take = False
+        if offer.value_unit == "score" and offer.expected_uplift is not None:
+            take = _worth_buying(offer.expected_uplift, requirement)
+        elif offer.value_unit == "dollars" and offer.expected_uplift is not None:
+            take = offer.expected_uplift >= offer.item.price
+        elif offer.heuristic_value is not None:
+            take = offer.heuristic_value >= _MIN_HEURISTIC_VOUCHER_VALUE
+        if take:
+            return Action(
+                kind="buy_voucher",
+                item_index=_item_index_of(state.shop_vouchers, offer.item),
+                label=offer.item.label,
+            )
+    return None
+
+
 def _decide_shop_action(state: GameState) -> Action:
     """В магазине решение — купить лучшего по приросту джокера (порог A2:
-    прирост не ниже доли требования блайнда, не просто > 0), затем (если
-    джокеров брать нечего) Buffoon-пак с положительной нижней границей, затем
-    (если слоты полны) продать слабейшего под лучший оффер, иначе уйти
+    прирост не ниже доли требования блайнда, не просто > 0), затем ваучер
+    (порог по уровню честности оценки, улучшение A4), затем (если джокеров
+    брать нечего) Buffoon/Celestial-пак с положительной оценкой, затем (если
+    слоты полны) продать слабейшего под лучший оффер, иначе уйти
     (`next_round`). См. модульный докстринг про политику и её границы."""
     advice = evaluate_shop(state)
     if advice is not None:
@@ -341,6 +399,9 @@ def _decide_shop_action(state: GameState) -> Action:
                     item_index=_item_index_of(state.shop, offer.item),
                     label=offer.item.label,
                 )
+        voucher_action = _decide_voucher_action(state, advice, requirement)
+        if voucher_action is not None:
+            return voucher_action
         for pack in advice.packs:
             if (
                 pack.affordable
@@ -487,6 +548,8 @@ def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
             return bridge.buy(card=_index())
         case "buy_pack":
             return bridge.buy(pack=_index())
+        case "buy_voucher":
+            return bridge.buy(voucher=_index())
         case "sell":
             return bridge.sell(joker=_index())
         case "next_round":
@@ -523,6 +586,8 @@ def describe_action(action: Action) -> str:
             return f"купил в магазине{named}"
         case "buy_pack":
             return f"купил пак{named}"
+        case "buy_voucher":
+            return f"купил ваучер{named}"
         case "sell":
             return f"продал джокера{named}"
         case "next_round":

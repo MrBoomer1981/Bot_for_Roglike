@@ -361,14 +361,71 @@ class TestDecideActionВМагазине:
         )
         assert decide_action(state) == Action(kind="next_round")
 
-    def test_ваучеры_и_arcana_паки_не_покупаются(self) -> None:
-        # Ваучеры и не-Buffoon паки не получают expected_uplift —
-        # decide_action не выдумывает вердикт.
+    def test_неоценённый_ваучер_и_arcana_пак_не_покупаются(self) -> None:
+        # Ваучер вне всех трёх уровней (`v_omen_globe`) и Arcana-пак не
+        # получают ни оценки, ни heuristic_value — decide_action не выдумывает.
         state = GameState(
             phase="SHOP",
             money=100,
-            shop_vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10),),
+            shop_vouchers=(ShopItem("v_omen_globe", "Omen Globe", "VOUCHER", 10),),
             shop_packs=(ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a4_покупает_ваучер_прямого_ресурса(self) -> None:
+        # v_grabber (+1 рука) — expected_uplift в очках, порог как у джокера.
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=5,
+            shop_vouchers=(ShopItem("v_grabber", "Grabber", "VOUCHER", 10),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="buy_voucher", item_index=0, label="Grabber")
+
+    def test_a4_покупает_структурный_эвристический_ваучер(self) -> None:
+        # v_antimatter (+1 слот джокера), heuristic_value 8.0 >= 5.0.
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=5,
+            shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="buy_voucher", item_index=0, label="Antimatter")
+
+    def test_a4_слабый_эвристический_ваучер_не_покупается(self) -> None:
+        # v_telescope heuristic_value 3.0 < порог 5.0 — не структурный апгрейд.
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=5,
+            shop_vouchers=(ShopItem("v_telescope", "Telescope", "VOUCHER", 10),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a4_не_покупает_ваучер_не_по_карману(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=5,
+            joker_slots=5,
+            shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a4_денежный_ваучер_с_отрицательным_нетто_не_покупается(self) -> None:
+        # v_seed_money: при $10 на руках прирост процентов ≈ 0 за горизонт,
+        # это < цены 10 — чистого плюса в долларах нет.
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            joker_slots=5,
+            blinds={
+                "small": _blind("SMALL", "DEFEATED", 300),
+                "big": _blind("BIG", "UPCOMING", 450),
+                "boss": _blind("BOSS", "UPCOMING", 600),
+            },
+            shop_vouchers=(ShopItem("v_seed_money", "Seed Money", "VOUCHER", 10),),
         )
         assert decide_action(state) == Action(kind="next_round")
 
@@ -551,6 +608,11 @@ class TestDispatchAction:
         assert FakeMod.calls[-1]["method"] == "buy"
         assert FakeMod.calls[-1]["params"] == {"pack": 1}
 
+    def test_buy_voucher_зовёт_buy_с_индексом_ваучера(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="buy_voucher", item_index=0, label="Grabber"))
+        assert FakeMod.calls[-1]["method"] == "buy"
+        assert FakeMod.calls[-1]["params"] == {"voucher": 0}
+
     def test_next_round_и_cash_out(self, bridge: ModBridge) -> None:
         dispatch_action(bridge, Action(kind="next_round"))
         assert FakeMod.calls[-1]["method"] == "next_round"
@@ -591,6 +653,7 @@ class TestDescribeAction:
             Action(kind="skip"),
             Action(kind="buy"),
             Action(kind="buy_pack"),
+            Action(kind="buy_voucher"),
             Action(kind="sell"),
             Action(kind="next_round"),
             Action(kind="cash_out"),

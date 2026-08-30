@@ -284,3 +284,40 @@ class TestBlank:
         assert offer.expected_uplift == 0.0
         assert offer.heuristic_value is None
         assert "ничего не делает" in offer.note
+
+
+class TestValueUnit:
+    """`value_unit` различает очки (1-й уровень) и доллары (2-й) —
+    `expected_uplift` одного и того же поля в разных единицах, `autopilot`
+    иначе смешал бы их (улучшение A4)."""
+
+    def _blinds(self) -> dict[str, BlindInfo]:
+        return {
+            "small": BlindInfo("SMALL", "Small", "", 300, "DEFEATED"),
+            "big": BlindInfo("BIG", "Big", "", 450, "UPCOMING"),
+            "boss": BlindInfo("BOSS", "Boss", "", 600, "UPCOMING"),
+        }
+
+    def test_прямые_ресурсы_в_очках(self) -> None:
+        for key in ("v_grabber", "v_paint_brush", "v_wasteful"):
+            state = _voucher_state(shop_vouchers=(ShopItem(key, key, "VOUCHER", 10),))
+            assert evaluate_vouchers(state, samples=4)[0].value_unit == "score"
+
+    def test_денежные_формулы_в_долларах(self) -> None:
+        for key in ("v_seed_money", "v_reroll_surplus", "v_clearance_sale"):
+            state = _voucher_state(
+                money=40,
+                reroll_cost=5,
+                blinds=self._blinds(),
+                shop=(ShopItem("j_joker", "Joker", "JOKER", 4),),
+                shop_vouchers=(ShopItem(key, key, "VOUCHER", 10),),
+            )
+            assert evaluate_vouchers(state)[0].value_unit == "dollars"
+
+    def test_эвристика_без_единиц(self) -> None:
+        state = _voucher_state(
+            shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),)
+        )
+        offer = evaluate_vouchers(state)[0]
+        assert offer.value_unit is None
+        assert offer.heuristic_value is not None

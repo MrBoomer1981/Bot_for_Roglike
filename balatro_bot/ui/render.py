@@ -218,7 +218,12 @@ def render_shop_advice(advice: ShopAdvice) -> None:
             item = voucher.item
             if voucher.expected_uplift is not None:
                 приближено = "" if voucher.exact_deck else ", колода приближена"
-                оценка = f"прирост ~{format_number(voucher.expected_uplift)}{приближено}"
+                if voucher.value_unit == "dollars":
+                    # Второй уровень честности: оценка в долларах за горизонт,
+                    # не в очках — сравнима с ценой, не с приростом джокера.
+                    оценка = f"в деньгах ~${format_number(voucher.expected_uplift)}"
+                else:
+                    оценка = f"прирост ~{format_number(voucher.expected_uplift)}{приближено}"
                 if voucher.note:
                     оценка += f" ({voucher.note})"
             elif voucher.heuristic_value is not None:
