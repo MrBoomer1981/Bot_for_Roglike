@@ -9,6 +9,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from balatro_bot.adapters.mod_bridge import ModBridge, parse_game_state
@@ -186,6 +188,15 @@ class TestWatch:
         assert out.count(tui._CLEAR) == 2
 
 
+def _state_jokers_already_ordered() -> dict[str, Any]:
+    """`sample_state()`, но джокеры уже в лучшем порядке (`Blueprint` перед
+    `Joker`) — иначе автопилот сперва делает `rearrange` (улучшение D1), и
+    тесты «первое действие — розыгрыш/сброс» не про то ловят."""
+    state = sample_state()
+    state["jokers"]["cards"] = list(reversed(state["jokers"]["cards"]))
+    return state
+
+
 class TestAutoplay:
     """`balatro-bot autoplay` — Фаза 9, п. 9.1 (узкий срез: только
     `SELECTING_HAND`). Фальшивый мод не симулирует реальный розыгрыш — на
@@ -195,6 +206,7 @@ class TestAutoplay:
     def test_по_умолчанию_играет_сам(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        FakeMod.state = _state_jokers_already_ordered()
         tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
         методы = [call["method"] for call in FakeMod.calls]
         assert "play" in методы or "discard" in методы
@@ -215,6 +227,7 @@ class TestAutoplay:
     def test_снятие_паузы_возвращает_действия(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        FakeMod.state = _state_jokers_already_ordered()
         # Первое нажатие 'p' ставит на паузу, второе — снимает.
         нажатия = iter(["p", "p"])
         tui.autoplay(

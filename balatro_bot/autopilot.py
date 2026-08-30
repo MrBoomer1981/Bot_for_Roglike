@@ -129,7 +129,19 @@ Planet-карты из инвентаря политически устроен�
 что «одна покупка за вызов» в магазине: `ModBridge.use()` сразу меняет
 инвентарь, а следующая карта (если такая есть) решится на уже свежем
 состоянии на следующем опросе. Tarot-карты в инвентаре эта проверка не
-трогает вовсе — намеренно, см. модульный докстринг `solver/consumables.py`."""
+трогает вовсе — намеренно, см. модульный докстринг `solver/consumables.py`.
+
+**Перестановка джокеров (`SELECTING_HAND`, улучшение D1).** Следом за
+проверкой консумаблов, но перед play/discard: `_decide_rearrange_action`
+гоняет `solver.play.rank_joker_orders` на текущей руке и, если лучший
+порядок даёт относительный прирост счёта >= `_MIN_REORDER_GAIN_FRAC`,
+возвращает `Action(kind="rearrange")` (→ `ModBridge.rearrange(jokers=...)`).
+Порядок влияет на счёт у копирующих (`Blueprint`/`Brainstorm`) и на
+смешении `+mult`/`×mult` — раньше автопилот всегда играл в порядке слотов,
+хотя `watch` перебор порядка делает по умолчанию. Отдельное действие,
+розыгрыш — следующим вызовом; проверяется на каждой руке, порог отсекает
+дёрганье на шуме. Кап `MAX_JOKERS_FOR_ORDER_SEARCH` (6): выше — `None`, не
+гадаем."""
 
 from __future__ import annotations
 
@@ -142,7 +154,7 @@ from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import PACK_OPEN_PHASES, evaluate_pack
-from balatro_bot.solver.play import advise
+from balatro_bot.solver.play import advise, rank_joker_orders
 from balatro_bot.solver.shop import ShopAdvice, evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
@@ -201,6 +213,13 @@ _MIN_BUY_REQ_FRACTION = 0.03
 #: магазине» (2..4). Калибруется на живых прогонах.
 _MIN_HEURISTIC_VOUCHER_VALUE = 5.0
 
+#: Минимальный относительный прирост счёта текущей руки, при котором
+#: автопилот тратит ход на перестановку джокеров (улучшение D1). Ниже —
+#: это шум перебора, перестановка не окупает потраченного хода. Порядок
+#: влияет на счёт у копирующих (`Blueprint`/`Brainstorm`) и на смешении
+#: `+mult`/`×mult`. Калибруется на живых прогонах.
+_MIN_REORDER_GAIN_FRAC = 0.02
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
@@ -221,6 +240,7 @@ class Action:
         "buy_pack",
         "buy_voucher",
         "sell",
+        "rearrange",
         "next_round",
         "cash_out",
         "pack",
@@ -230,7 +250,9 @@ class Action:
     cards: tuple[Card, ...] = field(default=())
     indices: tuple[int, ...] = field(default=())
     """0-based индексы `cards` в `GameState.hand` — то, что реально ждёт RPC
-    мода (`play`/`discard` принимают индексы в руке, не сами карты)."""
+    мода (`play`/`discard` принимают индексы в руке, не сами карты). Для
+    `rearrange` — новый порядок джокеров как перестановка их текущих
+    индексов (`GameState.jokers`), карт при этом нет."""
 
     item_index: int | None = None
     """0-based индекс предмета в `GameState.shop` (`buy`), `GameState.shop_packs`
@@ -270,6 +292,23 @@ def _item_index_of(items: tuple[ShopItem, ...], item: ShopItem) -> int:
         if candidate == item:
             return index
     raise ValueError(f"{item!r} не найден в текущем предложении")
+
+
+def _reorder_indices(current: tuple[object, ...], desired: tuple[object, ...]) -> tuple[int, ...]:
+    """Новый порядок как перестановку текущих индексов: для каждого элемента
+    `desired` — его позиция в `current`, каждая позиция расходуется один раз
+    (устойчиво к равным джокерам, та же идея, что `_indices_of`)."""
+    available = list(enumerate(current))
+    order: list[int] = []
+    for element in desired:
+        for position, (index, candidate) in enumerate(available):
+            if candidate == element:
+                order.append(index)
+                del available[position]
+                break
+        else:
+            raise ValueError(f"{element!r} из нового порядка не найден в текущем")
+    return tuple(order)
 
 
 def decide_skip(advice: SkipAdvice) -> bool:
@@ -466,6 +505,31 @@ def _decide_consumable_action(state: GameState) -> Action | None:
     return Action(kind="use", item_index=_item_index_of(state.consumables, item), label=item.label)
 
 
+def _decide_rearrange_action(state: GameState) -> Action | None:
+    """Переставить джокеров, если для текущей руки есть заметно лучший
+    порядок (улучшение D1). `rank_joker_orders` перебирает перестановки
+    (кап `MAX_JOKERS_FOR_ORDER_SEARCH`, выше — `None`, не гадаем). Меняем
+    только при относительном приросте счёта >= `_MIN_REORDER_GAIN_FRAC` —
+    иначе ход тратится впустую на шум перебора. Перестановка — отдельное
+    действие: розыгрыш решит следующий вызов на уже верном порядке (тот же
+    паттерн «одно действие за вызов», что в магазине). Проверяется на каждой
+    руке заново — лучший порядок для разных рук может отличаться, порог не
+    даёт этому вылиться в дёрганье туда-сюда."""
+    if len(state.jokers) < 2:
+        return None
+    result = rank_joker_orders(state, limit=1)
+    if result is None:
+        return None
+    best_order, best_advice = result
+    if best_order == state.jokers:
+        return None
+    current_score = advise(state, limit=1).best.score
+    gain = best_advice.best.score - current_score
+    if gain <= 0 or gain < _MIN_REORDER_GAIN_FRAC * current_score:
+        return None
+    return Action(kind="rearrange", indices=_reorder_indices(state.jokers, best_order))
+
+
 def decide_action(state: GameState, *, include_discards: bool = True) -> Action | None:
     """Решить, что сделать прямо сейчас — `None`, если эта фаза ещё не закрыта.
 
@@ -492,6 +556,10 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         consumable_action = _decide_consumable_action(state)
         if consumable_action is not None:
             return consumable_action
+
+        rearrange_action = _decide_rearrange_action(state)
+        if rearrange_action is not None:
+            return rearrange_action
 
         # Гарантированная победа бьёт любую ставку на сброс. `rank_actions`
         # сравнивает розыгрыши и сбросы по матожиданию, а у сброса оно
@@ -552,6 +620,8 @@ def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
             return bridge.buy(voucher=_index())
         case "sell":
             return bridge.sell(joker=_index())
+        case "rearrange":
+            return bridge.rearrange(jokers=action.indices)
         case "next_round":
             return bridge.next_round()
         case "cash_out":
@@ -590,6 +660,8 @@ def describe_action(action: Action) -> str:
             return f"купил ваучер{named}"
         case "sell":
             return f"продал джокера{named}"
+        case "rearrange":
+            return "переставил джокеров"
         case "next_round":
             return "ушёл из магазина"
         case "pack":

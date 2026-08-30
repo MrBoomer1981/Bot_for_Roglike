@@ -625,6 +625,28 @@ class ModBridge:
             params["consumable"] = consumable
         return parse_game_state(self.call("sell", params, timeout=ACTION_TIMEOUT))
 
+    def rearrange(
+        self,
+        *,
+        hand: Sequence[int] | None = None,
+        jokers: Sequence[int] | None = None,
+        consumables: Sequence[int] | None = None,
+    ) -> GameState:
+        """Переставить карты руки, джокеров или консумабли — ровно одну из
+        трёх областей за вызов (`openrpc.json`'s `rearrange`). Аргумент —
+        новый порядок как перестановка всех текущих 0-based индексов области
+        (`[2, 0, 1]` — новый слот 0 берёт нынешнего джокера 2, и т.д.). Порядок
+        джокеров влияет на счёт (`Blueprint`/`Brainstorm`, смешение
+        `+mult`/`×mult`) — этим и пользуется `autopilot` (улучшение D1)."""
+        params: dict[str, list[int]] = {}
+        if hand is not None:
+            params["hand"] = list(hand)
+        if jokers is not None:
+            params["jokers"] = list(jokers)
+        if consumables is not None:
+            params["consumables"] = list(consumables)
+        return parse_game_state(self.call("rearrange", params, timeout=ACTION_TIMEOUT))
+
     def open_pack(self, *, card: int | None = None, skip: bool | None = None) -> GameState:
         """Выбрать карту из открытого пака (индекс в `GameState.pack`) или
         скипнуть пак целиком — ровно один из двух, как того требует схема

@@ -18,6 +18,7 @@ from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.autopilot import (
     Action,
     _indices_of,
+    _reorder_indices,
     decide_action,
     decide_skip,
     describe_action,
@@ -168,6 +169,54 @@ class TestDecideActionИспользуетКонсумабль:
         )
         action = decide_action(state)
         assert action == Action(kind="use", item_index=1, label="Mercury")
+
+
+class TestReorderIndices:
+    def test_новый_порядок_как_перестановка_текущих_индексов(self) -> None:
+        current = ("a", "b", "c")
+        assert _reorder_indices(current, ("c", "a", "b")) == (2, 0, 1)
+
+    def test_устойчив_к_равным_элементам(self) -> None:
+        current = ("j", "j", "k")
+        assert _reorder_indices(current, ("k", "j", "j")) == (2, 0, 1)
+
+
+class TestDecideActionПереставляетДжокеров:
+    """D1: перед розыгрышем автопилот перебирает порядок джокеров и
+    переставляет их, если для текущей руки есть заметно лучший порядок."""
+
+    def _hand(self, jokers: tuple[JokerCard, ...]) -> GameState:
+        state = build_state("AH AS KH QH 2C", blind=300)
+        return replace(state, phase="SELECTING_HAND", jokers=jokers)
+
+    def test_переставляет_когда_порядок_сильно_меняет_счёт(self) -> None:
+        # (j_joker, j_blueprint): blueprint копирует соседа справа = ничего.
+        # (j_blueprint, j_joker): копирует j_joker — счёт заметно выше.
+        state = self._hand((JokerCard(key="j_joker"), JokerCard(key="j_blueprint")))
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "rearrange"
+        assert action.indices == (1, 0)
+
+    def test_не_переставляет_когда_порядок_уже_лучший(self) -> None:
+        state = self._hand((JokerCard(key="j_blueprint"), JokerCard(key="j_joker")))
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+
+    def test_один_джокер_нечего_переставлять(self) -> None:
+        state = self._hand((JokerCard(key="j_joker"),))
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+
+    def test_больше_шести_джокеров_не_перебирает(self) -> None:
+        # rank_joker_orders возвращает None выше кап-а — просто играем.
+        jokers = tuple(JokerCard(key="j_joker") for _ in range(7))
+        state = self._hand(jokers)
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
 
 
 def _blind(
@@ -613,6 +662,11 @@ class TestDispatchAction:
         assert FakeMod.calls[-1]["method"] == "buy"
         assert FakeMod.calls[-1]["params"] == {"voucher": 0}
 
+    def test_rearrange_зовёт_rearrange_с_порядком_джокеров(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="rearrange", indices=(1, 0)))
+        assert FakeMod.calls[-1]["method"] == "rearrange"
+        assert FakeMod.calls[-1]["params"] == {"jokers": [1, 0]}
+
     def test_next_round_и_cash_out(self, bridge: ModBridge) -> None:
         dispatch_action(bridge, Action(kind="next_round"))
         assert FakeMod.calls[-1]["method"] == "next_round"
@@ -655,6 +709,7 @@ class TestDescribeAction:
             Action(kind="buy_pack"),
             Action(kind="buy_voucher"),
             Action(kind="sell"),
+            Action(kind="rearrange"),
             Action(kind="next_round"),
             Action(kind="cash_out"),
             Action(kind="pack"),

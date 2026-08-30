@@ -549,6 +549,11 @@ class TestКлиент:
         bridge.sell(consumable=0)
         assert FakeMod.calls[-1]["params"] == {"consumable": 0}
 
+    def test_rearrange_передаёт_новый_порядок_джокеров(self, bridge: ModBridge) -> None:
+        bridge.rearrange(jokers=[2, 0, 1])
+        assert FakeMod.calls[-1]["method"] == "rearrange"
+        assert FakeMod.calls[-1]["params"] == {"jokers": [2, 0, 1]}
+
     def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
         bridge.next_round()
         assert FakeMod.calls[-1]["method"] == "next_round"
