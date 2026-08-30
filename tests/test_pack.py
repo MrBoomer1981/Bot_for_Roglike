@@ -123,10 +123,57 @@ class TestBuffoonPack:
         assert len(offers) == 1
         assert offers[0].expected_uplift is None
 
-    def test_не_buffoon_фаза_не_трогает_джокеров(self) -> None:
+    def test_не_фаза_пака_не_трогает_джокеров(self) -> None:
         state = GameState(
             phase="SHOP",
             full_deck=_ПАРА_ТУЗОВ,
             pack=(ShopItem("j_joker", "Joker", "JOKER", 0),),
         )
         assert evaluate_pack(state) == ()
+
+
+class TestДиспетчерПоСодержимому:
+    """Тип пака определяется по картам внутри, не по имени фазы: Steamodded
+    шлёт одну общую `SMODS_BOOSTER_OPENED` для всех типов."""
+
+    def test_smods_фаза_с_планетами_оценивается_как_celestial(self) -> None:
+        state = GameState(
+            phase="SMODS_BOOSTER_OPENED",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("c_mercury", "Mercury", "PLANET", 0),),
+        )
+        offers = evaluate_pack(state, samples=1)
+        assert len(offers) == 1
+        assert offers[0].kind == "planet"
+
+    def test_smods_фаза_с_джокерами_оценивается_как_buffoon(self) -> None:
+        state = GameState(
+            phase="SMODS_BOOSTER_OPENED",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("j_joker", "Joker", "JOKER", 0),),
+        )
+        offers = evaluate_pack(state, samples=1)
+        assert len(offers) == 1
+        assert offers[0].kind == "joker"
+
+    def test_smods_фаза_с_таро_возвращает_пусто(self) -> None:
+        state = GameState(
+            phase="SMODS_BOOSTER_OPENED",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("c_fool", "The Fool", "TAROT", 0),),
+        )
+        assert evaluate_pack(state) == ()
+
+    def test_планеты_имеют_приоритет_над_джокерами_в_смешанном_паке(self) -> None:
+        # Вырожденный случай (в игре не бывает), но диспетчер должен быть
+        # детерминирован: планеты проверяются первыми.
+        state = GameState(
+            phase="SMODS_BOOSTER_OPENED",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(
+                ShopItem("j_joker", "Joker", "JOKER", 0),
+                ShopItem("c_mercury", "Mercury", "PLANET", 0),
+            ),
+        )
+        offers = evaluate_pack(state, samples=1)
+        assert all(offer.kind == "planet" for offer in offers)

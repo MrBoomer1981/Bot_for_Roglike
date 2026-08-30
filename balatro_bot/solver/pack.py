@@ -1,26 +1,32 @@
 """Оценка выбора карты при вскрытии открытого пака.
 
+Тип пака определяется по *содержимому* `state.pack`, а не по имени фазы:
+Steamodded (обязателен в этом мод-стеке) заменяет ванильные `PLANET_PACK`/
+`BUFFOON_PACK`/... одной общей `SMODS_BOOSTER_OPENED`, которую мод и
+присылает вживую (`openrpc.json`'s `State` всё ещё перечисляет ванильные
+имена — они стали неактуальны). Диспетчеризация по картам внутри к этому
+устойчива и вообще чище.
+
 Два честно замкнутых случая — по тому же принципу, что везде в проекте:
 считаем то, что уже видно, без моделирования RNG.
 
-- **Celestial/Planet Pack** (`PLANET_PACK`): эффект детерминирован (level-up
-  конкретного типа руки на `core.hands.PER_LEVEL_VALUES`) и полностью
-  объясним движком. `PLANET_HAND_TYPES` — соответствие ключа планеты типу
-  руки, выписанное из `core/catalogue.py` (тексты сверены с игрой через
-  `enums.lua`), по одной планете на тип (покрытие — `tests/test_pack.py`).
-  Поднятие уровня не может понизить лучший достижимый счёт, поэтому прирост
-  по построению неотрицателен.
+- **Celestial/Planet** (в паке карты с ключами из `PLANET_HAND_TYPES`):
+  эффект детерминирован (level-up типа руки на `core.hands.PER_LEVEL_VALUES`)
+  и полностью объясним движком. `PLANET_HAND_TYPES` выписан из
+  `core/catalogue.py` (тексты сверены с игрой через `enums.lua`), по одной
+  планете на тип (покрытие — `tests/test_pack.py`). Поднятие уровня не может
+  понизить лучший достижимый счёт → прирост по построению неотрицателен.
 
-- **Buffoon Pack** (`BUFFOON_PACK`): джокеры *видны* в паке — никакого RNG,
+- **Buffoon** (в паке карты с ключами `j_*`): джокеры *видны*, никакого RNG,
   тот же контрфактум, что для джокера в витрине (`solver.shop.joker_uplift`,
-  общий код): добавить джокера к текущим, пересчитать `advise()` на выборке
-  представительных рук, взять разницу. В отличие от планеты плохой джокер
-  прирост дать не обязан, поэтому автопилот берёт карту только при
-  строго положительном приросте и свободном слоте (`autopilot`).
+  общий код). В отличие от планеты плохой джокер прирост дать не обязан,
+  поэтому автопилот берёт карту только при строго положительном приросте и
+  свободном слоте (`autopilot`).
 
 Arcana/Tarot, Spectral и Standard паки этот модуль не оценивает — им нужен
-пласт механик консумаблов/карт колоды (PLAN.md «9.3»/«9.4»); автопилот на
-них честно берёт `skip_pack`, чтобы ран не застревал.
+пласт механик консумаблов/карт колоды (PLAN.md «9.3»/«9.4»); `evaluate_pack`
+на них возвращает пусто, а автопилот честно берёт `skip_pack`, чтобы ран не
+застревал.
 
 Вскрытие пака происходит вне розыгрыша (`GameState.hand` пуст), поэтому
 выборка рук — из `GameState.full_deck`, если он известен точно, иначе
@@ -40,9 +46,8 @@ from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import joker_uplift
 
 __all__ = [
-    "BUFFOON_PACK",
+    "PACK_OPEN_PHASES",
     "PLANET_HAND_TYPES",
-    "PLANET_PACK",
     "PackOffer",
     "evaluate_pack",
     "level_up",
@@ -66,10 +71,23 @@ PLANET_HAND_TYPES: Final[dict[str, HandType]] = {
     "c_eris": HandType.FLUSH_FIVE,
 }
 
-#: Фазы мода с открытым паком, которые этот модуль оценивает (`core.state`,
-#: `State` схемы мода).
-PLANET_PACK: Final[str] = "PLANET_PACK"
-BUFFOON_PACK: Final[str] = "BUFFOON_PACK"
+#: Фазы мода с открытым паком. Steamodded (обязателен в этом мод-стеке)
+#: заменяет ванильные `PLANET_PACK`/`BUFFOON_PACK`/... одной общей фазой
+#: `SMODS_BOOSTER_OPENED` — именно её мод и присылает вживую, несмотря на то
+#: что `openrpc.json`'s `State` всё ещё перечисляет ванильные имена.
+#: Держим и то и другое: тип пака всё равно определяется по *содержимому*
+#: (`state.pack`), а не по имени фазы.
+PACK_OPEN_PHASES: Final[frozenset[str]] = frozenset(
+    {
+        "SMODS_BOOSTER_OPENED",
+        "PLANET_PACK",
+        "BUFFOON_PACK",
+        "TAROT_PACK",
+        "SPECTRAL_PACK",
+        "STANDARD_PACK",
+        "ARCANA_PACK",
+    }
+)
 
 #: Тот же принцип сэмплирования, что `solver.shop.SAMPLE_HANDS`/`_HAND_SIZE`
 #: и `solver.discard._SAMPLE_SEED`: воспроизводимая выборка представительных
@@ -125,28 +143,35 @@ def level_up(state: GameState, hand_type: HandType) -> GameState:
 def evaluate_pack(state: GameState, samples: int = SAMPLE_HANDS) -> tuple[PackOffer, ...]:
     """Оценить карты открытого пака, отсортированные по прибыли по убыванию.
 
-    Пустой кортеж, если открыт не оцениваемый тип пака
-    (`PLANET_PACK`/`BUFFOON_PACK`) или в паке нет ни одной опознанной карты.
-    Арканы/Спектр/Стандарт сюда не попадают — по ним честный `skip_pack` в
-    `autopilot`, не оценка (см. модульный докстринг)."""
-    if not state.pack or state.phase not in (PLANET_PACK, BUFFOON_PACK):
+    Тип пака определяется по *содержимому* `state.pack`, а не по имени фазы
+    (Steamodded присылает одну общую `SMODS_BOOSTER_OPENED` для всех типов):
+    карты с ключами планет (`PLANET_HAND_TYPES`) → Celestial, с ключами
+    джокеров (`j_*`) → Buffoon. Пустой кортеж, если открыт не пак
+    (`state.phase not in PACK_OPEN_PHASES`), пак пуст, или в нём нет ни
+    планет, ни джокеров (Arcana/Spectral/Standard — по ним честный
+    `skip_pack` в `autopilot`, не оценка)."""
+    if not state.pack or state.phase not in PACK_OPEN_PHASES:
         return ()
 
     deck_source = state.full_deck if state.full_deck else standard_deck()
     exact_deck = state.full_deck is not None
 
-    if state.phase == PLANET_PACK:
+    planets = [
+        (item, hand_type)
+        for item in state.pack
+        if (hand_type := PLANET_HAND_TYPES.get(item.key)) is not None
+    ]
+    jokers = [item for item in state.pack if item.key.startswith("j_")]
+
+    if planets:
         offers = [
             _planet_offer(state, item, hand_type, deck_source, exact_deck, samples)
-            for item in state.pack
-            if (hand_type := PLANET_HAND_TYPES.get(item.key)) is not None
+            for item, hand_type in planets
         ]
+    elif jokers:
+        offers = [_buffoon_offer(state, item, deck_source, exact_deck, samples) for item in jokers]
     else:
-        offers = [
-            _buffoon_offer(state, item, deck_source, exact_deck, samples)
-            for item in state.pack
-            if item.key.startswith("j_")
-        ]
+        return ()
 
     offers.sort(
         key=lambda offer: (

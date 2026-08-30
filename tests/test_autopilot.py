@@ -58,12 +58,20 @@ class TestDecideAction:
         assert decide_action(state) is None
 
     def test_неоценимый_пак_скипается_а_не_затыкается(self) -> None:
-        # Tarot/Spectral/Standard оценить нечем, но застревать нельзя —
-        # честный skip_pack (взять ничего), а не None.
+        # На SMODS_BOOSTER_OPENED тип пака определяется по содержимому.
+        # Tarot-карты (c_fool и т.п.) оценить нечем — skip_pack, а не None.
         state = build_state("AH KH QH JH 9H")
-        for phase in ("TAROT_PACK", "SPECTRAL_PACK", "STANDARD_PACK"):
-            action = decide_action(replace(state, phase=phase))
-            assert action == Action(kind="skip_pack")
+        state = replace(
+            state,
+            phase="SMODS_BOOSTER_OPENED",
+            pack=(ShopItem("c_fool", "The Fool", "TAROT", 0),),
+        )
+        assert decide_action(state) == Action(kind="skip_pack")
+
+    def test_пустой_пак_скипается(self) -> None:
+        state = build_state("AH KH QH JH 9H")
+        state = replace(state, phase="SMODS_BOOSTER_OPENED", pack=())
+        assert decide_action(state) == Action(kind="skip_pack")
 
     def test_пустая_рука_ничего_не_решает(self) -> None:
         state = build_state("AH KH QH JH 9H")
@@ -339,13 +347,16 @@ class TestDecideActionВМагазине:
 
 
 class TestDecideActionНаВскрытииПака:
-    """Planet: всегда берём лучшую карту (level-up не ухудшает счёт). Buffoon:
-    берём лучшего джокера, но лишь при строго положительном приросте — плохой
-    занял бы слот зря. Иначе `skip_pack`."""
+    """Тип пака — по содержимому `state.pack`, не по имени фазы (Steamodded
+    шлёт одну общую `SMODS_BOOSTER_OPENED`). Planet: всегда берём лучшую карту
+    (level-up не ухудшает счёт). Buffoon: берём лучшего джокера, но лишь при
+    строго положительном приросте. Иначе `skip_pack`."""
+
+    _OPENED = "SMODS_BOOSTER_OPENED"
 
     def test_planet_берёт_карту_с_максимальным_приростом(self) -> None:
         state = GameState(
-            phase="PLANET_PACK",
+            phase=self._OPENED,
             full_deck=_ПАРА_ТУЗОВ,
             pack=(
                 ShopItem("c_jupiter", "Jupiter", "PLANET", 0),
@@ -357,15 +368,15 @@ class TestDecideActionНаВскрытииПака:
 
     def test_planet_неопознанные_карты_приводят_к_скипу_пака(self) -> None:
         state = GameState(
-            phase="PLANET_PACK",
+            phase=self._OPENED,
             full_deck=_ПАРА_ТУЗОВ,
-            pack=(ShopItem("c_совсем_новый", "???", "PLANET", 0),),
+            pack=(ShopItem("c_fool", "The Fool", "TAROT", 0),),  # таро, не планета
         )
         assert decide_action(state) == Action(kind="skip_pack")
 
     def test_buffoon_берёт_лучшего_джокера(self) -> None:
         state = GameState(
-            phase="BUFFOON_PACK",
+            phase=self._OPENED,
             full_deck=_ПАРА_ТУЗОВ,
             pack=(
                 ShopItem("j_abstract", "Abstract Joker", "JOKER", 0),
@@ -378,11 +389,20 @@ class TestDecideActionНаВскрытииПака:
     def test_buffoon_без_положительного_прироста_скипает(self) -> None:
         # Только нереализованный джокер → оценки нет → skip_pack.
         state = GameState(
-            phase="BUFFOON_PACK",
+            phase=self._OPENED,
             full_deck=_ПАРА_ТУЗОВ,
             pack=(ShopItem("j_совсем_новый", "???", "JOKER", 0),),
         )
         assert decide_action(state) == Action(kind="skip_pack")
+
+    def test_ванильное_имя_фазы_тоже_работает(self) -> None:
+        # На случай не-Steamodded окружения — PLANET_PACK всё ещё в наборе.
+        state = GameState(
+            phase="PLANET_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("c_mercury", "Mercury", "PLANET", 0),),
+        )
+        assert decide_action(state).kind == "pack"  # type: ignore[union-attr]
 
 
 class TestDispatchAction:

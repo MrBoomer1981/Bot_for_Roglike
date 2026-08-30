@@ -11,9 +11,11 @@
 `SELECTING_HAND` сперва проверяет Planet-консумабли (`ModBridge.use`), затем
 вызывает `ModBridge.play`/`.discard`, на `BLIND_SELECT` — `.select`/`.skip`,
 на `SHOP`/`ROUND_EVAL` — `.buy`/`.next_round`/`.cash_out`, на
-`PLANET_PACK`/`BUFFOON_PACK` — `.open_pack`, на Tarot/Spectral/Standard-паке
-— `.open_pack(skip=True)` (оценить нечем, но застревать нельзя), всё по
-решению `autopilot.decide_action`; на прочих фазах ведёт себя как `watch`.
+открытом паке (`SMODS_BOOSTER_OPENED` — Steamodded, одна фаза на все типы)
+— `.open_pack` для Celestial/Buffoon или `.open_pack(skip=True)` для
+Tarot/Spectral/Standard (оценить нечем, но застревать нельзя), тип решается
+по содержимому пака; всё по `autopilot.decide_action`; на прочих фазах
+ведёт себя как `watch`.
 Переключатель «пауза/перехват» (клавиша `p`, раздел 2 и раздел 6 п. 9.1
 плана — обязательное требование, не побочный эффект) проверяется на каждой
 итерации, то есть между каждым отдельным действием, а не только между

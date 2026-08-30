@@ -121,13 +121,14 @@ class TestPlayRun:
         assert "BadRequest" in report.note
 
     def test_none_на_незамкнутой_фазе_это_затык(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        # start сразу приводит на BUFFOON_PACK, а решение там ещё не замкнуто.
+        # decide_action не знает, что делать на этой фазе — ран честно
+        # фиксирует затык с именем фазы, а не гадает.
         monkeypatch.setattr(runner, "decide_action", lambda *_a, **_k: None)
-        bridge = ScriptedBridge([_state("BUFFOON_PACK")])
+        bridge = ScriptedBridge([_state("SOME_NEW_PHASE")])
         report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
         assert report.outcome == "stuck"
-        assert "BUFFOON_PACK" in report.note
-        assert report.decisions[-1].action == "нет решения для фазы BUFFOON_PACK"
+        assert "SOME_NEW_PHASE" in report.note
+        assert report.decisions[-1].action == "нет решения для фазы SOME_NEW_PHASE"
 
     def test_переходную_фазу_пережидает_и_продолжает(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # На HAND_PLAYED decide_action возвращает None, но это не затык:

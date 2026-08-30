@@ -62,26 +62,27 @@ Spectral/Standard) и реролл по-прежнему не тронуты: `e
 `evaluate_vouchers` не дают им числа, а `reroll_cost` — цена без вердикта
 (раздел 8 плана, «Момент рерола»).
 
-**Вскрытие пака (`PLANET_PACK` — кусок 9.2; `BUFFOON_PACK` — 9.3).** Два
-замкнутых типа. Celestial/Planet: `solver.pack.evaluate_pack` считает тот
-же контрфактум, что джокеры в магазине (поднять уровень типа руки,
-пересчитать `advise()` на представительных руках, взять разницу) — а
-поднятие уровня руки по построению не может ухудшить счёт, значит вопроса
-«а вдруг не нужна» тут нет, решение — взять карту с максимальным
-приростом. Buffoon: джокеры *видны* в паке, тот же контрфактум через
+**Вскрытие пака (Celestial — кусок 9.2; Buffoon — 9.3).** Фаза открытого
+пака у Steamodded — одна общая `SMODS_BOOSTER_OPENED` (не ванильные
+`PLANET_PACK`/`BUFFOON_PACK`/...), поэтому тип пака `_decide_pack_action`
+определяет по *содержимому* `state.pack` (`solver.pack.evaluate_pack`), не
+по имени фазы. Celestial (карты-планеты): контрфактум level-up типа руки
+на представительных руках — поднятие не может ухудшить счёт, значит
+вопроса «а вдруг не нужна» нет, берём карту с максимальным приростом.
+Buffoon (карты `j_*`): джокеры *видны*, тот же контрфактум через
 `solver.shop.joker_uplift` (общий код), но плохой джокер прирост дать не
-обязан — поэтому берём карту только при **строго положительном** приросте
-и свободном слоте, иначе `skip_pack`. Джамбо/мега-паки (выбор 1 из 5 / до
-2 из 5) не требуют отдельной ветки: цикл опроса перечитывает состояние на
-каждой итерации, и если после выбора одной карты пак остаётся открытым,
-`decide_action` посчитает следующий выбор заново.
+обязан — берём только при **строго положительном** приросте (слот
+проверяется тем же условием в `_decide_shop_action` при покупке пака).
+Джамбо/мега-паки не требуют отдельной ветки: если после выбора одной
+карты пак остаётся открытым, `decide_action` посчитает следующий выбор
+заново на следующем опросе.
 
-`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK` (`UNSCORED_PACKS`) оценить
-нечем — нужен пласт механик консумаблов/карт колоды (раздел 6, п. 9.4).
-Но и застревать нельзя: `decide_action` возвращает `skip_pack` (взять
-ничего), а не `None` — ран-раннер иначе честно фиксировал бы затык. Это
-осознанная маленькая потеря (иногда в паке лежит строго полезная карта)
-ради того, чтобы ран продолжался.
+Arcana/Tarot/Spectral/Standard-пак (в `state.pack` нет ни планет, ни
+`j_*`): `evaluate_pack` возвращает пусто — оценить нечем, нужен пласт
+механик консумаблов/карт колоды (раздел 6, п. 9.4). Но застревать нельзя:
+`_decide_pack_action` возвращает `skip_pack` (взять ничего), а не `None` —
+иначе ран-раннер честно фиксировал бы затык. Осознанная маленькая потеря
+(иногда в паке лежит полезная карта) ради того, чтобы ран продолжался.
 
 **Consumables перед розыгрышем (`SELECTING_HAND`, первый кусок 9.4).**
 Перед тем как решать play/discard, `decide_action` сперва проверяет
@@ -107,17 +108,15 @@ from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
-from balatro_bot.solver.pack import BUFFOON_PACK, PLANET_PACK, evaluate_pack
+from balatro_bot.solver.pack import PACK_OPEN_PHASES, evaluate_pack
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
 __all__ = [
     "BLIND_SELECT",
-    "OPENABLE_PACKS",
     "ROUND_EVAL",
     "SELECTING_HAND",
     "SHOP",
-    "UNSCORED_PACKS",
     "Action",
     "decide_action",
     "decide_skip",
@@ -139,14 +138,6 @@ ROUND_EVAL = "ROUND_EVAL"
 
 #: Фаза мода внутри магазина.
 SHOP = "SHOP"
-
-#: Фазы открытых паков, которые `solver.pack.evaluate_pack` умеет оценивать.
-OPENABLE_PACKS: frozenset[str] = frozenset({PLANET_PACK, BUFFOON_PACK})
-
-#: Фазы открытых паков, по которым оценки нет (нужны механики консумаблов/
-#: карт колоды, PLAN.md 9.3/9.4) — автопилот берёт `skip_pack`, чтобы ран
-#: не застревал, а не притворяется, что умеет выбирать.
-UNSCORED_PACKS: frozenset[str] = frozenset({"TAROT_PACK", "SPECTRAL_PACK", "STANDARD_PACK"})
 
 
 @dataclass(frozen=True, slots=True)
@@ -269,21 +260,26 @@ def _decide_shop_action(state: GameState) -> Action:
 
 
 def _decide_pack_action(state: GameState) -> Action:
-    """Вскрытие открытого пака.
+    """Вскрытие открытого пака. Тип определяется по содержимому
+    (`solver.pack.evaluate_pack`), не по имени фазы.
 
-    Celestial/Planet: взять карту с наибольшим приростом — подъём уровня руки
-    не может ухудшить счёт, так что вопрос только «какую из предложенных».
-    Buffoon: взять джокера с наибольшим приростом, но лишь при строго
-    положительной оценке — плохой джокер занял бы слот зря. Если брать
-    нечего (или в паке не нашлось ни одной опознанной карты) — `skip_pack`."""
-    positive_only = state.phase == BUFFOON_PACK
+    Планета (`offer.kind == "planet"`): взять карту с наибольшим приростом —
+    подъём уровня руки не может ухудшить счёт, вопрос только «какую».
+    Джокер из Buffoon-пака (`"joker"`): взять с наибольшим приростом, но лишь
+    при строго положительной оценке — плохой джокер занял бы слот зря. Если
+    брать нечего (пак пуст, только нереализованные джокеры, либо это
+    Arcana/Spectral/Standard — `evaluate_pack` тогда возвращает пусто) —
+    `skip_pack`, чтобы ран не застревал."""
     for offer in evaluate_pack(state):
-        if offer.expected_uplift is not None and (not positive_only or offer.expected_uplift > 0):
-            return Action(
-                kind="pack",
-                item_index=_item_index_of(state.pack, offer.item),
-                label=offer.item.label,
-            )
+        if offer.expected_uplift is None:
+            continue
+        if offer.kind == "joker" and offer.expected_uplift <= 0:
+            continue
+        return Action(
+            kind="pack",
+            item_index=_item_index_of(state.pack, offer.item),
+            label=offer.item.label,
+        )
     return Action(kind="skip_pack")
 
 
@@ -314,12 +310,10 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
     if state.phase == SHOP:
         return _decide_shop_action(state)
 
-    if state.phase in OPENABLE_PACKS:
+    if state.phase in PACK_OPEN_PHASES:
+        # Тип пака решается по содержимому: Celestial/Buffoon оцениваются,
+        # Arcana/Spectral/Standard — `skip_pack` внутри (см. `_decide_pack_action`).
         return _decide_pack_action(state)
-
-    if state.phase in UNSCORED_PACKS:
-        # Оценить эти карты нечем — но и застревать нельзя: берём ничего.
-        return Action(kind="skip_pack")
 
     if state.phase == SELECTING_HAND:
         if not state.hand:
