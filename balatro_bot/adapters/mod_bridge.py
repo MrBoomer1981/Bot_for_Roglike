@@ -26,16 +26,26 @@ from balatro_bot.core.hands import HandType
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo, ShopItem
 
 __all__ = [
+    "ACTION_TIMEOUT",
     "DEFAULT_PORT",
     "ModBridge",
     "ModBridgeError",
     "NotConnectedError",
     "RpcError",
+    "TimedOutError",
     "parse_game_state",
 ]
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 12346
+
+#: Таймаут для действий, которые в моде ждут окончания анимации, прежде чем
+#: ответить (`play`/`discard`/`use`/`open_pack`/`cash_out`/`next_round`/
+#: `select`/`skip`/`start`/`menu`). При `GAMESPEED=4` крупный подсчёт очков
+#: — это секунды, а с `BALATROBOT_FAST=1` куда быстрее; берём с большим
+#: запасом, всё равно `dispatch_action` в цикле ловит `TimedOutError` и не
+#: падает.
+ACTION_TIMEOUT: float = 90.0
 
 
 class ModBridgeError(RuntimeError):
@@ -44,6 +54,14 @@ class ModBridgeError(RuntimeError):
 
 class NotConnectedError(ModBridgeError):
     """Игра не запущена или мод не отвечает."""
+
+
+class TimedOutError(ModBridgeError):
+    """Мод не ответил за отведённое время. Обычно это не «мод умер», а долгая
+    анимация: эндпоинт `play`/`use`/`open_pack` держит соединение открытым,
+    пока игра не досчитает и не осядет в стабильном состоянии (см.
+    `endpoints/play.lua` в моде). Отдельный подкласс, чтобы цикл автопилота
+    мог отличить «подождать/повторить» от «мод недоступен»."""
 
 
 class RpcError(ModBridgeError):
@@ -474,8 +492,16 @@ class ModBridge:
     def url(self) -> str:
         return f"http://{self.host}:{self.port}"
 
-    def call(self, method: str, params: Mapping[str, Any] | None = None) -> Any:
-        """Вызвать метод API и вернуть поле `result`."""
+    def call(
+        self, method: str, params: Mapping[str, Any] | None = None, *, timeout: float | None = None
+    ) -> Any:
+        """Вызвать метод API и вернуть поле `result`.
+
+        `timeout=None` — базовый таймаут (`self.timeout`); действия с
+        анимацией передают `ACTION_TIMEOUT` явно. Таймаут чтения ответа
+        приходит из `urlopen` сырым `TimeoutError` (не `URLError`), поэтому
+        ловим его отдельно и как `URLError`, обёрнутый вокруг него на
+        некоторых платформах."""
         self._next_id += 1
         request_body: dict[str, Any] = {
             "jsonrpc": "2.0",
@@ -491,10 +517,19 @@ class ModBridge:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
+        effective_timeout = self.timeout if timeout is None else timeout
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=effective_timeout) as response:
                 payload = json.loads(response.read().decode("utf-8"))
-        except urllib.error.URLError as error:
+        except (TimeoutError, urllib.error.URLError) as error:
+            if isinstance(error, TimeoutError) or isinstance(
+                getattr(error, "reason", None), TimeoutError
+            ):
+                raise TimedOutError(
+                    f"мод не ответил за {effective_timeout:g} с на «{method}». "
+                    "Долгая анимация подсчёта? Запусти игру с BALATROBOT_FAST=1 "
+                    "или увеличь таймаут."
+                ) from error
             raise NotConnectedError(
                 f"мод не отвечает на {self.url}: {error}. "
                 "Игра запущена через `uvx balatrobot serve`?"
@@ -530,12 +565,16 @@ class ModBridge:
         return parse_game_state(self.raw_game_state())
 
     def play(self, indices: Sequence[int]) -> GameState:
-        """Сыграть карты по индексам в руке (нумерация с нуля)."""
-        return parse_game_state(self.call("play", {"cards": list(indices)}))
+        """Сыграть карты по индексам в руке (нумерация с нуля). Мод отвечает
+        только после того, как подсчёт очков доиграет и игра осядет в
+        стабильном состоянии — отсюда `ACTION_TIMEOUT`, а не базовый."""
+        return parse_game_state(self.call("play", {"cards": list(indices)}, timeout=ACTION_TIMEOUT))
 
     def discard(self, indices: Sequence[int]) -> GameState:
         """Сбросить карты по индексам в руке (нумерация с нуля)."""
-        return parse_game_state(self.call("discard", {"cards": list(indices)}))
+        return parse_game_state(
+            self.call("discard", {"cards": list(indices)}, timeout=ACTION_TIMEOUT)
+        )
 
     def use(self, consumable: int, *, cards: Sequence[int] | None = None) -> GameState:
         """Применить консумабль (Taro/Planet/Spectral) из `GameState.consumables`
@@ -545,17 +584,17 @@ class ModBridge:
         params: dict[str, object] = {"consumable": consumable}
         if cards is not None:
             params["cards"] = list(cards)
-        return parse_game_state(self.call("use", params))
+        return parse_game_state(self.call("use", params, timeout=ACTION_TIMEOUT))
 
     def select(self) -> GameState:
         """Выбрать текущий блайнд — начать раунд (без параметров: мод сам
         знает, какой блайнд сейчас можно выбрать)."""
-        return parse_game_state(self.call("select"))
+        return parse_game_state(self.call("select", timeout=ACTION_TIMEOUT))
 
     def skip(self) -> GameState:
         """Скипнуть текущий блайнд (только Small/Big — Boss скипнуть нельзя,
         мод ответит ошибкой сам, без параметров)."""
-        return parse_game_state(self.call("skip"))
+        return parse_game_state(self.call("skip", timeout=ACTION_TIMEOUT))
 
     def buy(
         self, *, card: int | None = None, voucher: int | None = None, pack: int | None = None
@@ -571,7 +610,7 @@ class ModBridge:
             params["voucher"] = voucher
         if pack is not None:
             params["pack"] = pack
-        return parse_game_state(self.call("buy", params))
+        return parse_game_state(self.call("buy", params, timeout=ACTION_TIMEOUT))
 
     def open_pack(self, *, card: int | None = None, skip: bool | None = None) -> GameState:
         """Выбрать карту из открытого пака (индекс в `GameState.pack`) или
@@ -584,15 +623,15 @@ class ModBridge:
             params["card"] = card
         if skip is not None:
             params["skip"] = skip
-        return parse_game_state(self.call("pack", params))
+        return parse_game_state(self.call("pack", params, timeout=ACTION_TIMEOUT))
 
     def next_round(self) -> GameState:
         """Уйти из магазина — экран выбора следующего блайнда."""
-        return parse_game_state(self.call("next_round"))
+        return parse_game_state(self.call("next_round", timeout=ACTION_TIMEOUT))
 
     def cash_out(self) -> GameState:
         """Забрать награду за раунд и перейти в магазин (без параметров)."""
-        return parse_game_state(self.call("cash_out"))
+        return parse_game_state(self.call("cash_out", timeout=ACTION_TIMEOUT))
 
     def start(self, deck: str, stake: str, *, seed: str | None = None) -> GameState:
         """Начать новый ран заданной колодой и ставкой (`openrpc.json`'s
@@ -604,10 +643,10 @@ class ModBridge:
         params: dict[str, str] = {"deck": deck, "stake": stake}
         if seed is not None:
             params["seed"] = seed
-        return parse_game_state(self.call("start", params))
+        return parse_game_state(self.call("start", params, timeout=ACTION_TIMEOUT))
 
     def menu(self) -> GameState:
         """Вернуться в главное меню из любого состояния (`openrpc.json`'s
         `menu`). Ран-раннер зовёт его между ранами в пакетном прогоне, прежде
         чем начать следующий ран через `start`."""
-        return parse_game_state(self.call("menu"))
+        return parse_game_state(self.call("menu", timeout=ACTION_TIMEOUT))

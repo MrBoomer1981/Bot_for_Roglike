@@ -8,14 +8,17 @@
 
 from __future__ import annotations
 
+import urllib.error
 from collections.abc import Mapping
 
 import pytest
 
 from balatro_bot.adapters.mod_bridge import (
+    ACTION_TIMEOUT,
     ModBridge,
     NotConnectedError,
     RpcError,
+    TimedOutError,
     parse_game_state,
 )
 from balatro_bot.core.cards import Edition, Enhancement, Rank, Seal, Suit
@@ -583,6 +586,47 @@ class TestКлиент:
     def test_живость_не_бросает_при_ошибке(self, bridge: ModBridge) -> None:
         FakeMod.error_for = "health"
         assert bridge.is_alive() is False
+
+    def test_действия_дают_моду_запас_по_времени(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `play` в моде ждёт конца анимации подсчёта — базовые 5 с мало,
+        # клиент шлёт его с `ACTION_TIMEOUT`. Проверяем, какой таймаут
+        # реально уходит в `urlopen` для чтения состояния и для действия.
+        real_urlopen = urllib.request.urlopen
+        seen: list[float] = []
+
+        def spy(request: object, *, timeout: float = 0.0) -> object:
+            seen.append(timeout)
+            return real_urlopen(request, timeout=timeout)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("urllib.request.urlopen", spy)
+        bridge.game_state()
+        bridge.play([0])
+        assert seen[0] == bridge.timeout  # game_state — базовый
+        assert seen[1] == ACTION_TIMEOUT  # play — увеличенный
+
+    def test_таймаут_чтения_становится_timedouterror(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Таймаут при чтении ответа `urlopen` бросает голый `TimeoutError`,
+        # не `URLError` — раньше он проходил мимо `call()` и ронял весь цикл.
+        def boom(*_a: object, **_kw: object) -> object:
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(TimedOutError, match="BALATROBOT_FAST"):
+            bridge.play([0])
+
+    def test_url_error_обёрнутый_вокруг_таймаута_тоже_timedout(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def boom(*_a: object, **_kw: object) -> object:
+            raise urllib.error.URLError(TimeoutError("timed out"))
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(TimedOutError):
+            bridge.play([0])
 
 
 class TestНетСоединения:
