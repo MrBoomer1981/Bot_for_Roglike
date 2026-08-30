@@ -383,6 +383,19 @@ class TestDecideActionВМагазине:
         action = decide_action(state)
         assert action == Action(kind="buy_pack", item_index=0, label="Buffoon Pack")
 
+    def test_покупает_celestial_пак(self) -> None:
+        # Планеты слот не занимают; подъём уровня руки не может навредить —
+        # оценка положительна, значит берём (A3).
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=5,
+            full_deck=_ПАРА_ТУЗОВ,
+            shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="buy_pack", item_index=0, label="Celestial Pack")
+
     def test_buffoon_пак_без_слота_не_покупается(self) -> None:
         state = GameState(
             phase="SHOP",

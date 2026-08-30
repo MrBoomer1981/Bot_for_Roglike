@@ -242,8 +242,8 @@ class TestЦенаРерола:
 
 
 class TestПокупкаПака:
-    """`ShopAdvice.packs` — оценка есть только у Buffoon-пака, Монте-Карло
-    механизма пака (`PackPurchaseOffer`)."""
+    """`ShopAdvice.packs` — оценка есть у Buffoon- и Celestial-пака,
+    Монте-Карло механизма пака (`PackPurchaseOffer`)."""
 
     def test_buffoon_пак_получает_положительную_оценку(self) -> None:
         state = _shop_state(
@@ -280,18 +280,49 @@ class TestПокупкаПака:
         assert n.packs[0].expected_uplift is not None
         assert m.packs[0].expected_uplift > n.packs[0].expected_uplift
 
-    def test_прочие_паки_не_оцениваются(self) -> None:
+    def test_celestial_пак_получает_положительную_оценку(self) -> None:
         state = _shop_state(
             money=10,
             joker_slots=5,
-            shop_packs=(
-                ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),
-                ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),
-            ),
+            shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
         )
         advice = evaluate_shop(state)
         assert advice is not None
-        assert all(pack.expected_uplift is None for pack in advice.packs)
+        pack = advice.packs[0]
+        assert pack.affordable is True
+        assert pack.has_slot is True  # планетам слот не нужен
+        assert pack.expected_uplift is not None
+        assert pack.expected_uplift > 0
+        assert "лучшие 1 из 3" in pack.note
+
+    def test_mega_celestial_оценивается_как_2_из_5(self) -> None:
+        normal = _shop_state(
+            money=20,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
+        )
+        mega = _shop_state(
+            money=20,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_celestial_mega_1", "Mega Celestial Pack", "BOOSTER", 8),),
+        )
+        n = evaluate_shop(normal)
+        m = evaluate_shop(mega)
+        assert n is not None and m is not None
+        assert "лучшие 2 из 5" in m.packs[0].note
+        assert m.packs[0].expected_uplift is not None
+        assert n.packs[0].expected_uplift is not None
+        assert m.packs[0].expected_uplift > n.packs[0].expected_uplift
+
+    def test_arcana_пак_не_оценивается(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.packs[0].expected_uplift is None
 
     def test_нет_слота_помечено_но_оценка_всё_равно_есть(self) -> None:
         state = _shop_state(
