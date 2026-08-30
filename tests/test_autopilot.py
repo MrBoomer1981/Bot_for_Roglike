@@ -302,6 +302,32 @@ class TestDecideActionВМагазине:
         assert action.item_index == 0
         assert action.label == "Joker"
 
+    def test_a2_не_покупает_джокера_на_фоне_огромного_требования(self) -> None:
+        # Порог A2: прирост должен быть не ниже 3% требования блайнда.
+        # Против блайнда на 100000 очков прирост "+4 Mult" — доли процента.
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            joker_slots=5,
+            blinds={"small": _blind("SMALL", "UPCOMING", 100_000)},
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a2_покупает_того_же_джокера_при_малом_требовании(self) -> None:
+        # То же самое, но требование маленькое — 3% от 300 = 9 очков,
+        # "+4 Mult" на любой руке это перекрывает.
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            joker_slots=5,
+            blinds={"small": _blind("SMALL", "UPCOMING", 300)},
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),),
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "buy"
+
     def test_пустой_магазин_уходит(self) -> None:
         state = GameState(phase="SHOP", money=10, joker_slots=5)
         assert decide_action(state) == Action(kind="next_round")

@@ -43,8 +43,12 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 счёта) на каждого, отсортированных по убыванию. Политика максимально
 простая и честная — купить лучшего по приросту, если он известен движку
 (`known`), карман потянет (`affordable`), есть слот (`has_slot`) и прирост
-строго положителен; ни один из этих четырёх флагов не эвристика, все уже
-посчитаны в `evaluate_shop`. `interest_lost` (упущенные проценты, раздел
+оправдывает слот (`_worth_buying` — улучшение A2: не просто > 0, а не ниже
+`_MIN_BUY_REQ_FRACTION` от требования ближайшего блайнда, чтобы не занимать
+слот почти-нулём, который тут же сочли бы мёртвым грузом; при неизвестном
+требовании — откат к «> 0»). Первые три флага уже посчитаны в
+`evaluate_shop`, порог A2 — единственная поправка политики.
+`interest_lost` (упущенные проценты, раздел
 «Магазин и порядок джокеров» плана) сознательно не участвует в самом
 решении «покупать ли» — это несоизмеримая с приростом счёта величина
 (доллары против очков, тот же принцип, что у `decide_skip`), только
@@ -56,11 +60,14 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 опроса (`ui/tui.py.autoplay`) и так перечитывает состояние на каждой
 итерации, задача `decide_action` тут не в том, чтобы копить решения, а
 в том, чтобы каждый раз отвечать честно по свежим числам. Когда покупать
-джокеров брать нечего — пробуем купить Buffoon-пак: `ShopAdvice.packs`
-несёт для него нижнюю границу прироста (средний случайный реализованный
-джокер, `PackPurchaseOffer` — настоящий пак даёт выбор лучшего из 2–4, так
-что это заведомо не переоценка), покупаем при положительной оценке,
-свободном слоте и по карману, той же формой, что джокера.
+джокеров брать нечего (либо ни один не проходит порог A2) — пробуем купить
+Buffoon-пак: `ShopAdvice.packs` несёт для него оценку прироста
+(Монте-Карло «лучшие choose из extra», `PackPurchaseOffer`), покупаем при
+положительной оценке, свободном слоте и по карману. Порог здесь остаётся
+«> 0», а не A2-шная доля требования: пак — это выбор из 2–4 (хедж, риск
+ниже разовой покупки джокера вслепую) и единственный оставшийся сток денег
+до улучшений A3/A5, задирать ему планку сейчас значило бы снова копить
+деньги впустую.
 
 Когда все слоты заняты (`joker_slots`), обычная покупка невозможна — но
 `evaluate_shop` посчитал вклад каждого джокера в слоте и прицепил самого
@@ -166,6 +173,14 @@ _DEAD_JOKER_REQ_FRACTION = 0.03
 #: прокрутки продажи-покупки на шумных оценках.
 _REPLACE_UPLIFT_RATIO = 2.0
 
+#: Минимальный прирост джокера (`expected_uplift`), при котором его вообще
+#: стоит покупать в свободный слот — та же доля требования ближайшего
+#: блайнда, что и `_DEAD_JOKER_REQ_FRACTION` (улучшение A2): не занимать
+#: слот тем, что тут же сочли бы мёртвым грузом. При неизвестном требовании
+#: (ручной ввод, нет блайндов) откат к старому порогу «строго > 0».
+#: Калибруется на живых прогонах.
+_MIN_BUY_REQ_FRACTION = 0.03
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
@@ -265,7 +280,19 @@ def _next_blind_requirement(state: GameState) -> int | None:
     return None
 
 
-def _decide_replace_action(state: GameState, advice: ShopAdvice) -> Action | None:
+def _worth_buying(uplift: float, requirement: int | None) -> bool:
+    """Стоит ли покупать джокера с таким приростом в свободный слот
+    (улучшение A2). При известном требовании блайнда — прирост не ниже
+    `_MIN_BUY_REQ_FRACTION` от него (не занимать слот почти-нулём); без
+    требования — откат к старому «строго > 0»."""
+    if requirement is None:
+        return uplift > 0
+    return uplift >= _MIN_BUY_REQ_FRACTION * requirement
+
+
+def _decide_replace_action(
+    state: GameState, advice: ShopAdvice, requirement: int | None
+) -> Action | None:
     """Все слоты джокеров заняты — продать самого слабого, если в витрине
     есть заметно лучший (`JokerOffer.replaces`, посчитан в `evaluate_shop`).
     Размен, если оффер строго лучше вклада жертвы **и** либо жертва —
@@ -275,7 +302,6 @@ def _decide_replace_action(state: GameState, advice: ShopAdvice) -> Action | Non
     `advice.jokers` отсортирован по приросту убыванию, так что первый
     подходящий оффер и есть лучший доступный под размен. Покупку решит
     следующий вызов — слот к тому моменту освободится."""
-    requirement = _next_blind_requirement(state)
     for offer in advice.jokers:
         victim = offer.replaces
         if victim is None or offer.expected_uplift is None:
@@ -294,19 +320,21 @@ def _decide_replace_action(state: GameState, advice: ShopAdvice) -> Action | Non
 
 
 def _decide_shop_action(state: GameState) -> Action:
-    """В магазине решение — купить лучшего по приросту джокера, затем (если
+    """В магазине решение — купить лучшего по приросту джокера (порог A2:
+    прирост не ниже доли требования блайнда, не просто > 0), затем (если
     джокеров брать нечего) Buffoon-пак с положительной нижней границей, затем
     (если слоты полны) продать слабейшего под лучший оффер, иначе уйти
     (`next_round`). См. модульный докстринг про политику и её границы."""
     advice = evaluate_shop(state)
     if advice is not None:
+        requirement = _next_blind_requirement(state)
         for offer in advice.jokers:
             if (
                 offer.known
                 and offer.affordable
                 and offer.has_slot
                 and offer.expected_uplift is not None
-                and offer.expected_uplift > 0
+                and _worth_buying(offer.expected_uplift, requirement)
             ):
                 return Action(
                     kind="buy",
@@ -325,7 +353,7 @@ def _decide_shop_action(state: GameState) -> Action:
                     item_index=_item_index_of(state.shop_packs, pack.item),
                     label=pack.item.label,
                 )
-        replace_action = _decide_replace_action(state, advice)
+        replace_action = _decide_replace_action(state, advice, requirement)
         if replace_action is not None:
             return replace_action
     return Action(kind="next_round")
