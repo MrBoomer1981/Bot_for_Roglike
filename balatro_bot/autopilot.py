@@ -60,11 +60,22 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 несёт для него нижнюю границу прироста (средний случайный реализованный
 джокер, `PackPurchaseOffer` — настоящий пак даёт выбор лучшего из 2–4, так
 что это заведомо не переоценка), покупаем при положительной оценке,
-свободном слоте и по карману, той же формой, что джокера. Когда и паков
-нет — `next_round`, уйти. Ваучеры, прочие типы паков (Celestial/Arcana/
-Spectral/Standard) и реролл по-прежнему не тронуты: `evaluate_shop`/
-`evaluate_vouchers` не дают им числа, а `reroll_cost` — цена без вердикта
-(раздел 8 плана, «Момент рерола»).
+свободном слоте и по карману, той же формой, что джокера.
+
+Когда все слоты заняты (`joker_slots`), обычная покупка невозможна — но
+`evaluate_shop` посчитал вклад каждого джокера в слоте и прицепил самого
+слабого невечного кандидата на вылет (`JokerOffer.replaces`). Политика
+продажи-замены: продать жертву, если оффер строго лучше её вклада **и**
+либо жертва — мёртвый груз (вклад ниже `_DEAD_JOKER_REQ_FRACTION` от
+требования ближайшего блайнда), либо оффер кратно сильнее
+(`_REPLACE_UPLIFT_RATIO` — защита от прокрутки продажи-покупки на шуме).
+Продажа — отдельное действие: слот освободится, покупку решим на следующем
+шаге по свежим числам, как и всё остальное в магазине.
+
+Когда и менять нечего — `next_round`, уйти. Ваучеры, прочие типы паков
+(Celestial/Arcana/Spectral/Standard) и реролл по-прежнему не тронуты:
+`evaluate_shop`/`evaluate_vouchers` не дают им числа, а `reroll_cost` —
+цена без вердикта (раздел 8 плана, «Момент рерола»).
 
 **Вскрытие пака (Celestial — кусок 9.2; Buffoon — 9.3).** Фаза открытого
 пака у Steamodded — одна общая `SMODS_BOOSTER_OPENED` (не ванильные
@@ -114,7 +125,7 @@ from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import PACK_OPEN_PHASES, evaluate_pack
 from balatro_bot.solver.play import advise
-from balatro_bot.solver.shop import evaluate_shop
+from balatro_bot.solver.shop import ShopAdvice, evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
 __all__ = [
@@ -144,6 +155,17 @@ ROUND_EVAL = "ROUND_EVAL"
 #: Фаза мода внутри магазина.
 SHOP = "SHOP"
 
+#: Продажа-замена джокера (`_decide_shop_action`, когда слоты полны).
+#: Вклад жертвы ниже этой доли требования ближайшего блайнда — «мёртвый
+#: груз», меняется на любой оффер с положительным приростом. Калибруется на
+#: живых прогонах.
+_DEAD_JOKER_REQ_FRACTION = 0.03
+
+#: Если жертва не мёртвый груз — размен только когда оффер даёт как минимум
+#: во столько раз больший прирост, чем её вклад. Защита от бесконечной
+#: прокрутки продажи-покупки на шумных оценках.
+_REPLACE_UPLIFT_RATIO = 2.0
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
@@ -162,6 +184,7 @@ class Action:
         "skip",
         "buy",
         "buy_pack",
+        "sell",
         "next_round",
         "cash_out",
         "pack",
@@ -175,10 +198,10 @@ class Action:
 
     item_index: int | None = None
     """0-based индекс предмета в `GameState.shop` (`buy`), `GameState.pack`
-    (`pack`) или `GameState.consumables` (`use`) — во всех случаях один и
-    тот же `ShopItem`, индексирующий один и тот же по форме
-    `tuple[ShopItem, ...]`, поэтому поле общее, не отдельное на каждый
-    RPC-метод."""
+    (`pack`), `GameState.consumables` (`use`) или `GameState.jokers`
+    (`sell` — какого джокера в слоте продать) — во всех случаях просто
+    индекс в одноимённый кортеж состояния, поэтому поле общее, не отдельное
+    на каждый RPC-метод."""
 
     label: str = ""
     """Название выбранного предмета для лога автопилота (`buy`/`pack` —
@@ -230,10 +253,51 @@ def _decide_blind_action(state: GameState) -> Action:
     return Action(kind="select")
 
 
+def _next_blind_requirement(state: GameState) -> int | None:
+    """Требование по очкам ближайшего ещё не побеждённого блайнда — чтобы
+    масштабировать пороги, не завязывая их на абсолютные очки (на анте 6
+    требование в разы больше, чем на анте 2). `None`, если мод не прислал
+    блайнды или их требования."""
+    for key in ("small", "big", "boss"):
+        info = state.blinds.get(key)
+        if info is not None and info.status != "DEFEATED" and info.required_score > 0:
+            return info.required_score
+    return None
+
+
+def _decide_replace_action(state: GameState, advice: ShopAdvice) -> Action | None:
+    """Все слоты джокеров заняты — продать самого слабого, если в витрине
+    есть заметно лучший (`JokerOffer.replaces`, посчитан в `evaluate_shop`).
+    Размен, если оффер строго лучше вклада жертвы **и** либо жертва —
+    мёртвый груз (вклад мал в доле требования блайнда), либо оффер кратно
+    сильнее (`_REPLACE_UPLIFT_RATIO`). `None` — менять нечего.
+
+    `advice.jokers` отсортирован по приросту убыванию, так что первый
+    подходящий оффер и есть лучший доступный под размен. Покупку решит
+    следующий вызов — слот к тому моменту освободится."""
+    requirement = _next_blind_requirement(state)
+    for offer in advice.jokers:
+        victim = offer.replaces
+        if victim is None or offer.expected_uplift is None:
+            continue
+        if state.money + victim.sell_value < offer.item.price:
+            continue
+        if offer.expected_uplift <= victim.contribution:
+            continue
+        dead_weight = requirement is not None and (
+            victim.contribution < _DEAD_JOKER_REQ_FRACTION * requirement
+        )
+        multiple = offer.expected_uplift >= _REPLACE_UPLIFT_RATIO * max(victim.contribution, 0.0)
+        if dead_weight or multiple:
+            return Action(kind="sell", item_index=victim.index, label=victim.label)
+    return None
+
+
 def _decide_shop_action(state: GameState) -> Action:
     """В магазине решение — купить лучшего по приросту джокера, затем (если
-    джокеров брать нечего) Buffoon-пак с положительной нижней границей, иначе
-    уйти (`next_round`). См. модульный докстринг про политику и её границы."""
+    джокеров брать нечего) Buffoon-пак с положительной нижней границей, затем
+    (если слоты полны) продать слабейшего под лучший оффер, иначе уйти
+    (`next_round`). См. модульный докстринг про политику и её границы."""
     advice = evaluate_shop(state)
     if advice is not None:
         for offer in advice.jokers:
@@ -261,6 +325,9 @@ def _decide_shop_action(state: GameState) -> Action:
                     item_index=_item_index_of(state.shop_packs, pack.item),
                     label=pack.item.label,
                 )
+        replace_action = _decide_replace_action(state, advice)
+        if replace_action is not None:
+            return replace_action
     return Action(kind="next_round")
 
 
@@ -392,6 +459,8 @@ def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
             return bridge.buy(card=_index())
         case "buy_pack":
             return bridge.buy(pack=_index())
+        case "sell":
+            return bridge.sell(joker=_index())
         case "next_round":
             return bridge.next_round()
         case "cash_out":
@@ -426,6 +495,8 @@ def describe_action(action: Action) -> str:
             return f"купил в магазине{named}"
         case "buy_pack":
             return f"купил пак{named}"
+        case "sell":
+            return f"продал джокера{named}"
         case "next_round":
             return "ушёл из магазина"
         case "pack":

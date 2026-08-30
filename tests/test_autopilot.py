@@ -368,6 +368,60 @@ class TestDecideActionВМагазине:
         )
         assert decide_action(state) == Action(kind="next_round")
 
+    def test_продаёт_мёртвый_груз_под_лучший_оффер(self) -> None:
+        # Слоты полны (2/2), один джокер отключён (вклад ровно 0), в витрине
+        # рабочий j_joker с положительным приростом — продаём отключённого.
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker", debuffed=True)),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "sell"
+        assert action.item_index == 1
+
+    def test_не_разменивает_рабочих_джокеров_на_равный_оффер(self) -> None:
+        # Оба джокера рабочие, оффер — ещё один такой же (+4 Mult), прирост
+        # примерно равен вкладу каждого, не вдвое больше — размена нет.
+        state = GameState(
+            phase="SHOP",
+            money=10,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_не_продаёт_если_денег_не_хватит_даже_с_продажей(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=1,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker", debuffed=True)),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 9),),  # 1 + 0 возврата < 9
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_возврат_за_продажу_учитывается_в_бюджете(self) -> None:
+        # Денег мало, но продажа отключённого вернёт $3 — на оффер за $3 хватит.
+        state = GameState(
+            phase="SHOP",
+            money=1,
+            jokers=(
+                JokerCard(key="j_joker"),
+                JokerCard(key="j_joker", debuffed=True, sell_value=3),
+            ),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "sell"
+        assert action.item_index == 1
+
 
 class TestDecideActionНаВскрытииПака:
     """Тип пака — по содержимому `state.pack`, не по имени фазы (Steamodded
@@ -476,6 +530,11 @@ class TestDispatchAction:
         assert FakeMod.calls[-1]["method"] == "use"
         assert FakeMod.calls[-1]["params"] == {"consumable": 1}
 
+    def test_sell_зовёт_sell_с_индексом_джокера(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="sell", item_index=2, label="Abstract Joker"))
+        assert FakeMod.calls[-1]["method"] == "sell"
+        assert FakeMod.calls[-1]["params"] == {"joker": 2}
+
 
 class TestDescribeAction:
     def test_розыгрыш_перечисляет_карты(self) -> None:
@@ -493,6 +552,7 @@ class TestDescribeAction:
             Action(kind="skip"),
             Action(kind="buy"),
             Action(kind="buy_pack"),
+            Action(kind="sell"),
             Action(kind="next_round"),
             Action(kind="cash_out"),
             Action(kind="pack"),

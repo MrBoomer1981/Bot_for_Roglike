@@ -10,8 +10,9 @@ from __future__ import annotations
 from dataclasses import replace
 
 from balatro_bot.adapters.manual import build_state
+from balatro_bot.core.cards import standard_deck
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
-from balatro_bot.solver.shop import SAMPLE_HANDS, evaluate_shop
+from balatro_bot.solver.shop import SAMPLE_HANDS, evaluate_shop, joker_contributions
 
 
 def _shop_state(**overrides: object) -> GameState:
@@ -366,3 +367,81 @@ class TestСтикерыСтавок:
         assert offer.expected_uplift is None
         assert offer.rental_cost_per_round == 3
         assert offer.eternal is True
+
+
+class TestПродажаЗамена:
+    """`joker_contributions` + `JokerOffer.replaces` — когда все слоты
+    заняты, `evaluate_shop` цепляет к оценённым офферам самого слабого
+    невечного джокера в слотах (кандидата на вылет под размен)."""
+
+    def test_вклад_отключённого_джокера_ровно_ноль(self) -> None:
+        # Движок пропускает debuffed-джокера целиком, значит счёт с ним и
+        # без него совпадает — вклад строго 0.0, без шума сэмплирования.
+        state = _shop_state(
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker", debuffed=True)),
+            joker_slots=2,
+        )
+        contributions = joker_contributions(state, standard_deck(), 4)
+        assert len(contributions) == 2
+        assert contributions[0] > 0  # рабочий "+4 Mult"
+        assert contributions[1] == 0.0  # отключённый
+
+    def test_нет_джокеров_пустой_кортеж(self) -> None:
+        assert joker_contributions(_shop_state(), standard_deck(), 4) == ()
+
+    def test_оффер_несёт_слабейшего_кандидата_на_вылет(self) -> None:
+        state = _shop_state(
+            money=10,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker", debuffed=True)),
+            joker_slots=2,  # слоты полны
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        cand = advice.jokers[0].replaces
+        assert cand is not None
+        assert cand.index == 1  # отключённый — самый слабый
+        assert cand.contribution == 0.0
+
+    def test_вечный_джокер_не_кандидат_на_вылет(self) -> None:
+        # Отключённый джокер слабее, но он вечный — продать нельзя, значит
+        # кандидат — рабочий j_joker в слоте 1.
+        state = _shop_state(
+            money=10,
+            jokers=(
+                JokerCard(key="j_joker", debuffed=True, eternal=True),
+                JokerCard(key="j_joker"),
+            ),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        cand = advice.jokers[0].replaces
+        assert cand is not None
+        assert cand.index == 1
+
+    def test_есть_свободный_слот_замена_не_нужна(self) -> None:
+        state = _shop_state(
+            money=10,
+            jokers=(JokerCard(key="j_joker"),),
+            joker_slots=5,  # места полно
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].replaces is None
+
+    def test_все_джокеры_вечные_кандидата_нет(self) -> None:
+        state = _shop_state(
+            money=10,
+            jokers=(
+                JokerCard(key="j_joker", eternal=True),
+                JokerCard(key="j_joker", eternal=True),
+            ),
+            joker_slots=2,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.jokers[0].replaces is None

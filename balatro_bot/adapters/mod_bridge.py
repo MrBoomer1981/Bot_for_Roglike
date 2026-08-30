@@ -612,6 +612,19 @@ class ModBridge:
             params["pack"] = pack
         return parse_game_state(self.call("buy", params, timeout=ACTION_TIMEOUT))
 
+    def sell(self, *, joker: int | None = None, consumable: int | None = None) -> GameState:
+        """Продать джокера (индекс в `GameState.jokers`) или консумабль
+        (индекс в `GameState.consumables`) — ровно один из двух, как требует
+        схема мода (`openrpc.json`'s `sell(joker, consumable)`). Деньги за
+        продажу (`JokerCard.sell_value`) начисляются сразу; вечных джокеров
+        (`JokerCard.eternal`) продать нельзя — мод ответит ошибкой."""
+        params: dict[str, int] = {}
+        if joker is not None:
+            params["joker"] = joker
+        if consumable is not None:
+            params["consumable"] = consumable
+        return parse_game_state(self.call("sell", params, timeout=ACTION_TIMEOUT))
+
     def open_pack(self, *, card: int | None = None, skip: bool | None = None) -> GameState:
         """Выбрать карту из открытого пака (индекс в `GameState.pack`) или
         скипнуть пак целиком — ровно один из двух, как того требует схема

@@ -15,6 +15,15 @@
 `advise()` на каждой выборке, не приближённый подсчёт, приближена только
 сама выборка рук, а не сам счёт.
 
+Когда все слоты джокеров заняты (`GameState.joker_slots`), обычная покупка
+невозможна — но её место занимает продажа-замена. `joker_contributions`
+считает зеркальный контрфактум: «насколько **упадёт** лучший счёт, если
+убрать этого джокера из слотов» — по каждому джокеру, по тем же
+представительным рукам. `evaluate_shop` цепляет самого слабого невечного
+кандидата на вылет (`ReplaceCandidate`) к каждому оценённому офферу;
+вердикт «менять или нет» (мёртвый груз против кратного превосходства) —
+в `autopilot._decide_shop_action`, не здесь.
+
 Часть ваучеров теперь тоже переводится в очки — Фаза 9.3, первый (самый
 честный) из трёх уровней: `solver/vouchers.py`'s `evaluate_vouchers` считает
 контрфактум для прямых игровых ресурсов (лишняя рука/сброс за раунд, лишняя
@@ -102,8 +111,10 @@ from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 __all__ = [
     "JokerOffer",
     "PackPurchaseOffer",
+    "ReplaceCandidate",
     "ShopAdvice",
     "evaluate_shop",
+    "joker_contributions",
     "joker_uplift",
 ]
 
@@ -176,6 +187,58 @@ def joker_uplift(
     return total / samples
 
 
+def joker_contributions(
+    state: GameState, deck_source: tuple[Card, ...], samples: int
+) -> tuple[float, ...]:
+    """Вклад каждого джокера в слоте — на сколько в среднем упадёт лучший
+    счёт, если убрать именно его (по `samples` представительным рукам,
+    сеянная выборка, как `joker_uplift`). Индекс в результате соответствует
+    индексу в `state.jokers`; пустой кортеж, если джокеров нет или колода для
+    сэмплирования мала.
+
+    Зеркало `joker_uplift`: тот меряет «плюс новый джокер», этот — «минус
+    существующий». Базовый счёт полного набора усредняется один раз, затем по
+    разу на каждый вынутый джокер (нужно `autopilot`'у для продажи-замены,
+    когда все слоты заняты — какой джокер не жалко продать под лучший оффер)."""
+    if not state.jokers or len(deck_source) < _HAND_SIZE:
+        return ()
+    rng = random.Random(_SAMPLE_SEED)
+    pool = list(deck_source)
+    hands = [tuple(rng.sample(pool, _HAND_SIZE)) for _ in range(samples)]
+    baselines = [advise(replace(state, hand=hand), limit=1).best.score for hand in hands]
+    contributions: list[float] = []
+    for i in range(len(state.jokers)):
+        without = state.jokers[:i] + state.jokers[i + 1 :]
+        drop = 0.0
+        for hand, base in zip(hands, baselines, strict=True):
+            reduced = advise(replace(state, hand=hand, jokers=without), limit=1).best.score
+            drop += base - reduced
+        contributions.append(drop / samples)
+    return tuple(contributions)
+
+
+@dataclass(frozen=True, slots=True)
+class ReplaceCandidate:
+    """Кого продать, чтобы освободить слот под джокера из витрины, когда все
+    слоты заняты. Всегда самый слабый джокер в слотах по вкладу в счёт — один
+    и тот же для всех офферов захода, поэтому вынесен в общий объект, а не в
+    отдельные поля на каждый `JokerOffer`."""
+
+    index: int
+    """Индекс в `GameState.jokers`."""
+
+    label: str
+
+    contribution: float
+    """Средний вклад в лучший счёт (`joker_contributions`) — на сколько
+    упадёт счёт, если этого джокера убрать. Автопилот сравнивает его с
+    `JokerOffer.expected_uplift`, решая, оправдан ли размен."""
+
+    sell_value: int
+    """Сколько денег вернёт продажа (`JokerCard.sell_value`, 0 если источник
+    не прислал) — добавляется к бюджету при проверке, потянет ли размен."""
+
+
 @dataclass(frozen=True, slots=True)
 class JokerOffer:
     """Джокер на продажу — с попыткой оценить, насколько он поднимет счёт."""
@@ -226,6 +289,13 @@ class JokerOffer:
     """Вечный джокер (`ShopItem.eternal`) — купленного нельзя продать. Риск
     «бюджета слотов при неудачной покупке», не величина счёта; показывается,
     но автопокупку не блокирует (открытый вопрос политики, как и ваучеры)."""
+
+    replaces: ReplaceCandidate | None = None
+    """Когда все слоты джокеров заняты — самый слабый джокер в слотах,
+    которого этот оффер мог бы заменить (продать его, купить этот). `None`,
+    если есть свободный слот (замена не нужна), джокеров нет, оффер не
+    оценён (`known`/`expected_uplift`), либо все джокеры вечные. Автопилот
+    сравнивает `expected_uplift` с `replaces.contribution`, решая размен."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -308,6 +378,31 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
         ),
         reverse=True,
     )
+
+    # Все слоты заняты — купить джокера можно только через продажу-замену.
+    # Вклад каждого джокера в слоте считаем один раз на заход (как выборку
+    # для Buffoon-паков ниже) и цепляем самого слабого невечного кандидата
+    # на вылет к каждому оценённому офферу — сам вердикт «менять или нет»
+    # принимает `autopilot`.
+    slots_full = state.joker_slots is not None and len(state.jokers) >= state.joker_slots
+    contributions = joker_contributions(state, deck_source, samples) if slots_full else ()
+    if contributions:
+        sellable = [i for i, joker in enumerate(state.jokers) if not joker.eternal]
+        if sellable:
+            weakest = min(sellable, key=lambda i: contributions[i])
+            victim = state.jokers[weakest]
+            candidate = ReplaceCandidate(
+                index=weakest,
+                label=victim.label or victim.key,
+                contribution=contributions[weakest],
+                sell_value=victim.sell_value or 0,
+            )
+            offers = [
+                replace(offer, replaces=candidate)
+                if offer.known and offer.expected_uplift is not None
+                else offer
+                for offer in offers
+            ]
 
     # Выборка джокеров для оценки Buffoon-паков считается один раз на весь
     # заход (каждый `joker_uplift` — два `advise()`, ~26 мс), а не заново
@@ -400,6 +495,7 @@ def _evaluate_joker_offer(
             rental_cost_per_round=economy.RENTAL_RATE if item.rental else 0,
             perishable_rounds=item.perishable_rounds,
             eternal=item.eternal,
+            replaces=None,
         )
 
     if not known or len(deck_source) < _HAND_SIZE:

@@ -540,6 +540,15 @@ class TestКлиент:
         bridge.use(0, cards=[1, 3])
         assert FakeMod.calls[-1]["params"] == {"consumable": 0, "cards": [1, 3]}
 
+    def test_sell_передаёт_индекс_джокера(self, bridge: ModBridge) -> None:
+        bridge.sell(joker=1)
+        assert FakeMod.calls[-1]["method"] == "sell"
+        assert FakeMod.calls[-1]["params"] == {"joker": 1}
+
+    def test_sell_передаёт_индекс_консумабля(self, bridge: ModBridge) -> None:
+        bridge.sell(consumable=0)
+        assert FakeMod.calls[-1]["params"] == {"consumable": 0}
+
     def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
         bridge.next_round()
         assert FakeMod.calls[-1]["method"] == "next_round"
