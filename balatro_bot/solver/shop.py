@@ -23,10 +23,16 @@
 слоты, шансы редких изданий, будущий горизонт денег) — по-прежнему получают
 `expected_uplift = None` с честным пояснением вместо выдуманного числа
 (`VoucherOffer.note`), см. модульный докстринг `solver/vouchers.py` и
-PLAN.md, 9.3, для оставшихся двух уровней. Паки не переводятся в очки вовсе
-(кроме уже вскрытого Celestial/Planet — `solver/pack.py`, отдельная фаза, а
-не витрина магазина): магазин показывает только тип и цену, содержимое
-генерируется только при вскрытии, посчитать контрфактум не на чем заранее.
+PLAN.md, 9.3, для оставшихся двух уровней. Buffoon-пак в витрине получает
+оценку (`PackPurchaseOffer`, `_evaluate_pack_purchase`) — Монте-Карло
+самого механизма пака: `joker_uplift` для выборки случайных реализованных
+джокеров, затем дешёвый пересэмплинг «лучшие `choose` из `extra`» по
+размеру пака. Контрфактум «до покупки» тут невозможен (содержимое ещё не
+сгенерировано), но смоделировать распределение честного розыгрыша можно —
+тот же класс, что сэмплирование сброса в `solver/discard.py`. Celestial-пак
+в витрине и Arcana/Spectral/Standard — по-прежнему `None` (первый доступен
+тем же приёмом по 12 планетам, отдельный кусок; остальным нужны механики
+консумаблов).
 
 Поправка на экономику (раздел 8.1 плана, было отложено при закрытии
 основной части Фазы 7): покупка джокера — это не только `item.price`
@@ -104,13 +110,24 @@ __all__ = [
 #: Ключ Buffoon-пака в каталоге (`p_buffoon_normal_*`/`_jumbo_*`/`_mega_*`).
 _BUFFOON_PACK_PREFIX: Final[str] = "p_buffoon"
 
-#: Сколько реализованных джокеров сэмплировать для оценки покупки Buffoon-пака
-#: и сколько представительных рук на каждого. Меньше, чем на джокера в
-#: витрине (`SAMPLE_HANDS`): здесь усредняется по многим джокерам сразу, и
-#: это всё равно только нижняя граница (настоящий пак даёт выбор лучшего из
-#: 2–4), а не точная оценка.
-PACK_JOKER_SAMPLE: Final[int] = 16
-PACK_SAMPLE_HANDS: Final[int] = 6
+#: Размер Buffoon-пака: (сколько джокеров показывают, сколько можно взять) —
+#: из `game.lua`'s `P_CENTERS` (`config = {extra, choose}`). Normal — 2/1,
+#: Jumbo — 4/1, Mega — 4/2.
+_BUFFOON_PACK_SIZES: Final[dict[str, tuple[int, int]]] = {
+    "mega": (4, 2),
+    "jumbo": (4, 1),
+    "normal": (2, 1),
+}
+
+#: Оценка покупки Buffoon-пака — Монте-Карло самого механизма пака:
+#: считаем `joker_uplift` для `PACK_JOKER_SAMPLE` случайных реализованных
+#: джокеров (по `PACK_SAMPLE_HANDS` рук каждый), затем дёшево пересэмплируем
+#: в Python `PACK_SIM_TRIALS` раз — в каждом «розыгрыше» берём `extra`
+#: джокеров без возврата и суммируем лучшие `choose`. Тот же класс
+#: честности, что у сэмплирования сброса: приближена выборка, не сам счёт.
+PACK_JOKER_SAMPLE: Final[int] = 24
+PACK_SAMPLE_HANDS: Final[int] = 5
+PACK_SIM_TRIALS: Final[int] = 400
 
 #: Сколько представительных рук сэмплировать на джокера. Каждая — полный
 #: точный `advise()` (перебор 218 подмножеств, ~13 мс) дважды — с текущими
@@ -216,10 +233,13 @@ class PackPurchaseOffer:
     """Бустер-пак в витрине — стоит ли платить за него. Магазин показывает
     только тип и цену, содержимое генерируется лишь при вскрытии, поэтому
     контрфактум «до покупки» невозможен (см. модульный докстринг). Оценка
-    есть только у Buffoon-пака и только как **нижняя граница**: средний
-    прирост от одного случайного реализованного джокера по `PACK_JOKER_SAMPLE`
-    штук — настоящий пак даёт выбор лучшего из 2–4, так что реальная ценность
-    выше. Прочие типы (Celestial/Arcana/Spectral/Standard) — честный `None`."""
+    есть только у Buffoon-пака: Монте-Карло самого механизма пака — среднее
+    от «взять лучшие `choose` из `extra` случайных реализованных джокеров»
+    (`_evaluate_pack_purchase`), где `extra`/`choose` берутся из размера
+    пака. Это уже не заведомая нижняя граница, а честная оценка ожидаемого
+    прироста (у Mega-пака `choose=2` — сумма верхних двух без учёта их
+    взаимодействия, чуть завышает). Прочие типы (Celestial/Arcana/Spectral/
+    Standard) — честный `None`."""
 
     item: ShopItem
     affordable: bool
@@ -228,8 +248,9 @@ class PackPurchaseOffer:
     просто `True`, слот им не нужен."""
 
     expected_uplift: float | None
-    """Нижняя граница прироста счёта, только для Buffoon-пака; `None` для
-    остальных и когда колода для сэмплирования пуста."""
+    """Ожидаемый прирост счёта от вскрытия пака (лучшие `choose` из `extra`),
+    только для Buffoon-пака; `None` для остальных и когда колода для
+    сэмплирования пуста."""
 
     exact_deck: bool
     samples: int
@@ -250,8 +271,8 @@ class ShopAdvice:
     показать как есть, чем изобретать порядок."""
 
     packs: tuple[PackPurchaseOffer, ...]
-    """В порядке `GameState.shop_packs`. Оценён только Buffoon-пак и только
-    как нижняя граница — см. `PackPurchaseOffer`."""
+    """В порядке `GameState.shop_packs`. Оценён только Buffoon-пак —
+    Монте-Карло механизма пака, см. `PackPurchaseOffer`."""
 
     money: int
 
@@ -288,11 +309,25 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
         reverse=True,
     )
 
+    # Выборка джокеров для оценки Buffoon-паков считается один раз на весь
+    # заход (каждый `joker_uplift` — два `advise()`, ~26 мс), а не заново
+    # на каждый пак в витрине.
+    buffoon_uplifts: list[float] | None = None
+    if any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs) and (
+        len(deck_source) >= _HAND_SIZE
+    ):
+        rng = random.Random(_SAMPLE_SEED)
+        keys = sorted(implemented_keys())
+        pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
+        buffoon_uplifts = [
+            joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS) for key in pool
+        ]
+
     return ShopAdvice(
         jokers=tuple(offers),
         vouchers=evaluate_vouchers(state, samples),
         packs=tuple(
-            _evaluate_pack_purchase(state, item, deck_source, exact_deck)
+            _evaluate_pack_purchase(state, item, exact_deck, buffoon_uplifts)
             for item in state.shop_packs
         ),
         money=state.money,
@@ -300,11 +335,23 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
     )
 
 
+def _buffoon_pack_size(key: str) -> tuple[int, int]:
+    """`(extra, choose)` — сколько джокеров пак показывает и сколько можно
+    взять. По подстроке в ключе (`p_buffoon_mega_1` и т.п.); по умолчанию —
+    normal."""
+    for tag, size in _BUFFOON_PACK_SIZES.items():
+        if tag in key:
+            return size
+    return _BUFFOON_PACK_SIZES["normal"]
+
+
 def _evaluate_pack_purchase(
-    state: GameState, item: ShopItem, deck_source: tuple[Card, ...], exact_deck: bool
+    state: GameState, item: ShopItem, exact_deck: bool, buffoon_uplifts: list[float] | None
 ) -> PackPurchaseOffer:
-    """Оценить покупку одного пака из витрины. Считаем только Buffoon —
-    нижней границей по случайной выборке реализованных джокеров."""
+    """Оценить покупку одного пака из витрины — Монте-Карло механизма пака,
+    только для Buffoon (см. `PACK_SIM_TRIALS`). `buffoon_uplifts` — общая на
+    весь заход выборка `joker_uplift` реализованных джокеров (`evaluate_shop`
+    считает её один раз); `None` — не Buffoon-пак или колода неизвестна."""
     affordable = state.money >= item.price
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
 
@@ -313,20 +360,20 @@ def _evaluate_pack_purchase(
 
     if not item.key.startswith(_BUFFOON_PACK_PREFIX):
         return _offer(None, 0, "оценивается только Buffoon-пак — прочие нужны механики консумаблов")
-    if len(deck_source) < _HAND_SIZE:
+    if buffoon_uplifts is None:
         return _offer(None, 0, "колода для выборки неизвестна")
 
-    keys = sorted(implemented_keys())
-    rng = random.Random(_SAMPLE_SEED)
-    picks = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
+    extra, choose = _buffoon_pack_size(item.key)
+    extra = min(extra, len(buffoon_uplifts))
+    sim = random.Random(_SAMPLE_SEED)
     total = 0.0
-    for key in picks:
-        total += joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS)
-    return _offer(
-        total / len(picks),
-        len(picks),
-        "нижняя граница: средний случайный джокер, настоящий пак — выбор лучшего из 2–4",
-    )
+    for _ in range(PACK_SIM_TRIALS):
+        drawn = sorted(sim.sample(buffoon_uplifts, extra), reverse=True)
+        total += sum(drawn[:choose])
+    note = f"оценка: лучшие {choose} из {extra} случайных джокеров (выборка {len(buffoon_uplifts)})"
+    if choose > 1:
+        note += "; сумма верхних без учёта их взаимодействия"
+    return _offer(total / PACK_SIM_TRIALS, len(buffoon_uplifts), note)
 
 
 def _evaluate_joker_offer(

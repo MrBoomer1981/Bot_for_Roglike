@@ -241,10 +241,10 @@ class TestЦенаРерола:
 
 
 class TestПокупкаПака:
-    """`ShopAdvice.packs` — оценка есть только у Buffoon-пака и только как
-    нижняя граница (`PackPurchaseOffer`)."""
+    """`ShopAdvice.packs` — оценка есть только у Buffoon-пака, Монте-Карло
+    механизма пака (`PackPurchaseOffer`)."""
 
-    def test_buffoon_пак_получает_положительную_нижнюю_границу(self) -> None:
+    def test_buffoon_пак_получает_положительную_оценку(self) -> None:
         state = _shop_state(
             money=10,
             joker_slots=5,
@@ -257,7 +257,27 @@ class TestПокупкаПака:
         assert pack.has_slot is True
         assert pack.expected_uplift is not None
         assert pack.expected_uplift > 0
-        assert "нижняя граница" in pack.note
+        assert "лучшие 1 из 2" in pack.note
+
+    def test_mega_пак_оценивается_как_2_из_4(self) -> None:
+        normal = _shop_state(
+            money=20,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
+        )
+        mega = _shop_state(
+            money=20,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_buffoon_mega_1", "Mega Buffoon Pack", "BOOSTER", 8),),
+        )
+        n = evaluate_shop(normal)
+        m = evaluate_shop(mega)
+        assert n is not None and m is not None
+        assert "лучшие 2 из 4" in m.packs[0].note
+        # Mega показывает 4 и берёт 2 — оценка ощутимо выше normal (2 из 2 → 1).
+        assert m.packs[0].expected_uplift is not None
+        assert n.packs[0].expected_uplift is not None
+        assert m.packs[0].expected_uplift > n.packs[0].expected_uplift
 
     def test_прочие_паки_не_оцениваются(self) -> None:
         state = _shop_state(
