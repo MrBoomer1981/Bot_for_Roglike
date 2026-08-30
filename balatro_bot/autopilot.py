@@ -52,35 +52,36 @@
 опроса (`ui/tui.py.autoplay`) и так перечитывает состояние на каждой
 итерации, задача `decide_action` тут не в том, чтобы копить решения, а
 в том, чтобы каждый раз отвечать честно по свежим числам. Когда покупать
-больше нечего — решение `next_round`, уйти из магазина. Ваучеры, паки и
-реролл намеренно не тронуты вовсе (раздел 6, «Автопилот», п. 9.2/9.3
-плана): `evaluate_shop` не даёт им числовой оценки, а `ShopAdvice.reroll_cost`
-— цена без вердикта (раздел 8 плана, «Момент рерола») — оценивать их
-здесь значило бы гадать.
+джокеров брать нечего — пробуем купить Buffoon-пак: `ShopAdvice.packs`
+несёт для него нижнюю границу прироста (средний случайный реализованный
+джокер, `PackPurchaseOffer` — настоящий пак даёт выбор лучшего из 2–4, так
+что это заведомо не переоценка), покупаем при положительной оценке,
+свободном слоте и по карману, той же формой, что джокера. Когда и паков
+нет — `next_round`, уйти. Ваучеры, прочие типы паков (Celestial/Arcana/
+Spectral/Standard) и реролл по-прежнему не тронуты: `evaluate_shop`/
+`evaluate_vouchers` не дают им числа, а `reroll_cost` — цена без вердикта
+(раздел 8 плана, «Момент рерола»).
 
-**Вскрытие пака (`PLANET_PACK`, последний кусок 9.2).** Единственный
-честно замкнутый тип пака — Celestial/Planet: `solver.pack.evaluate_pack`
-считает тот же контрфактум, что и джокеры в магазине (поднять уровень
-типа руки, пересчитать `advise()` на представительных руках, взять
-разницу), а поднятие уровня руки по построению не может ухудшить лучший
-достижимый счёт — значит вопроса «а вдруг она не нужна» тут в принципе
-нет, в отличие от скипа блайнда или покупки джокера: решение — взять
-карту с максимальным приростом, если в паке нашлась хоть одна опознанная
-планета (`_decide_pack_action`), и `skip` (весь пак целиком, у эндпоинта
-мода `pack` нет способа скипнуть одну конкретную карту) только в
-защитном случае, когда в паке не нашлось ни одной. Джамбо/мега-паки
-(выбор 1 из 5 / до 2 из 5) не требуют отдельной ветки: цикл опроса и так
-перечитывает состояние на каждой итерации, и если после выбора одной
-карты пак остаётся открытым с оставшимися картами, `decide_action`
-посчитает следующий выбор заново на уже обновлённом состоянии — ровно та
-же логика, что «одна покупка за вызов» в магазине.
+**Вскрытие пака (`PLANET_PACK` — кусок 9.2; `BUFFOON_PACK` — 9.3).** Два
+замкнутых типа. Celestial/Planet: `solver.pack.evaluate_pack` считает тот
+же контрфактум, что джокеры в магазине (поднять уровень типа руки,
+пересчитать `advise()` на представительных руках, взять разницу) — а
+поднятие уровня руки по построению не может ухудшить счёт, значит вопроса
+«а вдруг не нужна» тут нет, решение — взять карту с максимальным
+приростом. Buffoon: джокеры *видны* в паке, тот же контрфактум через
+`solver.shop.joker_uplift` (общий код), но плохой джокер прирост дать не
+обязан — поэтому берём карту только при **строго положительном** приросте
+и свободном слоте, иначе `skip_pack`. Джамбо/мега-паки (выбор 1 из 5 / до
+2 из 5) не требуют отдельной ветки: цикл опроса перечитывает состояние на
+каждой итерации, и если после выбора одной карты пак остаётся открытым,
+`decide_action` посчитает следующий выбор заново.
 
-Любая другая фаза (`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK`/
-`BUFFOON_PACK`, ...) намеренно не закрыта — решения там ещё не замкнуты
-до вердикта (раздел 6, «Автопилот», п. 9.3/9.4). `decide_action` честно
-возвращает `None` на этих фазах, и цикл (`ui/tui.py.autoplay`) на них
-ведёт себя как обычный `watch` — показывает состояние и ничего не
-трогает, пока эти решения не будут закрыты отдельно.
+`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK` (`UNSCORED_PACKS`) оценить
+нечем — нужен пласт механик консумаблов/карт колоды (раздел 6, п. 9.4).
+Но и застревать нельзя: `decide_action` возвращает `skip_pack` (взять
+ничего), а не `None` — ран-раннер иначе честно фиксировал бы затык. Это
+осознанная маленькая потеря (иногда в паке лежит строго полезная карта)
+ради того, чтобы ран продолжался.
 
 **Consumables перед розыгрышем (`SELECTING_HAND`, первый кусок 9.4).**
 Перед тем как решать play/discard, `decide_action` сперва проверяет
@@ -106,15 +107,17 @@ from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.actions import rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
-from balatro_bot.solver.pack import PLANET_PACK, evaluate_pack
+from balatro_bot.solver.pack import BUFFOON_PACK, PLANET_PACK, evaluate_pack
 from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
 __all__ = [
     "BLIND_SELECT",
+    "OPENABLE_PACKS",
     "ROUND_EVAL",
     "SELECTING_HAND",
     "SHOP",
+    "UNSCORED_PACKS",
     "Action",
     "decide_action",
     "decide_skip",
@@ -137,6 +140,14 @@ ROUND_EVAL = "ROUND_EVAL"
 #: Фаза мода внутри магазина.
 SHOP = "SHOP"
 
+#: Фазы открытых паков, которые `solver.pack.evaluate_pack` умеет оценивать.
+OPENABLE_PACKS: frozenset[str] = frozenset({PLANET_PACK, BUFFOON_PACK})
+
+#: Фазы открытых паков, по которым оценки нет (нужны механики консумаблов/
+#: карт колоды, PLAN.md 9.3/9.4) — автопилот берёт `skip_pack`, чтобы ран
+#: не застревал, а не притворяется, что умеет выбирать.
+UNSCORED_PACKS: frozenset[str] = frozenset({"TAROT_PACK", "SPECTRAL_PACK", "STANDARD_PACK"})
+
 
 @dataclass(frozen=True, slots=True)
 class Action:
@@ -154,6 +165,7 @@ class Action:
         "select",
         "skip",
         "buy",
+        "buy_pack",
         "next_round",
         "cash_out",
         "pack",
@@ -223,8 +235,9 @@ def _decide_blind_action(state: GameState) -> Action:
 
 
 def _decide_shop_action(state: GameState) -> Action:
-    """В магазине решение — купить лучшего по приросту джокера или уйти
-    (`next_round`), см. модульный докстринг про политику и её границы."""
+    """В магазине решение — купить лучшего по приросту джокера, затем (если
+    джокеров брать нечего) Buffoon-пак с положительной нижней границей, иначе
+    уйти (`next_round`). См. модульный докстринг про политику и её границы."""
     advice = evaluate_shop(state)
     if advice is not None:
         for offer in advice.jokers:
@@ -240,18 +253,32 @@ def _decide_shop_action(state: GameState) -> Action:
                     item_index=_item_index_of(state.shop, offer.item),
                     label=offer.item.label,
                 )
+        for pack in advice.packs:
+            if (
+                pack.affordable
+                and pack.has_slot
+                and pack.expected_uplift is not None
+                and pack.expected_uplift > 0
+            ):
+                return Action(
+                    kind="buy_pack",
+                    item_index=_item_index_of(state.shop_packs, pack.item),
+                    label=pack.item.label,
+                )
     return Action(kind="next_round")
 
 
 def _decide_pack_action(state: GameState) -> Action:
-    """На вскрытии Celestial/Planet Pack решение — взять карту с наибольшим
-    приростом (см. модульный докстринг: подъём уровня руки не может
-    ухудшить счёт, так что вопрос тут не «а стоит ли», а только «какую
-    из предложенных»). `skip_pack` — защитный случай, когда в паке не
-    нашлось ни одной опознанной планеты (не должно происходить для
-    настоящего Celestial Pack, но `evaluate_pack` тогда и оценить нечего)."""
+    """Вскрытие открытого пака.
+
+    Celestial/Planet: взять карту с наибольшим приростом — подъём уровня руки
+    не может ухудшить счёт, так что вопрос только «какую из предложенных».
+    Buffoon: взять джокера с наибольшим приростом, но лишь при строго
+    положительной оценке — плохой джокер занял бы слот зря. Если брать
+    нечего (или в паке не нашлось ни одной опознанной карты) — `skip_pack`."""
+    positive_only = state.phase == BUFFOON_PACK
     for offer in evaluate_pack(state):
-        if offer.expected_uplift is not None:
+        if offer.expected_uplift is not None and (not positive_only or offer.expected_uplift > 0):
             return Action(
                 kind="pack",
                 item_index=_item_index_of(state.pack, offer.item),
@@ -287,8 +314,12 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
     if state.phase == SHOP:
         return _decide_shop_action(state)
 
-    if state.phase == PLANET_PACK:
+    if state.phase in OPENABLE_PACKS:
         return _decide_pack_action(state)
+
+    if state.phase in UNSCORED_PACKS:
+        # Оценить эти карты нечем — но и застревать нельзя: берём ничего.
+        return Action(kind="skip_pack")
 
     if state.phase == SELECTING_HAND:
         if not state.hand:
@@ -333,6 +364,8 @@ def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
             return bridge.skip()
         case "buy":
             return bridge.buy(card=_index())
+        case "buy_pack":
+            return bridge.buy(pack=_index())
         case "next_round":
             return bridge.next_round()
         case "cash_out":
@@ -365,6 +398,8 @@ def describe_action(action: Action) -> str:
             return "забрал награду за раунд"
         case "buy":
             return f"купил в магазине{named}"
+        case "buy_pack":
+            return f"купил пак{named}"
         case "next_round":
             return "ушёл из магазина"
         case "pack":

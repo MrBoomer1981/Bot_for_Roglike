@@ -52,11 +52,18 @@ class TestIndicesOf:
 
 
 class TestDecideAction:
-    def test_не_фаза_selecting_hand_ничего_не_решает(self) -> None:
-        # Вскрытие паков ещё не замкнуто до вердикта (раздел 6, п. 9.2).
+    def test_неизвестная_фаза_ничего_не_решает(self) -> None:
         state = build_state("AH KH QH JH 9H")
-        state = replace(state, phase="TAROT_PACK")
+        state = replace(state, phase="HAND_PLAYED")
         assert decide_action(state) is None
+
+    def test_неоценимый_пак_скипается_а_не_затыкается(self) -> None:
+        # Tarot/Spectral/Standard оценить нечем, но застревать нельзя —
+        # честный skip_pack (взять ничего), а не None.
+        state = build_state("AH KH QH JH 9H")
+        for phase in ("TAROT_PACK", "SPECTRAL_PACK", "STANDARD_PACK"):
+            action = decide_action(replace(state, phase=phase))
+            assert action == Action(kind="skip_pack")
 
     def test_пустая_рука_ничего_не_решает(self) -> None:
         state = build_state("AH KH QH JH 9H")
@@ -297,27 +304,46 @@ class TestDecideActionВМагазине:
         )
         assert decide_action(state) == Action(kind="next_round")
 
-    def test_ваучеры_и_паки_не_покупаются(self) -> None:
-        # Нет числовой оценки — evaluate_shop не даёт им expected_uplift,
+    def test_ваучеры_и_arcana_паки_не_покупаются(self) -> None:
+        # Ваучеры и не-Buffoon паки не получают expected_uplift —
         # decide_action не выдумывает вердикт.
         state = GameState(
             phase="SHOP",
             money=100,
             shop_vouchers=(ShopItem("v_overstock", "Overstock", "VOUCHER", 10),),
-            shop_packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
+            shop_packs=(ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_покупает_buffoon_пак_когда_джокеров_брать_нечего(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=5,
+            full_deck=_ПАРА_ТУЗОВ,
+            shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="buy_pack", item_index=0, label="Buffoon Pack")
+
+    def test_buffoon_пак_без_слота_не_покупается(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=20,
+            jokers=tuple(JokerCard(key="j_joker") for _ in range(5)),
+            joker_slots=5,
+            full_deck=_ПАРА_ТУЗОВ,
+            shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
         )
         assert decide_action(state) == Action(kind="next_round")
 
 
 class TestDecideActionНаВскрытииПака:
-    """Celestial/Planet Pack — единственный сейчас замкнутый тип пака.
+    """Planet: всегда берём лучшую карту (level-up не ухудшает счёт). Buffoon:
+    берём лучшего джокера, но лишь при строго положительном приросте — плохой
+    занял бы слот зря. Иначе `skip_pack`."""
 
-    Подъём уровня руки по построению не может ухудшить счёт (см. докстринг
-    `solver/pack.py`), поэтому политика проще, чем у скипа/магазина: всегда
-    брать карту с максимальным приростом, скип пака — только защитный
-    случай, когда в паке не нашлось ни одной опознанной планеты."""
-
-    def test_берёт_карту_с_максимальным_приростом(self) -> None:
+    def test_planet_берёт_карту_с_максимальным_приростом(self) -> None:
         state = GameState(
             phase="PLANET_PACK",
             full_deck=_ПАРА_ТУЗОВ,
@@ -329,11 +355,32 @@ class TestDecideActionНаВскрытииПака:
         action = decide_action(state)
         assert action == Action(kind="pack", item_index=1, label="Mercury")
 
-    def test_неопознанные_карты_приводят_к_скипу_пака(self) -> None:
+    def test_planet_неопознанные_карты_приводят_к_скипу_пака(self) -> None:
         state = GameState(
             phase="PLANET_PACK",
             full_deck=_ПАРА_ТУЗОВ,
             pack=(ShopItem("c_совсем_новый", "???", "PLANET", 0),),
+        )
+        assert decide_action(state) == Action(kind="skip_pack")
+
+    def test_buffoon_берёт_лучшего_джокера(self) -> None:
+        state = GameState(
+            phase="BUFFOON_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(
+                ShopItem("j_abstract", "Abstract Joker", "JOKER", 0),
+                ShopItem("j_joker", "Joker", "JOKER", 0),
+            ),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="pack", item_index=1, label="Joker")
+
+    def test_buffoon_без_положительного_прироста_скипает(self) -> None:
+        # Только нереализованный джокер → оценки нет → skip_pack.
+        state = GameState(
+            phase="BUFFOON_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("j_совсем_новый", "???", "JOKER", 0),),
         )
         assert decide_action(state) == Action(kind="skip_pack")
 
@@ -362,6 +409,11 @@ class TestDispatchAction:
         dispatch_action(bridge, Action(kind="buy", item_index=2, label="Joker"))
         assert FakeMod.calls[-1]["method"] == "buy"
         assert FakeMod.calls[-1]["params"] == {"card": 2}
+
+    def test_buy_pack_зовёт_buy_с_индексом_пака(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="buy_pack", item_index=1, label="Buffoon Pack"))
+        assert FakeMod.calls[-1]["method"] == "buy"
+        assert FakeMod.calls[-1]["params"] == {"pack": 1}
 
     def test_next_round_и_cash_out(self, bridge: ModBridge) -> None:
         dispatch_action(bridge, Action(kind="next_round"))
@@ -397,6 +449,7 @@ class TestDescribeAction:
             Action(kind="select"),
             Action(kind="skip"),
             Action(kind="buy"),
+            Action(kind="buy_pack"),
             Action(kind="next_round"),
             Action(kind="cash_out"),
             Action(kind="pack"),

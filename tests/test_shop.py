@@ -36,7 +36,8 @@ class TestEvaluateShop:
         assert advice.jokers == ()
         assert advice.vouchers[0].item.label == "Overstock"
         assert advice.vouchers[0].expected_uplift is None
-        assert advice.packs[0].label == "Arcana Pack"
+        assert advice.packs[0].item.label == "Arcana Pack"
+        assert advice.packs[0].expected_uplift is None  # оценивается только Buffoon
 
     def test_известный_джокер_получает_положительную_оценку(self) -> None:
         # j_joker — "+4 Mult" безусловно, поэтому прирост почти всегда > 0
@@ -237,6 +238,50 @@ class TestЦенаРерола:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.reroll_cost is None
+
+
+class TestПокупкаПака:
+    """`ShopAdvice.packs` — оценка есть только у Buffoon-пака и только как
+    нижняя граница (`PackPurchaseOffer`)."""
+
+    def test_buffoon_пак_получает_положительную_нижнюю_границу(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        pack = advice.packs[0]
+        assert pack.affordable is True
+        assert pack.has_slot is True
+        assert pack.expected_uplift is not None
+        assert pack.expected_uplift > 0
+        assert "нижняя граница" in pack.note
+
+    def test_прочие_паки_не_оцениваются(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=5,
+            shop_packs=(
+                ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),
+                ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),
+            ),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert all(pack.expected_uplift is None for pack in advice.packs)
+
+    def test_нет_слота_помечено_но_оценка_всё_равно_есть(self) -> None:
+        state = _shop_state(
+            money=10,
+            joker_slots=0,  # слотов нет
+            shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.packs[0].has_slot is False
+        assert advice.packs[0].expected_uplift is not None
 
 
 class TestСтикерыСтавок:

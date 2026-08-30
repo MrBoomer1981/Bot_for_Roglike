@@ -88,11 +88,29 @@ from typing import Final
 from balatro_bot.core import economy
 from balatro_bot.core.cards import Card, standard_deck
 from balatro_bot.core.catalogue import is_known_joker
+from balatro_bot.core.jokers import implemented_keys
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 
-__all__ = ["JokerOffer", "ShopAdvice", "evaluate_shop"]
+__all__ = [
+    "JokerOffer",
+    "PackPurchaseOffer",
+    "ShopAdvice",
+    "evaluate_shop",
+    "joker_uplift",
+]
+
+#: Ключ Buffoon-пака в каталоге (`p_buffoon_normal_*`/`_jumbo_*`/`_mega_*`).
+_BUFFOON_PACK_PREFIX: Final[str] = "p_buffoon"
+
+#: Сколько реализованных джокеров сэмплировать для оценки покупки Buffoon-пака
+#: и сколько представительных рук на каждого. Меньше, чем на джокера в
+#: витрине (`SAMPLE_HANDS`): здесь усредняется по многим джокерам сразу, и
+#: это всё равно только нижняя граница (настоящий пак даёт выбор лучшего из
+#: 2–4), а не точная оценка.
+PACK_JOKER_SAMPLE: Final[int] = 16
+PACK_SAMPLE_HANDS: Final[int] = 6
 
 #: Сколько представительных рук сэмплировать на джокера. Каждая — полный
 #: точный `advise()` (перебор 218 подмножеств, ~13 мс) дважды — с текущими
@@ -119,6 +137,26 @@ def _interest_lost(state: GameState, price: int) -> int:
     return economy.interest(state.money, state.deck_type, cap) - economy.interest(
         state.money - price, state.deck_type, cap
     )
+
+
+def joker_uplift(
+    state: GameState, joker: JokerCard, deck_source: tuple[Card, ...], samples: int
+) -> float:
+    """Средний прирост лучшего счёта от добавления `joker` к текущим — по
+    `samples` представительным рукам из `deck_source` (детерминированная,
+    сеянная выборка). Общий контрфактум: оценка джокера в витрине
+    (`_evaluate_joker_offer`) и оценка джокера из Buffoon-пака
+    (`solver/pack.py`, `_evaluate_pack_purchase` ниже) считают одно и то же."""
+    with_candidate = (*state.jokers, joker)
+    rng = random.Random(_SAMPLE_SEED)
+    pool = list(deck_source)
+    total = 0.0
+    for _ in range(samples):
+        hand = tuple(rng.sample(pool, _HAND_SIZE))
+        baseline = advise(replace(state, hand=hand, jokers=state.jokers), limit=1).best.score
+        boosted = advise(replace(state, hand=hand, jokers=with_candidate), limit=1).best.score
+        total += boosted - baseline
+    return total / samples
 
 
 @dataclass(frozen=True, slots=True)
@@ -174,6 +212,31 @@ class JokerOffer:
 
 
 @dataclass(frozen=True, slots=True)
+class PackPurchaseOffer:
+    """Бустер-пак в витрине — стоит ли платить за него. Магазин показывает
+    только тип и цену, содержимое генерируется лишь при вскрытии, поэтому
+    контрфактум «до покупки» невозможен (см. модульный докстринг). Оценка
+    есть только у Buffoon-пака и только как **нижняя граница**: средний
+    прирост от одного случайного реализованного джокера по `PACK_JOKER_SAMPLE`
+    штук — настоящий пак даёт выбор лучшего из 2–4, так что реальная ценность
+    выше. Прочие типы (Celestial/Arcana/Spectral/Standard) — честный `None`."""
+
+    item: ShopItem
+    affordable: bool
+    has_slot: bool
+    """Есть ли свободный слот джокера (для Buffoon-пака) — для прочих типов
+    просто `True`, слот им не нужен."""
+
+    expected_uplift: float | None
+    """Нижняя граница прироста счёта, только для Buffoon-пака; `None` для
+    остальных и когда колода для сэмплирования пуста."""
+
+    exact_deck: bool
+    samples: int
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ShopAdvice:
     """Всё, что предлагает магазин прямо сейчас, разложенное по типам."""
 
@@ -186,7 +249,10 @@ class ShopAdvice:
     ноль), сортировать по частично отсутствующей величине было бы честнее
     показать как есть, чем изобретать порядок."""
 
-    packs: tuple[ShopItem, ...]
+    packs: tuple[PackPurchaseOffer, ...]
+    """В порядке `GameState.shop_packs`. Оценён только Buffoon-пак и только
+    как нижняя граница — см. `PackPurchaseOffer`."""
+
     money: int
 
     reroll_cost: int | None
@@ -225,9 +291,41 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
     return ShopAdvice(
         jokers=tuple(offers),
         vouchers=evaluate_vouchers(state, samples),
-        packs=state.shop_packs,
+        packs=tuple(
+            _evaluate_pack_purchase(state, item, deck_source, exact_deck)
+            for item in state.shop_packs
+        ),
         money=state.money,
         reroll_cost=state.reroll_cost,
+    )
+
+
+def _evaluate_pack_purchase(
+    state: GameState, item: ShopItem, deck_source: tuple[Card, ...], exact_deck: bool
+) -> PackPurchaseOffer:
+    """Оценить покупку одного пака из витрины. Считаем только Buffoon —
+    нижней границей по случайной выборке реализованных джокеров."""
+    affordable = state.money >= item.price
+    has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
+
+    def _offer(uplift: float | None, used: int, note: str) -> PackPurchaseOffer:
+        return PackPurchaseOffer(item, affordable, has_slot, uplift, exact_deck, used, note)
+
+    if not item.key.startswith(_BUFFOON_PACK_PREFIX):
+        return _offer(None, 0, "оценивается только Buffoon-пак — прочие нужны механики консумаблов")
+    if len(deck_source) < _HAND_SIZE:
+        return _offer(None, 0, "колода для выборки неизвестна")
+
+    keys = sorted(implemented_keys())
+    rng = random.Random(_SAMPLE_SEED)
+    picks = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
+    total = 0.0
+    for key in picks:
+        total += joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS)
+    return _offer(
+        total / len(picks),
+        len(picks),
+        "нижняя граница: средний случайный джокер, настоящий пак — выбор лучшего из 2–4",
     )
 
 
@@ -261,15 +359,4 @@ def _evaluate_joker_offer(
         return _offer(None, 0)
 
     candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
-    with_candidate = (*state.jokers, candidate)
-
-    rng = random.Random(_SAMPLE_SEED)
-    pool = list(deck_source)
-    total_delta = 0.0
-    for _ in range(samples):
-        hand = tuple(rng.sample(pool, _HAND_SIZE))
-        baseline = advise(replace(state, hand=hand, jokers=state.jokers), limit=1).best.score
-        boosted = advise(replace(state, hand=hand, jokers=with_candidate), limit=1).best.score
-        total_delta += boosted - baseline
-
-    return _offer(total_delta / samples, samples)
+    return _offer(joker_uplift(state, candidate, deck_source, samples), samples)

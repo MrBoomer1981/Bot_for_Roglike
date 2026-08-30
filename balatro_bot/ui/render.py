@@ -15,7 +15,7 @@ from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.consumables import PlanetConsumableOffer
 from balatro_bot.solver.discard import MAX_DISCARD_COMPOSITIONS, DiscardOutcome
-from balatro_bot.solver.pack import PlanetOffer
+from balatro_bot.solver.pack import PackOffer
 from balatro_bot.solver.play import (
     MAX_JOKERS_FOR_ORDER_SEARCH,
     Advice,
@@ -232,14 +232,27 @@ def render_shop_advice(advice: ShopAdvice) -> None:
 
     if advice.packs:
         print("\nпаки:")
-        for item in advice.packs:
-            print(f"  {item.label:<24} ${item.price}")
+        ширина_п = max(len(pack.item.label) for pack in advice.packs)
+        for pack in advice.packs:
+            пометки = []
+            if not pack.affordable:
+                пометки.append("не хватает денег")
+            if not pack.has_slot:
+                пометки.append("нет слота")
+            хвост = f"  ({', '.join(пометки)})" if пометки else ""
+            if pack.expected_uplift is None:
+                оценка = pack.note or "не оценено"
+            else:
+                примерно = "" if pack.exact_deck else ", колода приближена"
+                прирост = format_number(pack.expected_uplift)
+                оценка = f"прирост ≳ {прирост}{примерно} ({pack.note})"
+            print(f"  {pack.item.label:<{ширина_п}}  ${pack.item.price:<4} {оценка}{хвост}")
 
 
-def render_pack_advice(offers: Sequence[PlanetOffer]) -> None:
-    """Показать оценку карт открытого Celestial/Planet Pack — пусто, если
-    сейчас открыт не он (`solver/pack.py`: `evaluate_pack` тогда сама
-    возвращает пустой кортеж, рисовать нечего)."""
+def render_pack_advice(offers: Sequence[PackOffer]) -> None:
+    """Показать оценку карт открытого пака (Celestial/Planet или Buffoon) —
+    пусто, если открыт не оцениваемый тип (`solver/pack.py`: `evaluate_pack`
+    тогда сама возвращает пустой кортеж)."""
     if not offers:
         return
     print("\nвскрытие пака:")
@@ -250,7 +263,7 @@ def render_pack_advice(offers: Sequence[PlanetOffer]) -> None:
         else:
             приближено = "" if offer.exact_deck else ", колода приближена"
             оценка = f"прирост ~{format_number(offer.expected_uplift)}{приближено}"
-        print(f"  {offer.item.label:<{ширина}}  {offer.hand_type.value:<15} {оценка}")
+        print(f"  {offer.item.label:<{ширина}}  {offer.detail:<15} {оценка}")
 
 
 def render_consumable_advice(offers: Sequence[PlanetConsumableOffer]) -> None:

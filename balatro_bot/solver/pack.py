@@ -1,45 +1,52 @@
-"""Оценка выбора карты при вскрытии пака — последний кусок Фазы 9.2 плана.
+"""Оценка выбора карты при вскрытии открытого пака.
 
-Единственный сейчас честно замкнутый случай — Celestial/Planet Pack
-(`GameState.phase == "PLANET_PACK"`): эффект детерминирован (level-up
-конкретного типа руки на `core.hands.PER_LEVEL_VALUES`) и уже полностью
-объясним существующим движком, без RNG и без новых допущений — в отличие
-от Arcana/Tarot и Spectral, которые трансформируют конкретные карты и по
-объёму сравнимы с добавлением новых джокеров (см. PLAN.md, «9.3»/«9.4»,
-сознательно не тронуты здесь), и от Buffoon/Standard паков, которые этот
-модуль тоже пока не оценивает.
+Два честно замкнутых случая — по тому же принципу, что везде в проекте:
+считаем то, что уже видно, без моделирования RNG.
 
-`PLANET_HAND_TYPES` — соответствие ключа планеты типу руки, выписанное из
-`core/catalogue.py` (тексты эффектов там уже подтверждены игрой через
-`enums.lua`, не по памяти): «Pluto: Increases High Card...», «Mercury:
-Increases Pair...» и так далее для всех 12 типов руки — ровно по одной
-планете на тип, без пропусков и дублей (покрытие проверяет
-`tests/test_pack.py`).
+- **Celestial/Planet Pack** (`PLANET_PACK`): эффект детерминирован (level-up
+  конкретного типа руки на `core.hands.PER_LEVEL_VALUES`) и полностью
+  объясним движком. `PLANET_HAND_TYPES` — соответствие ключа планеты типу
+  руки, выписанное из `core/catalogue.py` (тексты сверены с игрой через
+  `enums.lua`), по одной планете на тип (покрытие — `tests/test_pack.py`).
+  Поднятие уровня не может понизить лучший достижимый счёт, поэтому прирост
+  по построению неотрицателен.
 
-Оценка — тот же контрфактум, что `solver.shop._evaluate_joker_offer`:
-поднять уровень нужного типа руки в копии `GameState.hand_info`,
-пересчитать `advise()` на выборке представительных рук (вскрытие пака
-происходит вне розыгрыша, `GameState.hand` там пуст, так же как в
-магазине — тот же источник выборки, `GameState.full_deck`, если он
-известен точно, иначе стандартная колода) и взять разницу с исходным.
-Поднятие уровня руки не может понизить лучший достижимый счёт — это
-строго дополнительные фишки/множитель одного конкретного типа руки, не
-отбирающие ничего у остальных типов, — поэтому прирост по построению
-неотрицателен: не эвристика вроде «бери самый играемый тип», а прямое
-следствие того, как считает `advise()`."""
+- **Buffoon Pack** (`BUFFOON_PACK`): джокеры *видны* в паке — никакого RNG,
+  тот же контрфактум, что для джокера в витрине (`solver.shop.joker_uplift`,
+  общий код): добавить джокера к текущим, пересчитать `advise()` на выборке
+  представительных рук, взять разницу. В отличие от планеты плохой джокер
+  прирост дать не обязан, поэтому автопилот берёт карту только при
+  строго положительном приросте и свободном слоте (`autopilot`).
+
+Arcana/Tarot, Spectral и Standard паки этот модуль не оценивает — им нужен
+пласт механик консумаблов/карт колоды (PLAN.md «9.3»/«9.4»); автопилот на
+них честно берёт `skip_pack`, чтобы ран не застревал.
+
+Вскрытие пака происходит вне розыгрыша (`GameState.hand` пуст), поэтому
+выборка рук — из `GameState.full_deck`, если он известен точно, иначе
+стандартная колода, ровно как в `solver/shop.py`."""
 
 from __future__ import annotations
 
 import random
 from dataclasses import dataclass, replace
-from typing import Final
+from typing import Final, Literal
 
 from balatro_bot.core.cards import Card, standard_deck
+from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.hands import PER_LEVEL_VALUES, HandType
-from balatro_bot.core.state import GameState, PokerHandInfo, ShopItem
+from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver.play import advise
+from balatro_bot.solver.shop import joker_uplift
 
-__all__ = ["PLANET_HAND_TYPES", "PlanetOffer", "evaluate_pack", "level_up"]
+__all__ = [
+    "BUFFOON_PACK",
+    "PLANET_HAND_TYPES",
+    "PLANET_PACK",
+    "PackOffer",
+    "evaluate_pack",
+    "level_up",
+]
 
 #: Ключ планеты -> тип руки, который она прокачивает. Выписано из текстов
 #: эффектов в `core/catalogue.py` (`c_pluto`, `c_mercury`, ...), а не по
@@ -59,9 +66,10 @@ PLANET_HAND_TYPES: Final[dict[str, HandType]] = {
     "c_eris": HandType.FLUSH_FIVE,
 }
 
-#: Фаза мода, в которой открыт именно Celestial/Planet Pack (`core.state`,
+#: Фазы мода с открытым паком, которые этот модуль оценивает (`core.state`,
 #: `State` схемы мода).
 PLANET_PACK: Final[str] = "PLANET_PACK"
+BUFFOON_PACK: Final[str] = "BUFFOON_PACK"
 
 #: Тот же принцип сэмплирования, что `solver.shop.SAMPLE_HANDS`/`_HAND_SIZE`
 #: и `solver.discard._SAMPLE_SEED`: воспроизводимая выборка представительных
@@ -72,16 +80,21 @@ _SAMPLE_SEED: Final[int] = 0
 
 
 @dataclass(frozen=True, slots=True)
-class PlanetOffer:
-    """Одна карта из открытого пака — с оценкой прироста от её взятия."""
+class PackOffer:
+    """Одна карта из открытого пака — с оценкой прироста от её взятия.
+
+    `kind` различает Planet-карту (детерминированный level-up, прирост
+    неотрицателен по построению) и джокера из Buffoon-пака (обычный
+    контрфактум, прирост может быть и нулевым/отрицательным)."""
 
     item: ShopItem
-    hand_type: HandType
+    kind: Literal["planet", "joker"]
+    detail: str
+    """Тип руки для планеты, имя джокера для Buffoon-пака — для рендера."""
 
     expected_uplift: float | None
     """Средний прирост лучшего счёта по представительным рукам. `None` —
-    колода для сэмплирования пуста (см. модульный докстринг `solver/shop.py`
-    про тот же случай у джокеров)."""
+    колода для сэмплирования пуста, либо (Buffoon) джокер не реализован."""
 
     exact_deck: bool
     samples: int
@@ -109,22 +122,32 @@ def level_up(state: GameState, hand_type: HandType) -> GameState:
     return replace(state, hand_info=new_hand_info)
 
 
-def evaluate_pack(state: GameState, samples: int = SAMPLE_HANDS) -> tuple[PlanetOffer, ...]:
-    """Оценить карты открытого Celestial/Planet Pack, отсортированные по
-    прибыли по убыванию — пустой кортеж, если сейчас открыт не он
-    (`GameState.phase != "PLANET_PACK"`) или в паке нет ни одной опознанной
-    планеты."""
-    if state.phase != PLANET_PACK or not state.pack:
+def evaluate_pack(state: GameState, samples: int = SAMPLE_HANDS) -> tuple[PackOffer, ...]:
+    """Оценить карты открытого пака, отсортированные по прибыли по убыванию.
+
+    Пустой кортеж, если открыт не оцениваемый тип пака
+    (`PLANET_PACK`/`BUFFOON_PACK`) или в паке нет ни одной опознанной карты.
+    Арканы/Спектр/Стандарт сюда не попадают — по ним честный `skip_pack` в
+    `autopilot`, не оценка (см. модульный докстринг)."""
+    if not state.pack or state.phase not in (PLANET_PACK, BUFFOON_PACK):
         return ()
 
     deck_source = state.full_deck if state.full_deck else standard_deck()
     exact_deck = state.full_deck is not None
 
-    offers = [
-        _evaluate_planet_offer(state, item, hand_type, deck_source, exact_deck, samples)
-        for item in state.pack
-        if (hand_type := PLANET_HAND_TYPES.get(item.key)) is not None
-    ]
+    if state.phase == PLANET_PACK:
+        offers = [
+            _planet_offer(state, item, hand_type, deck_source, exact_deck, samples)
+            for item in state.pack
+            if (hand_type := PLANET_HAND_TYPES.get(item.key)) is not None
+        ]
+    else:
+        offers = [
+            _buffoon_offer(state, item, deck_source, exact_deck, samples)
+            for item in state.pack
+            if item.key.startswith("j_")
+        ]
+
     offers.sort(
         key=lambda offer: (
             offer.expected_uplift is not None,
@@ -135,19 +158,18 @@ def evaluate_pack(state: GameState, samples: int = SAMPLE_HANDS) -> tuple[Planet
     return tuple(offers)
 
 
-def _evaluate_planet_offer(
+def _planet_offer(
     state: GameState,
     item: ShopItem,
     hand_type: HandType,
     deck_source: tuple[Card, ...],
     exact_deck: bool,
     samples: int,
-) -> PlanetOffer:
+) -> PackOffer:
     if len(deck_source) < _HAND_SIZE:
-        return PlanetOffer(item, hand_type, None, exact_deck, 0)
+        return PackOffer(item, "planet", hand_type.value, None, exact_deck, 0)
 
     boosted_state = level_up(state, hand_type)
-
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)
     total_delta = 0.0
@@ -157,4 +179,21 @@ def _evaluate_planet_offer(
         boosted = advise(replace(boosted_state, hand=hand), limit=1).best.score
         total_delta += boosted - baseline
 
-    return PlanetOffer(item, hand_type, total_delta / samples, exact_deck, samples)
+    return PackOffer(item, "planet", hand_type.value, total_delta / samples, exact_deck, samples)
+
+
+def _buffoon_offer(
+    state: GameState,
+    item: ShopItem,
+    deck_source: tuple[Card, ...],
+    exact_deck: bool,
+    samples: int,
+) -> PackOffer:
+    """Джокер из Buffoon-пака — тот же контрфактум, что джокер в витрине
+    (`solver.shop.joker_uplift`). Нереализованный джокер → `None`, честно."""
+    if not is_known_joker(item.key) or len(deck_source) < _HAND_SIZE:
+        return PackOffer(item, "joker", item.label, None, exact_deck, 0)
+
+    joker = JokerCard(key=item.key, label=item.label, edition=item.edition)
+    uplift = joker_uplift(state, joker, deck_source, samples)
+    return PackOffer(item, "joker", item.label, uplift, exact_deck, samples)

@@ -7,14 +7,13 @@
 появляются сами. Только читает состояние: `ModBridge.play`/`.discard` здесь
 не вызываются вовсе.
 
-`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9, пп. 9.1–9.4):
-на фазе `SELECTING_HAND` сперва проверяет Planet-консумабли (`ModBridge.use`),
-затем вызывает `ModBridge.play`/`.discard`, на фазе `BLIND_SELECT` —
-`.select`/`.skip`, на `SHOP`/`ROUND_EVAL` — `.buy`/`.next_round`/`.cash_out`,
-на `PLANET_PACK` — `.open_pack`, всё по решению `autopilot.decide_action`;
-на любой другой фазе (открытие Tarot/Spectral/Standard/Buffoon-пака, ...)
-ведёт себя ровно как `watch` (решения там ещё не замкнуты, см.
-`balatro_bot/autopilot.py`).
+`autoplay` — тот же цикл опроса, но с правом действовать (Фаза 9): на фазе
+`SELECTING_HAND` сперва проверяет Planet-консумабли (`ModBridge.use`), затем
+вызывает `ModBridge.play`/`.discard`, на `BLIND_SELECT` — `.select`/`.skip`,
+на `SHOP`/`ROUND_EVAL` — `.buy`/`.next_round`/`.cash_out`, на
+`PLANET_PACK`/`BUFFOON_PACK` — `.open_pack`, на Tarot/Spectral/Standard-паке
+— `.open_pack(skip=True)` (оценить нечем, но застревать нельзя), всё по
+решению `autopilot.decide_action`; на прочих фазах ведёт себя как `watch`.
 Переключатель «пауза/перехват» (клавиша `p`, раздел 2 и раздел 6 п. 9.1
 плана — обязательное требование, не побочный эффект) проверяется на каждой
 итерации, то есть между каждым отдельным действием, а не только между

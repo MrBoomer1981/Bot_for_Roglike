@@ -1,8 +1,8 @@
 """Тесты оценки выбора карты при вскрытии пака (`balatro_bot/solver/pack.py`).
 
-Единственный проверяемый здесь случай — Celestial/Planet Pack (Фаза 9.2,
-последний кусок): остальные типы паков (Arcana/Tarot, Spectral, Standard,
-Buffoon) этот модуль сознательно не оценивает."""
+Оцениваемые случаи — Celestial/Planet Pack (детерминированный level-up) и
+Buffoon Pack (джокеры видны, тот же контрфактум, что джокер в витрине).
+Arcana/Spectral/Standard этот модуль сознательно не оценивает."""
 
 from __future__ import annotations
 
@@ -54,12 +54,12 @@ class TestEvaluatePack:
         )
         offers = evaluate_pack(state, samples=1)
         assert len(offers) == 2
-        by_type = {offer.hand_type: offer for offer in offers}
-        pair_uplift = by_type[HandType.PAIR].expected_uplift
+        by_type = {offer.detail: offer for offer in offers}
+        pair_uplift = by_type[HandType.PAIR.value].expected_uplift
         assert pair_uplift is not None
         assert pair_uplift > 0
         # Флеш в этой руке не собрать никогда — прокачка ничего не меняет.
-        assert by_type[HandType.FLUSH].expected_uplift == 0.0
+        assert by_type[HandType.FLUSH.value].expected_uplift == 0.0
 
     def test_сортировка_по_убыванию_прироста(self) -> None:
         state = GameState(
@@ -71,7 +71,7 @@ class TestEvaluatePack:
             ),
         )
         offers = evaluate_pack(state, samples=1)
-        assert offers[0].hand_type is HandType.PAIR
+        assert offers[0].detail == HandType.PAIR.value
 
     def test_маленькая_колода_честно_не_оценивает(self) -> None:
         state = GameState(
@@ -90,3 +90,43 @@ class TestEvaluatePack:
         offers = evaluate_pack(state, samples=1)
         assert offers[0].exact_deck is False
         assert offers[0].expected_uplift is not None
+
+
+class TestBuffoonPack:
+    def test_джокеры_ранжируются_по_приросту(self) -> None:
+        # j_joker (+4 множ. безусловно) должен обойти j_gros_michel? Нет —
+        # берём заведомо разные: j_joker vs j_abstract (+3 множ. за джокера,
+        # тут джокеров нет → +3). j_joker (+4) выше.
+        state = GameState(
+            phase="BUFFOON_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(
+                ShopItem("j_abstract", "Abstract Joker", "JOKER", 0),
+                ShopItem("j_joker", "Joker", "JOKER", 0),
+            ),
+        )
+        offers = evaluate_pack(state, samples=2)
+        assert len(offers) == 2
+        assert offers[0].item.key == "j_joker"
+        assert offers[0].kind == "joker"
+        assert offers[0].detail == "Joker"
+        assert offers[0].expected_uplift is not None
+        assert offers[0].expected_uplift > 0
+
+    def test_нереализованный_джокер_не_оценивается(self) -> None:
+        state = GameState(
+            phase="BUFFOON_PACK",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("j_совсем_новый", "???", "JOKER", 0),),
+        )
+        offers = evaluate_pack(state, samples=2)
+        assert len(offers) == 1
+        assert offers[0].expected_uplift is None
+
+    def test_не_buffoon_фаза_не_трогает_джокеров(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            full_deck=_ПАРА_ТУЗОВ,
+            pack=(ShopItem("j_joker", "Joker", "JOKER", 0),),
+        )
+        assert evaluate_pack(state) == ()

@@ -11,7 +11,7 @@ from balatro_bot.core.tags import TAGS
 from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
-from balatro_bot.solver.shop import JokerOffer, ShopAdvice
+from balatro_bot.solver.shop import JokerOffer, PackPurchaseOffer, ShopAdvice
 from balatro_bot.solver.skip import SkipAdvice
 from balatro_bot.solver.vouchers import VoucherOffer
 from balatro_bot.ui.render import (
@@ -388,7 +388,17 @@ class TestРендерСоветаПоМагазину:
                     samples=0,
                 ),
             ),
-            packs=(ShopItem("p_arcana", "Arcana Pack", "BOOSTER", 4),),
+            packs=(
+                PackPurchaseOffer(
+                    item=ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),
+                    affordable=True,
+                    has_slot=True,
+                    expected_uplift=None,
+                    exact_deck=False,
+                    samples=0,
+                    note="оценивается только Buffoon-пак",
+                ),
+            ),
             money=10,
             reroll_cost=None,
         )
@@ -396,6 +406,7 @@ class TestРендерСоветаПоМагазину:
         out = capsys.readouterr().out
         assert "Overstock" in out
         assert "+1 слот в магазине" in out
+        assert "Arcana Pack" in out
         assert "Arcana Pack" in out
 
     def test_ваучер_с_оценкой_показывает_прирост_и_примечание(
