@@ -11,7 +11,7 @@ from balatro_bot.core.tags import TAGS
 from balatro_bot.solver.actions import ActionOption
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
-from balatro_bot.solver.shop import JokerOffer, PackPurchaseOffer, ShopAdvice
+from balatro_bot.solver.shop import JokerOffer, PackPurchaseOffer, RerollOutlook, ShopAdvice
 from balatro_bot.solver.skip import SkipAdvice
 from balatro_bot.solver.vouchers import VoucherOffer
 from balatro_bot.ui.render import (
@@ -284,7 +284,14 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=10,
-            reroll_cost=5,
+            reroll=RerollOutlook(
+                cost=5,
+                affordable=True,
+                expected_best_uplift=None,
+                slots=2,
+                samples=0,
+                exact_deck=False,
+            ),
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -314,7 +321,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=10,
-            reroll_cost=None,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -341,7 +348,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=1,
-            reroll_cost=5,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -369,7 +376,7 @@ class TestРендерСоветаПоМагазину:
             vouchers=(),
             packs=(),
             money=10,
-            reroll_cost=None,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -400,7 +407,7 @@ class TestРендерСоветаПоМагазину:
                 ),
             ),
             money=10,
-            reroll_cost=None,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -425,7 +432,7 @@ class TestРендерСоветаПоМагазину:
             ),
             packs=(),
             money=10,
-            reroll_cost=None,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out
@@ -449,7 +456,7 @@ class TestРендерСоветаПоМагазину:
             ),
             packs=(),
             money=10,
-            reroll_cost=None,
+            reroll=None,
         )
         render_shop_advice(advice)
         out = capsys.readouterr().out

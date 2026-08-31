@@ -46,6 +46,9 @@ __all__ = [
     "INTEREST_STEP",
     "NO_INTEREST_DECK",
     "RENTAL_RATE",
+    "SHOP_JOKER_RATE",
+    "SHOP_PLANET_RATE",
+    "SHOP_TAROT_RATE",
     "discount_percent",
     "interest",
     "interest_cap",
@@ -54,6 +57,19 @@ __all__ = [
 INTEREST_AMOUNT: Final[int] = 1
 INTEREST_CAP_DEFAULT: Final[int] = 25
 INTEREST_STEP: Final[int] = 5
+
+#: Веса типов карт в одном слоте витрины магазина — `game.lua`'s `GAME_MOD`
+#: (`joker_rate = 20`, `tarot_rate = 4`, `planet_rate = 4`,
+#: `playing_card_rate = 0`, `spectral_rate = 0`); слот заполняется джокером
+#: с вероятностью `joker_rate / сумма всех`. Реролл (`solver/shop.py`,
+#: улучшение A5) перезаполняет слоты по этому распределению. Значения по
+#: умолчанию: ваучеры-мерчанты (`v_tarot_merchant`/`v_planet_merchant` и
+#: т.п.) и Ghost Deck (`spectral_rate = 2`) их меняют, но `GameState`
+#: текущие ставки не отдаёт — та же оговорка про умолчание, что была у
+#: `interest_cap` до появления `used_vouchers`.
+SHOP_JOKER_RATE: Final[int] = 20
+SHOP_TAROT_RATE: Final[int] = 4
+SHOP_PLANET_RATE: Final[int] = 4
 
 #: Сколько долларов снимается в конце каждого раунда за каждого арендного
 #: джокера (`game.lua`'s `GAME_MOD.rental_rate = 3`, `card.lua`'s

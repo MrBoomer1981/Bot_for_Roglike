@@ -69,19 +69,23 @@ Arcana/Spectral/Standard-паки — по-прежнему `None` (нужен �
 `game.lua` отключает проценты вовсе (`no_interest=true`): там
 `interest_lost` всегда 0, а не догадка.
 
-Второй кусок «экономики» из раздела 8.1 плана — момент рерола магазина.
-`ShopAdvice.reroll_cost` (из `GameState.reroll_cost`, область `round` мода —
-та же, что даёт `hands_left`/`discards_left`) — это честная цена рерола
-прямо сейчас, показанная рядом с оценкой текущего предложения. Дальше этого
-бот сознательно не идёт: настоящая оценка «стоит ли рероллить» требовала бы
-знать распределение того, что может выпасть **вместо** текущего предложения
-(шансы редкости джокера, `joker_rate` и т.п. из `game.lua`), то есть считать
-не по тому, что игра уже показала, а по вероятностной модели того, чего
-ещё нет, — другой по духу расчёт, чем весь остальной этот модуль (никакого
-RNG сверх того, что уже видно) и более рискованный по объёму. Тот же
-принцип, что `solver/skip.py`: показать разложенные числа и не сводить
-решение к придуманному вердикту, а не притвориться, что оценка не нужна
-вовсе.
+Второй кусок «экономики» из раздела 8.1 плана — момент рерола магазина
+(улучшение A5). `RerollOutlook` (`ShopAdvice.reroll`) — это уже оценка, а не
+только цена: единственное место в модуле, где считается не то, что игра
+показала, а вероятностная модель того, что выпадет **вместо**. Монте-Карло
+самого механизма ролла: каждый из `shop_slots` слотов витрины независимо
+становится джокером с вероятностью `SHOP_JOKER_RATE / сумма ставок`
+(`core/economy.py`, из `game.lua`'s `GAME_MOD`), а прирост джокера берётся
+из той же выборки случайных реализованных джокеров, что и оценка Buffoon-
+пака (`random_joker_uplifts`, считается один раз на заход). Тот же класс
+честности, что у сэмплирования сброса: приближены выборка и вероятностная
+модель, не сам счёт. Ограничение, честно вынесенное в `RerollOutlook.note`:
+редкости (`game.lua`: 70/25/5 Common/Uncommon/Rare) выборка отражает лишь
+усреднением по реализованным джокерам, без стратификации по трём пулам —
+дораскладка следующим шагом, если живые прогоны покажут смещение. Сам
+вердикт «рероллить или нет» — в `autopilot._decide_reroll_action` (запас
+денег над ценой, ожидаемый прирост против той же доли требования блайнда,
+что у покупки джокера), не здесь.
 
 Стикеры ставок (Фаза 9.6). На ставках `BLACK`+/`ORANGE`+/`GOLD` джокеры в
 магазине приходят со стикерами `eternal`/`perishable`/`rental` — мост
@@ -115,6 +119,7 @@ __all__ = [
     "JokerOffer",
     "PackPurchaseOffer",
     "ReplaceCandidate",
+    "RerollOutlook",
     "ShopAdvice",
     "evaluate_shop",
     "joker_contributions",
@@ -169,6 +174,17 @@ _HAND_SIZE: Final[int] = 8
 #: воспроизводимым при одном и том же состоянии, а не дребезжать между
 #: вызовами.
 _SAMPLE_SEED: Final[int] = 0
+
+#: Вместимость витрины по умолчанию, если источник состояния её не прислал
+#: (`GameState.shop_slots is None` — ручной ввод). `game.lua`: `joker_max`
+#: стартует с 2.
+_DEFAULT_SHOP_SLOTS: Final[int] = 2
+
+#: Сумма весов типов карт в слоте витрины (`core.economy`) — джокер выпадает
+#: с вероятностью `SHOP_JOKER_RATE / _SHOP_TOTAL_RATE`.
+_SHOP_TOTAL_RATE: Final[int] = (
+    economy.SHOP_JOKER_RATE + economy.SHOP_TAROT_RATE + economy.SHOP_PLANET_RATE
+)
 
 
 def _interest_lost(state: GameState, price: int) -> int:
@@ -342,6 +358,48 @@ class PackPurchaseOffer:
 
 
 @dataclass(frozen=True, slots=True)
+class RerollOutlook:
+    """Стоит ли рероллить витрину — улучшение A5. В отличие от всего
+    остального в этом модуле, здесь оценивается не то, что игра уже
+    показала, а вероятностная модель того, что выпадет **вместо**: Монте-
+    Карло самого механизма ролла. Каждый из `slots` слотов витрины
+    независимо становится джокером с вероятностью
+    `economy.SHOP_JOKER_RATE / сумма ставок` (иначе Таро/Планета — их вклад
+    в счёт тут не моделируется, консервативный ноль), а прирост джокера
+    берётся из той же выборки случайных реализованных джокеров, что и оценка
+    Buffoon-пака. Редкости (`game.lua`: 70/25/5 Common/Uncommon/Rare) выборка
+    отражает лишь косвенно — усреднением по реализованным джокерам, без
+    стратификации (`note` про это говорит); дораскладка по редкости —
+    следующий шаг, если живые прогоны покажут смещение."""
+
+    cost: int
+    """Цена рерола прямо сейчас (`GameState.reroll_cost`) — растёт на $1
+    после каждого ролла в этом заходе."""
+
+    affordable: bool
+    """Хватает ли денег (`GameState.money >= cost`)."""
+
+    expected_best_uplift: float | None
+    """Матожидание лучшего прироста среди `slots` свежих слотов (Монте-Карло,
+    `PACK_SIM_TRIALS` розыгрышей). `None` — колода для выборки неизвестна
+    (`GameState.full_deck` пуст и стандартной не хватило) либо нет ни одного
+    реализованного джокера. Матожидание может быть перекошено хвостом
+    (5 % шанс редкого сильного джокера тянет среднее вверх) — политика
+    автопилота это учитывает запасом."""
+
+    slots: int
+    """Сколько слотов витрины перезаполнит реролл (`GameState.shop_slots`
+    или `_DEFAULT_SHOP_SLOTS`)."""
+
+    samples: int
+    """Размер выборки джокеров, по которой считалась оценка (0, если не
+    считалась)."""
+
+    exact_deck: bool
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class ShopAdvice:
     """Всё, что предлагает магазин прямо сейчас, разложенное по типам."""
 
@@ -360,11 +418,10 @@ class ShopAdvice:
 
     money: int
 
-    reroll_cost: int | None
-    """Текущая цена рерола (`GameState.reroll_cost`) — показывается рядом с
-    оценкой текущего предложения, не как вердикт «рероллить или нет»: у
-    случайной альтернативы нет честной оценки без таблицы шансов генерации
-    магазина, которую бот не строит (см. модульный докстринг)."""
+    reroll: RerollOutlook | None
+    """Оценка рерола витрины (улучшение A5) — Монте-Карло самого механизма
+    ролла, см. `RerollOutlook`. `None` — не в фазе `SHOP` либо источник не
+    прислал `reroll_cost` (ручной ввод)."""
 
 
 def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice | None:
@@ -418,17 +475,23 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
                 for offer in offers
             ]
 
-    # Выборка джокеров для оценки Buffoon-паков считается один раз на весь
-    # заход (каждый `joker_uplift` — два `advise()`, ~26 мс), а не заново
-    # на каждый пак в витрине.
-    buffoon_uplifts: list[float] | None = None
-    if any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs) and (
-        len(deck_source) >= _HAND_SIZE
+    # Выборка «прирост случайного реализованного джокера» — общая для оценки
+    # Buffoon-пака и оценки рерола (A5, реролл — тот же механизм «свежие
+    # случайные джокеры»). Считается один раз на весь заход (каждый
+    # `joker_uplift` — два `advise()`, ~26 мс), а не заново на каждый пак и не
+    # ради каждой прикидки рерола. Нужна, если есть Buffoon-пак либо реролл
+    # по карману прямо сейчас (`money >= reroll_cost`); если денег на ролл нет,
+    # оценку не считаем вовсе — это лишние ~24 × 2 `advise()` на каждый заход.
+    reroll_affordable = state.reroll_cost is not None and state.money >= state.reroll_cost
+    random_joker_uplifts: list[float] | None = None
+    if len(deck_source) >= _HAND_SIZE and (
+        reroll_affordable
+        or any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs)
     ):
         rng = random.Random(_SAMPLE_SEED)
         keys = sorted(implemented_keys())
         pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
-        buffoon_uplifts = [
+        random_joker_uplifts = [
             joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS) for key in pool
         ]
 
@@ -445,11 +508,11 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
         jokers=tuple(offers),
         vouchers=evaluate_vouchers(state, samples),
         packs=tuple(
-            _evaluate_pack_purchase(state, item, exact_deck, buffoon_uplifts, planet_uplifts)
+            _evaluate_pack_purchase(state, item, exact_deck, random_joker_uplifts, planet_uplifts)
             for item in state.shop_packs
         ),
         money=state.money,
-        reroll_cost=state.reroll_cost,
+        reroll=_evaluate_reroll(state, random_joker_uplifts, exact_deck),
     )
 
 
@@ -497,6 +560,68 @@ def _monte_carlo_pack(uplifts: list[float], extra: int, choose: int) -> float:
         drawn = sorted(sim.sample(uplifts, extra), reverse=True)
         total += sum(drawn[:choose])
     return total / PACK_SIM_TRIALS
+
+
+def _monte_carlo_reroll(uplifts: list[float], slots: int) -> float:
+    """Матожидание лучшего прироста среди `slots` свежих слотов витрины
+    после рерола (улучшение A5). Каждый слот независимо: джокер с
+    вероятностью `SHOP_JOKER_RATE / _SHOP_TOTAL_RATE` (прирост — случайный
+    из `uplifts`, с возвратом: слоты роллятся независимо), иначе Таро/
+    Планета — их вклад в счёт тут ноль (не моделируется, консервативно
+    занижает). `PACK_SIM_TRIALS` розыгрышей, сид фиксирован."""
+    p_joker = economy.SHOP_JOKER_RATE / _SHOP_TOTAL_RATE
+    sim = random.Random(_SAMPLE_SEED)
+    total = 0.0
+    for _ in range(PACK_SIM_TRIALS):
+        best = 0.0
+        for _ in range(slots):
+            if sim.random() < p_joker:
+                best = max(best, sim.choice(uplifts))
+        total += best
+    return total / PACK_SIM_TRIALS
+
+
+def _evaluate_reroll(
+    state: GameState, random_joker_uplifts: list[float] | None, exact_deck: bool
+) -> RerollOutlook | None:
+    """Оценить рерол витрины — Монте-Карло самого механизма ролла, см.
+    `RerollOutlook`. `None`, если `GameState.reroll_cost` не прислан (ручной
+    ввод либо не фаза `SHOP`) — рероллить тогда всё равно нечем."""
+    if state.reroll_cost is None:
+        return None
+    cost = state.reroll_cost
+    affordable = state.money >= cost
+    slots = state.shop_slots if state.shop_slots is not None else _DEFAULT_SHOP_SLOTS
+    if not random_joker_uplifts:
+        # Выборка не считалась: либо реролл не по карману (тогда оценка ролла
+        # всё равно ни на что не влияет), либо колода для выборки мала.
+        note = "не по карману — оценка ролла не считалась" if not affordable else (
+            "колода для выборки неизвестна"
+        )
+        return RerollOutlook(
+            cost=cost,
+            affordable=affordable,
+            expected_best_uplift=None,
+            slots=slots,
+            samples=0,
+            exact_deck=exact_deck,
+            note=note,
+        )
+    expected_best = _monte_carlo_reroll(random_joker_uplifts, slots)
+    note = (
+        f"оценка: лучший из {slots} слот(ов), джокер с вероятностью "
+        f"{economy.SHOP_JOKER_RATE}/{_SHOP_TOTAL_RATE} "
+        f"(выборка {len(random_joker_uplifts)} джокеров, редкости не стратифицированы)"
+    )
+    return RerollOutlook(
+        cost=cost,
+        affordable=affordable,
+        expected_best_uplift=expected_best,
+        slots=slots,
+        samples=len(random_joker_uplifts),
+        exact_deck=exact_deck,
+        note=note,
+    )
 
 
 def _evaluate_pack_purchase(

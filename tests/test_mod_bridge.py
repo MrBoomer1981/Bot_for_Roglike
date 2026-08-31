@@ -108,7 +108,8 @@ class TestРазборСостояния:
                 }
             ],
         }
-        item = parse_game_state(raw).shop[0]
+        state = parse_game_state(raw)
+        item = state.shop[0]
         assert item.key == "j_joker"
         assert item.kind == "JOKER"
         assert item.price == 3
@@ -118,6 +119,11 @@ class TestРазборСостояния:
         assert item.eternal is False
         assert item.perishable_rounds is None
         assert item.rental is False
+        # Вместимость витрины (`limit`) — как `joker_slots` из области jokers.
+        assert state.shop_slots == 2
+
+    def test_без_области_shop_вместимость_none(self) -> None:
+        assert parse_game_state(sample_state()).shop_slots is None
 
     def test_магазин_разбирает_стикеры_ставок(self) -> None:
         raw = sample_state()
@@ -553,6 +559,11 @@ class TestКлиент:
         bridge.rearrange(jokers=[2, 0, 1])
         assert FakeMod.calls[-1]["method"] == "rearrange"
         assert FakeMod.calls[-1]["params"] == {"jokers": [2, 0, 1]}
+
+    def test_reroll_без_параметров(self, bridge: ModBridge) -> None:
+        bridge.reroll()
+        assert FakeMod.calls[-1]["method"] == "reroll"
+        assert "params" not in FakeMod.calls[-1]
 
     def test_next_round_без_параметров(self, bridge: ModBridge) -> None:
         bridge.next_round()

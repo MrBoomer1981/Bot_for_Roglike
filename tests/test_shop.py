@@ -214,23 +214,46 @@ class TestПроценты:
         assert advice.jokers[0].interest_lost == 1
 
 
-class TestЦенаРерола:
-    """`ShopAdvice.reroll_cost` — только показ живой цены (`GameState.reroll_cost`,
-    область `round` мода), без вердикта «рероллить или нет» — см. модульный
-    докстринг `solver/shop.py`."""
+class TestОценкаРерола:
+    """`ShopAdvice.reroll` (`RerollOutlook`) — Монте-Карло механизма ролла
+    (улучшение A5), см. модульный докстринг `solver/shop.py`."""
 
-    def test_цена_рерола_передаётся_как_есть(self) -> None:
+    def test_цена_и_ожидаемый_прирост_посчитаны(self) -> None:
         state = _shop_state(
             money=10,
             joker_slots=5,
+            shop_slots=2,
             reroll_cost=5,
             shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
         )
         advice = evaluate_shop(state)
         assert advice is not None
-        assert advice.reroll_cost == 5
+        assert advice.reroll is not None
+        assert advice.reroll.cost == 5
+        assert advice.reroll.affordable is True
+        assert advice.reroll.slots == 2
+        # j_joker безусловный "+4 Mult" — в выборке случайных реализованных
+        # джокеров всегда есть положительные, значит E[лучший из 2] > 0.
+        assert advice.reroll.expected_best_uplift is not None
+        assert advice.reroll.expected_best_uplift > 0
 
-    def test_без_reroll_cost_в_состоянии_пусто(self) -> None:
+    def test_меньше_слотов_витрины_меньше_ожидаемый_прирост(self) -> None:
+        def _outlook(shop_slots: int) -> float:
+            state = _shop_state(
+                money=10,
+                joker_slots=5,
+                reroll_cost=5,
+                shop_slots=shop_slots,
+                shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+            )
+            advice = evaluate_shop(state)
+            assert advice is not None and advice.reroll is not None
+            assert advice.reroll.expected_best_uplift is not None
+            return advice.reroll.expected_best_uplift
+
+        assert _outlook(4) > _outlook(1)
+
+    def test_без_reroll_cost_в_состоянии_нет_оценки(self) -> None:
         state = _shop_state(
             money=10,
             joker_slots=5,
@@ -238,7 +261,19 @@ class TestЦенаРерола:
         )
         advice = evaluate_shop(state)
         assert advice is not None
-        assert advice.reroll_cost is None
+        assert advice.reroll is None
+
+    def test_дорогой_реролл_помечен_неподъёмным(self) -> None:
+        state = _shop_state(
+            money=3,
+            joker_slots=5,
+            reroll_cost=8,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.reroll is not None
+        assert advice.reroll.affordable is False
 
 
 class TestПокупкаПака:

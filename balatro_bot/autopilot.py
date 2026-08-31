@@ -15,10 +15,27 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 `decide_action` сначала проверяет `advise(state).cheapest_sufficient` —
 самый экономный ход, чей **нижний предел** (`Candidate.beats`, не среднее)
 уже перекрывает оставшееся требование блайнда, — и если такой есть, играет
-его. Только когда гарантированного хода нет, решение отдаётся топ-1
-`rank_actions` (который тогда может быть и сбросом). Это не новый расчёт
-счёта, а приоритет «верное над вероятным», тот же принцип, что у
-`decide_skip`.
+его.
+
+Когда гарантированного хода нет, решение всё равно не отдаётся топ-1
+`rank_actions` вслепую — над ним ещё две поправки против чрезмерно
+жадного сброса (улучшение B1, подтверждено живым прогоном):
+
+- **на темпе** (`_on_pace_without_discard`): если `лучшая рука × осталось
+  рук` уже перекрывает остаток требования с запасом
+  (`_DISCARD_PACE_MARGIN`), блайнд добивается одними розыгрышами — играем
+  лучшую руку, `advise_discard` даже не зовём. Это ловит случай, где
+  `cheapest_sufficient` пуст лишь потому, что джокер с разбросом (Misprint)
+  утянул нижний предел под требование, хотя матожидание вдвое выше;
+- **перевес — шум** (`_discard_edge_is_noise`): если топ-1 всё-таки сброс,
+  но его матожидание превосходит лучшую руку меньше чем на
+  задокументированную погрешность самой оценки сброса (`_DISCARD_EDGE_MARGIN`,
+  ±15 % из раздела 7 `docs/Discard Spec.md`) — играем руку. В живом прогоне
+  автопилот так спускал последний сброс, разменивая флеш ~7 371 на цель
+  ~7 427 (+0,7 %).
+
+Обе поправки — не новый расчёт счёта, а приоритет «верное над вероятным»,
+тот же принцип, что у `decide_skip`.
 
 **Скип блайнда (`BLIND_SELECT`, п. 9.2, первый из трёх кусков)** —
 `solver.skip.evaluate_skip` сознательно не даёт вердикта: часть тегов
@@ -78,8 +95,8 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 прироста (Монте-Карло «лучшие choose из extra», `PackPurchaseOffer`),
 покупаем при положительной оценке, `has_slot` (у Celestial всегда `True`) и
 по карману. Порог здесь остаётся «> 0», а не A2-шная доля требования: пак —
-это выбор из нескольких карт (хедж) и сток денег до улучшения A5 (реролл),
-задирать ему планку сейчас значило бы снова копить деньги впустую.
+это выбор из нескольких карт (хедж), задирать ему планку сейчас значило бы
+снова копить деньги впустую.
 
 Когда все слоты заняты (`joker_slots`), обычная покупка невозможна — но
 `evaluate_shop` посчитал вклад каждого джокера в слоте и прицепил самого
@@ -91,9 +108,18 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 Продажа — отдельное действие: слот освободится, покупку решим на следующем
 шаге по свежим числам, как и всё остальное в магазине.
 
-Когда и менять нечего — `next_round`, уйти. Arcana/Spectral/Standard-паки
-и реролл по-прежнему не тронуты: `evaluate_shop` не даёт им числа, а
-`reroll_cost` — цена без вердикта (раздел 8 плана, «Момент рерола»).
+Когда и менять нечего — пробуем перекатить витрину (улучшение A5,
+`_decide_reroll_action`). `ShopAdvice.reroll` (`RerollOutlook`) — Монте-Карло
+самого механизма ролла (`joker_rate`/редкости из `game.lua`), первое место,
+где бот считает не по показанному, а по вероятностной модели того, что
+выпадет вместо. Рероллим, только когда: требование блайнда известно (иначе
+порог не масштабировать); ожидаемый лучший прирост свежих слотов не ниже
+той же доли требования, что нужна для покупки джокера в слот
+(`_worth_buying`); и после оплаты остаётся запас `_REROLL_MONEY_RESERVE` —
+и на саму покупку, и чтобы не спустить карман на серию роллов. Растущая
+цена рерола плюс запас гасят серию за несколько ходов. Когда и рероллить не
+стоит — `next_round`, уйти. Arcana/Spectral/Standard-паки по-прежнему не
+тронуты: `evaluate_shop` не даёт им числа.
 
 **Вскрытие пака (Celestial — кусок 9.2; Buffoon — 9.3).** Фаза открытого
 пака у Steamodded — одна общая `SMODS_BOOSTER_OPENED` (не ванильные
@@ -151,10 +177,10 @@ from typing import Literal
 from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.core.cards import Card
 from balatro_bot.core.state import GameState, ShopItem
-from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.actions import ActionOption, rank_actions
 from balatro_bot.solver.consumables import evaluate_planet_consumables
 from balatro_bot.solver.pack import PACK_OPEN_PHASES, evaluate_pack
-from balatro_bot.solver.play import advise, rank_joker_orders
+from balatro_bot.solver.play import Advice, Candidate, advise, rank_joker_orders
 from balatro_bot.solver.shop import ShopAdvice, evaluate_shop
 from balatro_bot.solver.skip import SkipAdvice, evaluate_skip
 
@@ -213,12 +239,39 @@ _MIN_BUY_REQ_FRACTION = 0.03
 #: магазине» (2..4). Калибруется на живых прогонах.
 _MIN_HEURISTIC_VOUCHER_VALUE = 5.0
 
+#: Улучшение A5. Сколько денег автопилот оставляет себе после рерола: реролл
+#: разрешён, только если `деньги − цена_рерола >= этого`. Мешает спустить
+#: весь карман на серию роллов (в живом прогоне бот доходил до $0) и
+#: оставляет на саму покупку джокера, ради которого рероллят. Растущая цена
+#: рерола (+$1 за ролл) плюс этот порог быстро гасят серию. ~половина
+#: базового потолка процентов ($25) — деньги ниже потолка приносят $1 за
+#: $5/раунд, тратить их на реролл дороже, чем кажется. Калибруется на живых
+#: прогонах.
+_REROLL_MONEY_RESERVE = 12
+
 #: Минимальный относительный прирост счёта текущей руки, при котором
 #: автопилот тратит ход на перестановку джокеров (улучшение D1). Ниже —
 #: это шум перебора, перестановка не окупает потраченного хода. Порядок
 #: влияет на счёт у копирующих (`Blueprint`/`Brainstorm`) и на смешении
 #: `+mult`/`×mult`. Калибруется на живых прогонах.
 _MIN_REORDER_GAIN_FRAC = 0.02
+
+#: Улучшение B1. Запас над «голым» требованием блайнда, при котором
+#: автопилот считает, что добьёт блайнд одними розыгрышами и спекулятивный
+#: сброс не нужен: `лучшая рука × осталось рук` должно перекрывать остаток
+#: требования хотя бы с этим множителем. Линейная экстраполяция оптимистична
+#: (добор из обеднённой колоды слабее, свою лучшую руку не всегда
+#: пересоберёшь), отсюда запас в половину. Калибруется на живых прогонах.
+_DISCARD_PACE_MARGIN = 1.5
+
+#: Улучшение B1. Во сколько раз матожидание сброса должно превосходить
+#: лучшую доступную руку, чтобы перевес считался сигналом, а не шумом самой
+#: оценки. Порог = задокументированный допуск `advise_discard` (раздел 7
+#: `docs/Discard Spec.md`: отклонение до 15 %, оценка оптимистична по
+#: построению) — если «преимущество» сброса меньше его же погрешности,
+#: разменивать на него верный розыгрыш значит гадать. Калибруется на живых
+#: прогонах.
+_DISCARD_EDGE_MARGIN = 1.15
 
 
 @dataclass(frozen=True, slots=True)
@@ -241,6 +294,7 @@ class Action:
         "buy_voucher",
         "sell",
         "rearrange",
+        "reroll",
         "next_round",
         "cash_out",
         "pack",
@@ -415,13 +469,43 @@ def _decide_voucher_action(
     return None
 
 
+def _decide_reroll_action(
+    state: GameState, advice: ShopAdvice, requirement: int | None
+) -> Action | None:
+    """Перекатить витрину (улучшение A5) — последняя попытка перед уходом,
+    когда ни покупка, ни ваучер, ни пак, ни продажа-замена не сработали, то
+    есть в текущей витрине автопилоту брать нечего.
+
+    Рероллим, только когда: требование блайнда известно (иначе порог не
+    масштабировать — тот же случай, что у `_worth_buying`); Монте-Карло
+    рерола (`RerollOutlook.expected_best_uplift`) обещает джокера не хуже
+    той же доли требования, что нужна для покупки в слот (`_worth_buying`);
+    и после оплаты остаётся денежный запас (`_REROLL_MONEY_RESERVE`) — и на
+    саму покупку, и чтобы не спустить карман на серию роллов. Растущая цена
+    рерола плюс запас сходят серию на нет за несколько ходов; отдельного
+    счётчика роллов не нужно."""
+    outlook = advice.reroll
+    if outlook is None or requirement is None:
+        return None
+    if not outlook.affordable or outlook.expected_best_uplift is None:
+        return None
+    if state.money - outlook.cost < _REROLL_MONEY_RESERVE:
+        return None
+    if not _worth_buying(outlook.expected_best_uplift, requirement):
+        return None
+    return Action(kind="reroll")
+
+
 def _decide_shop_action(state: GameState) -> Action:
     """В магазине решение — купить лучшего по приросту джокера (порог A2:
     прирост не ниже доли требования блайнда, не просто > 0), затем ваучер
     (порог по уровню честности оценки, улучшение A4), затем (если джокеров
     брать нечего) Buffoon/Celestial-пак с положительной оценкой, затем (если
-    слоты полны) продать слабейшего под лучший оффер, иначе уйти
-    (`next_round`). См. модульный докстринг про политику и её границы."""
+    слоты полны) продать слабейшего под лучший оффер, затем — если в витрине
+    так и нечего взять — перекатить её (улучшение A5, `_decide_reroll_action`:
+    Монте-Карло рерола обещает годного джокера и остаётся денежный запас),
+    иначе уйти (`next_round`). См. модульный докстринг про политику и её
+    границы."""
     advice = evaluate_shop(state)
     if advice is not None:
         requirement = _next_blind_requirement(state)
@@ -456,6 +540,9 @@ def _decide_shop_action(state: GameState) -> Action:
         replace_action = _decide_replace_action(state, advice, requirement)
         if replace_action is not None:
             return replace_action
+        reroll_action = _decide_reroll_action(state, advice, requirement)
+        if reroll_action is not None:
+            return reroll_action
     return Action(kind="next_round")
 
 
@@ -530,6 +617,34 @@ def _decide_rearrange_action(state: GameState) -> Action | None:
     return Action(kind="rearrange", indices=_reorder_indices(state.jokers, best_order))
 
 
+def _on_pace_without_discard(state: GameState, plays: Advice) -> bool:
+    """Улучшение B1: добьёт ли автопилот блайнд одними розыгрышами, без
+    спекулятивных сбросов. `лучшая рука × осталось рук` (с запасом
+    `_DISCARD_PACE_MARGIN`) уже перекрывает остаток требования.
+
+    Требует минимум двух рук в запасе: с единственной оставшейся рукой сброс —
+    это выжимание последнего хода, а не спекуляция от избытка, и решать его
+    должен общий список `rank_actions`. `plays` — уже посчитанный
+    `advise(state)`, заново не считаем."""
+    if plays.required is None or state.hands_left < 2:
+        return False
+    remaining = plays.required - plays.already_scored
+    if remaining <= 0:
+        return True
+    return plays.best.score * state.hands_left >= remaining * _DISCARD_PACE_MARGIN
+
+
+def _discard_edge_is_noise(discard: ActionOption, best_play: Candidate) -> bool:
+    """Улучшение B1: перевес сброса над лучшей рукой меньше собственной
+    погрешности его оценки (`_DISCARD_EDGE_MARGIN`) — разменивать розыгрыш на
+    такой сброс значит действовать по шуму (в живом прогоне автопилот так
+    тратил последний сброс, меняя флеш ~7 371 на цель ~7 427). Если играть
+    нечего (`best_play.score <= 0`), любой положительный сброс — не шум."""
+    if best_play.score <= 0:
+        return False
+    return discard.score < best_play.score * _DISCARD_EDGE_MARGIN
+
+
 def decide_action(state: GameState, *, include_discards: bool = True) -> Action | None:
     """Решить, что сделать прямо сейчас — `None`, если эта фаза ещё не закрыта.
 
@@ -577,10 +692,39 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
                 indices=_indices_of(state.hand, sure.cards),
             )
 
+        # Улучшение B1. `cheapest_sufficient` ловит только «закрыть блайнд
+        # одной этой рукой»; когда джокер с разбросом (Misprint) утягивает
+        # нижний предел под требование, он не находит ничего, и автопилот
+        # уходит в сброс на каждом блайнде. Но если запаса рук хватает добить
+        # блайнд одними розыгрышами (`_on_pace_without_discard`), спекулятивный
+        # сброс не нужен — играем лучшую руку. Заодно экономит дорогой
+        # `advise_discard` внутри `rank_actions` (см. F1).
+        if include_discards and _on_pace_without_discard(state, plays):
+            best_play = plays.best
+            return Action(
+                kind="play",
+                cards=best_play.cards,
+                indices=_indices_of(state.hand, best_play.cards),
+            )
+
         options = rank_actions(state, top=1, include_discards=include_discards)
         if not options:
             return None
         best = options[0]
+
+        # Улучшение B1. Даже без гарантии и без запаса рук — не менять
+        # розыгрыш на сброс, чей перевес по матожиданию меньше
+        # задокументированной погрешности самой оценки сброса
+        # (`_discard_edge_is_noise`): такой перевес — шум, а сброс ещё и
+        # тратит ресурс и добавляет разброс к результату.
+        if best.kind == "discard" and _discard_edge_is_noise(best, plays.best):
+            best_play = plays.best
+            return Action(
+                kind="play",
+                cards=best_play.cards,
+                indices=_indices_of(state.hand, best_play.cards),
+            )
+
         return Action(kind=best.kind, cards=best.cards, indices=_indices_of(state.hand, best.cards))
 
     return None
@@ -622,6 +766,8 @@ def dispatch_action(bridge: ModBridge, action: Action) -> GameState:
             return bridge.sell(joker=_index())
         case "rearrange":
             return bridge.rearrange(jokers=action.indices)
+        case "reroll":
+            return bridge.reroll()
         case "next_round":
             return bridge.next_round()
         case "cash_out":
@@ -662,6 +808,8 @@ def describe_action(action: Action) -> str:
             return f"продал джокера{named}"
         case "rearrange":
             return "переставил джокеров"
+        case "reroll":
+            return "перекатил витрину"
         case "next_round":
             return "ушёл из магазина"
         case "pack":

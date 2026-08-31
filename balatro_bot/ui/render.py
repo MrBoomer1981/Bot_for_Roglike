@@ -182,8 +182,17 @@ def render_shop_advice(advice: ShopAdvice) -> None:
     (раздел `solver/shop.py`/`solver/vouchers.py`: части из них не с чем
     сравнить контрфактум)."""
     print(f"\nмагазин: денег ${advice.money}")
-    if advice.reroll_cost is not None:
-        print(f"цена рерола: ${advice.reroll_cost}")
+    if advice.reroll is not None:
+        reroll = advice.reroll
+        хвост = "" if reroll.affordable else " (не хватает денег)"
+        if reroll.expected_best_uplift is None:
+            print(f"цена рерола: ${reroll.cost}{хвост}")
+        else:
+            приближено = "" if reroll.exact_deck else ", колода приближена"
+            print(
+                f"цена рерола: ${reroll.cost}{хвост} — ожидаемый прирост от ролла "
+                f"~{format_number(reroll.expected_best_uplift)}{приближено} ({reroll.note})"
+            )
 
     if advice.jokers:
         print("\nджокеры:")

@@ -7,7 +7,15 @@
 
 from __future__ import annotations
 
-from balatro_bot.core.economy import RENTAL_RATE, discount_percent, interest, interest_cap
+from balatro_bot.core.economy import (
+    RENTAL_RATE,
+    SHOP_JOKER_RATE,
+    SHOP_PLANET_RATE,
+    SHOP_TAROT_RATE,
+    discount_percent,
+    interest,
+    interest_cap,
+)
 
 
 class TestInterest:
@@ -68,6 +76,20 @@ class TestRentalRate:
 
     def test_ставка_аренды_три_доллара(self) -> None:
         assert RENTAL_RATE == 3
+
+
+class TestShopRates:
+    """`game.lua`'s `GAME_MOD`: `joker_rate = 20`, `tarot_rate = 4`,
+    `planet_rate = 4` — веса типов карт в слоте витрины, нужны оценке
+    рерола (`solver/shop.py`, A5). Тест-«якорь» на случай молчаливой
+    правки."""
+
+    def test_веса_типов_карт_в_слоте(self) -> None:
+        assert (SHOP_JOKER_RATE, SHOP_TAROT_RATE, SHOP_PLANET_RATE) == (20, 4, 4)
+
+    def test_джокер_выпадает_чуть_чаще_двух_третей(self) -> None:
+        total = SHOP_JOKER_RATE + SHOP_TAROT_RATE + SHOP_PLANET_RATE
+        assert SHOP_JOKER_RATE / total == 20 / 28
 
 
 class TestDiscountPercent:

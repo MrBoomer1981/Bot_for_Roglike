@@ -17,7 +17,9 @@ from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.autopilot import (
     Action,
+    _discard_edge_is_noise,
     _indices_of,
+    _on_pace_without_discard,
     _reorder_indices,
     decide_action,
     decide_skip,
@@ -25,8 +27,11 @@ from balatro_bot.autopilot import (
     dispatch_action,
 )
 from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
+from balatro_bot.core.hands import HandType
+from balatro_bot.core.scoring import ScoreOutcome
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
-from balatro_bot.solver.actions import rank_actions
+from balatro_bot.solver.actions import ActionOption, rank_actions
+from balatro_bot.solver.play import Advice, Candidate
 from balatro_bot.solver.skip import evaluate_skip
 from tests.fake_mod import FakeMod
 
@@ -127,6 +132,112 @@ class TestDecideAction:
         # Блайнд велик — ни один ход не закрывает его наверняка, поэтому
         # решение снова отдаётся общему списку (тут — сброс).
         state = build_state("AH AS KH QH 2C", discards_left=1, blind=100_000)
+        state = replace(state, phase="SELECTING_HAND")
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "discard"
+
+
+def _outcome(expected: float) -> ScoreOutcome:
+    """Заглушка результата подсчёта с заданным матожиданием — юнит-тестам
+    гард B1 важно только `.score`/`.expected`, остальное не читается."""
+    return ScoreOutcome(
+        hand_type=HandType.HIGH_CARD,
+        scoring_cards=(),
+        expected=expected,
+        minimum=expected,
+        maximum=expected,
+        trace=(),
+        exact=True,
+        unknown=(),
+    )
+
+
+class TestOnPaceWithoutDiscard:
+    """`_on_pace_without_discard` — B1: добьём ли блайнд одними розыгрышами."""
+
+    def _advice(self, *, best: float, required: int | None, scored: int) -> Advice:
+        return Advice(
+            candidates=(Candidate(parse_cards("AH"), _outcome(best)),),
+            required=required,
+            already_scored=scored,
+        )
+
+    def _state(self, hands_left: int) -> GameState:
+        return replace(build_state("AH KH QH JH 9H", hands_left=hands_left), phase="SELECTING_HAND")
+
+    def test_без_требования_не_на_темпе(self) -> None:
+        advice = self._advice(best=9999, required=None, scored=0)
+        assert _on_pace_without_discard(self._state(5), advice) is False
+
+    def test_одна_рука_в_запасе_не_на_темпе(self) -> None:
+        advice = self._advice(best=9999, required=100, scored=0)
+        assert _on_pace_without_discard(self._state(1), advice) is False
+
+    def test_требование_уже_набрано(self) -> None:
+        advice = self._advice(best=1, required=100, scored=100)
+        assert _on_pace_without_discard(self._state(2), advice) is True
+
+    def test_на_темпе_когда_рук_с_запасом_хватает(self) -> None:
+        # 300 * 3 = 900 >= (600 - 0) * 1.5 = 900
+        advice = self._advice(best=300, required=600, scored=0)
+        assert _on_pace_without_discard(self._state(3), advice) is True
+
+    def test_не_на_темпе_когда_рук_не_хватает(self) -> None:
+        # 300 * 3 = 900 < (700 - 0) * 1.5 = 1050
+        advice = self._advice(best=300, required=700, scored=0)
+        assert _on_pace_without_discard(self._state(3), advice) is False
+
+
+class TestDiscardEdgeIsNoise:
+    """`_discard_edge_is_noise` — B1: перевес сброса в пределах его же погрешности."""
+
+    def _discard(self, score: float) -> ActionOption:
+        return ActionOption(kind="discard", cards=(), score=score, label="", exact=False)
+
+    def _play(self, score: float) -> Candidate:
+        return Candidate(parse_cards("AH"), _outcome(score))
+
+    def test_перевес_меньше_погрешности_это_шум(self) -> None:
+        # живой прогон: разменивал флеш ~7371 на цель ~7427 (+0.7 %)
+        assert _discard_edge_is_noise(self._discard(7427), self._play(7371)) is True
+
+    def test_перевес_больше_погрешности_это_сигнал(self) -> None:
+        assert _discard_edge_is_noise(self._discard(9000), self._play(7371)) is False
+
+    def test_играть_нечего_любой_сброс_сигнал(self) -> None:
+        assert _discard_edge_is_noise(self._discard(50), self._play(0)) is False
+
+
+class TestDecideActionB1:
+    """Автопилот не разменивает верный темп/розыгрыш на жадный сброс (B1)."""
+
+    def test_на_темпе_играет_а_не_сбрасывает(self) -> None:
+        # Готовый стрит-флеш ~1120; на 2 руки при блайнде 1400 темп есть
+        # (1120 * 2 >= 1400 * 1.5), спекулятивный сброс не нужен.
+        state = build_state("AH KH QH JH TH 2C 3D 4S", hands_left=2, discards_left=1, blind=1400)
+        state = replace(state, phase="SELECTING_HAND")
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+        assert set(action.cards) == set(parse_cards("AH KH QH JH TH"))
+
+    def test_без_темпа_готовый_роял_не_разменивается_на_сброс(self) -> None:
+        # Одна рука в запасе (гарда темпа не работает), блайнд огромный (нет
+        # cheapest_sufficient). Готовый роял-флеш — добор ничего не улучшит,
+        # оценка сброса «оставить как есть» упирается в тот же счёт: перевес в
+        # пределах погрешности → играем руку, а не жжём сброс.
+        state = build_state("AH KH QH JH TH 2C 3D 4S", hands_left=1, discards_left=1, blind=100_000)
+        state = replace(state, phase="SELECTING_HAND")
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "play"
+        assert set(action.cards) == set(parse_cards("AH KH QH JH TH"))
+
+    def test_реальный_перевес_сброса_всё_ещё_сбрасывает(self) -> None:
+        # Не на темпе (одна слабая рука, блайнд огромный), флеш-дро даёт
+        # кратно больше тройки — сброс остаётся правильным решением.
+        state = build_state("AH KH QH 7H 7C 7D 2S 3S", hands_left=1, discards_left=1, blind=100_000)
         state = replace(state, phase="SELECTING_HAND")
         action = decide_action(state)
         assert action is not None
@@ -568,6 +679,50 @@ class TestDecideActionВМагазине:
         assert action.item_index == 1
 
 
+class TestDecideActionРеролМагазина:
+    """Улучшение A5: когда в витрине брать нечего, перекатить её — если
+    Монте-Карло рерола обещает годного джокера и остаётся денежный запас."""
+
+    def _junk_shop(self, **overrides: object) -> GameState:
+        # Неизвестный джокер — ветка покупки его пропускает, ваучеров и
+        # паков нет, слоты свободны (продажи-замены не будет).
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "shop": (ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_рероллит_когда_витрина_мусор_а_денег_с_запасом(self) -> None:
+        assert decide_action(self._junk_shop()) == Action(kind="reroll")
+
+    def test_не_рероллит_без_денежного_запаса(self) -> None:
+        # $15 − $5 = $10 < _REROLL_MONEY_RESERVE (12).
+        assert decide_action(self._junk_shop(money=15)) == Action(kind="next_round")
+
+    def test_не_рероллит_без_известного_требования_блайнда(self) -> None:
+        assert decide_action(self._junk_shop(blinds={})) == Action(kind="next_round")
+
+    def test_не_рероллит_когда_нечем_платить(self) -> None:
+        assert decide_action(self._junk_shop(money=3)) == Action(kind="next_round")
+
+    def test_не_рероллит_против_неподъёмного_блайнда(self) -> None:
+        # 3% от 1_000_000 = 30_000 — реролл столько не наберёт.
+        state = self._junk_shop(blinds={"small": _blind("SMALL", "UPCOMING", 1_000_000)})
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_покупка_джокера_приоритетнее_рерола(self) -> None:
+        # j_joker "+4 Mult" проходит порог покупки — рероллить не нужно.
+        state = self._junk_shop(shop=(ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),))
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "buy"
+
+
 class TestDecideActionНаВскрытииПака:
     """Тип пака — по содержимому `state.pack`, не по имени фазы (Steamodded
     шлёт одну общую `SMODS_BOOSTER_OPENED`). Planet: всегда берём лучшую карту
@@ -667,6 +822,11 @@ class TestDispatchAction:
         assert FakeMod.calls[-1]["method"] == "rearrange"
         assert FakeMod.calls[-1]["params"] == {"jokers": [1, 0]}
 
+    def test_reroll_зовёт_reroll_без_параметров(self, bridge: ModBridge) -> None:
+        dispatch_action(bridge, Action(kind="reroll"))
+        assert FakeMod.calls[-1]["method"] == "reroll"
+        assert "params" not in FakeMod.calls[-1]
+
     def test_next_round_и_cash_out(self, bridge: ModBridge) -> None:
         dispatch_action(bridge, Action(kind="next_round"))
         assert FakeMod.calls[-1]["method"] == "next_round"
@@ -710,6 +870,7 @@ class TestDescribeAction:
             Action(kind="buy_voucher"),
             Action(kind="sell"),
             Action(kind="rearrange"),
+            Action(kind="reroll"),
             Action(kind="next_round"),
             Action(kind="cash_out"),
             Action(kind="pack"),

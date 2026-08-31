@@ -414,6 +414,8 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
     jokers_area = payload.get("jokers")
     jokers = [_parse_joker(raw, unknown) for raw in _area_cards(jokers_area)]
     joker_slots = jokers_area.get("limit") if isinstance(jokers_area, Mapping) else None
+    shop_area = payload.get("shop")
+    shop_slots = shop_area.get("limit") if isinstance(shop_area, Mapping) else None
     round_info = payload.get("round") or {}
 
     #: Область `cards` — это буквально оставшаяся колода, а не весь деск:
@@ -455,7 +457,8 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         hand_info=_parse_hands(payload.get("hands"), unknown),
         blind=_parse_blind(payload.get("blinds")),
         blinds=_parse_blinds_map(payload.get("blinds")),
-        shop=_parse_shop_area(payload.get("shop"), unknown),
+        shop=_parse_shop_area(shop_area, unknown),
+        shop_slots=int(shop_slots) if shop_slots is not None else None,
         shop_vouchers=_parse_shop_area(payload.get("vouchers"), unknown),
         shop_packs=_parse_shop_area(payload.get("packs"), unknown),
         pack=_parse_shop_area(payload.get("pack"), unknown),
@@ -659,6 +662,14 @@ class ModBridge:
         if skip is not None:
             params["skip"] = skip
         return parse_game_state(self.call("pack", params, timeout=ACTION_TIMEOUT))
+
+    def reroll(self) -> GameState:
+        """Перекатить карты в витрине магазина за деньги (`openrpc.json`'s
+        `reroll`, без параметров — цену мод берёт из
+        `G.GAME.current_round.reroll_cost` сам). Мод ответит ошибкой
+        `NOT_ALLOWED`, если денег не хватает. Ваучеры и паки реролл не
+        трогает, только область `shop`. Нужен `autopilot` (улучшение A5)."""
+        return parse_game_state(self.call("reroll", timeout=ACTION_TIMEOUT))
 
     def next_round(self) -> GameState:
         """Уйти из магазина — экран выбора следующего блайнда."""

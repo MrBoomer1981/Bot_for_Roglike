@@ -1,1226 +1,1381 @@
-# Бот для Balatro — план проекта
+# Balatro bot — project plan
 
-**Смена цели (зафиксировано в этой редакции):** проект был советником (человек играет сам,
-бот считает и объясняет) — это отменено. Новая цель: бот, самостоятельно проходящий игру на
-любой сложности без участия человека, то есть стабильно побеждающий на всех 8 ставках
-(White…Gold). Раздел 2 ниже переписан под эту цель; причина смены и её последствия — там же.
-Режим советника (`advise`/`doctor`/`watch`) не выброшен — он остаётся и как самостоятельный
-инструмент, и как источник решений для автопилота: автопилот не заменяет расчёт, а добавляет
-слой действия поверх уже посчитанных советов и достраивает те решения, что раньше честно
-отдавались на усмотрение человека.
+**Goal change (recorded in this revision):** the project used to be an advisor (the human
+plays, the bot computes and explains) — that's cancelled. The new goal: a bot that clears
+the game on its own at any difficulty without human involvement, i.e. one that reliably wins
+on all 8 stakes (White…Gold). Section 2 below is rewritten around this goal; the reason for
+the change and its consequences are there too. Advisor mode (`advise`/`doctor`/`watch`) is
+not thrown away — it stays both as a standalone tool and as the source of decisions for the
+autopilot: the autopilot doesn't replace the computation, it adds an action layer on top of
+the already-computed advice and fills in the decisions that used to be left honestly to the
+human.
 
-Статус: фазы 0, 1, 2 и 4 закрыты; Фаза 5 подтверждена вживую на реальной macOS, Фаза 7
-(порядок джокеров и магазин) и первый кусок Фазы 8 (скип блайнда) сделаны. Движок подсчёта
-работает. Новая Фаза 9 («Автопилот») задаёт объём работы под новую цель — раздел 6, подраздел
-«Автопилот». Актуальное состояние по каждой фазе и что осталось — раздел 8.1.
-Платформа разработки и игры: macOS (Apple Silicon / Intel), Steam-версия Balatro.
+Status: phases 0–2 and 4 are closed. Phase 3 — the scoring engine is ready (149 of 150
+jokers), but verifying the numbers against the real game (task 3a) hasn't been done — needs
+a Mac. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
+and joker order, blind skip and economy). Phase 9 ("Autopilot") — subtasks 9.1–9.7 are done
+(action loop, skip/shop/pack-opening, vouchers, Planet consumables, boss catalogue and score
+fix, stake stickers, run-runner) plus improvements A1–A5, B1 and D1 from section 9.8 — see
+section 6, "Autopilot" subsection. Run 6 (RED/WHITE) was the first full live run of the 9.1–9.7 loop — it reached ante 5 (a new
+record) and was stopped manually to start on the fixes it surfaced. What's left: decision-loop
+speed (F1), the smaller shop-policy fixes (A6/A7), Tarot consumables (C1),
+Arcana/Spectral/Standard packs, an unattended 24/7 mode, and the mass win-rate
+measurement itself (E1). The current state of
+each phase and what's left — section 8.1; the improvement roadmap — section 9.8.
+Development and gameplay platform: macOS (Apple Silicon / Intel), the Steam version of
+Balatro.
 
 ---
 
-## 1. Выбор игры: Balatro
+## 1. Game choice: Balatro
 
-Balatro выбрана осознанно, а не просто «потому что нравится». Она почти идеально подходит и
-советнику, которым проект был изначально, и автопилоту, которым стал (раздел 2) — обеим ролям
-нужно одно и то же: у хода есть точно вычислимый правильный ответ:
+Balatro was chosen deliberately, not just "because it's fun". It fits almost perfectly both
+the advisor the project originally was and the autopilot it became (section 2) — both roles
+need the same thing: a move has an exactly computable correct answer:
 
-| Критерий | Balatro |
+| Criterion | Balatro |
 |---|---|
-| Реакция / таймеры | Нет вообще. Ход длится столько, сколько нужно. Бот может думать секунды и минуты |
-| Детерминированность | Подсчёт очков — чистая арифметика без случайности (кроме отдельных джокеров). У хода есть **объективно лучший** вариант, который можно вычислить |
-| Пространство решений | Из 8 карт выбрать подмножество (до 5) — это 218 вариантов на руку, плюс решение «играть или сбросить», плюс магазин. Человек физически не перебирает это, машина перебирает мгновенно |
-| Цена ошибки | Высокая: один неправильно выбранный сброс на Ante 8 убивает ран |
-| Доступ к состоянию | Игра написана на Lua + LÖVE 2D, есть зрелая мод-экосистема, состояние читается напрямую из движка |
-| Правовой аспект | Однопользовательская офлайн-игра, без анти-чита и без мультиплеера, который можно испортить |
+| Reaction / timers | None at all. A move takes as long as it needs. The bot can think for seconds and minutes |
+| Determinism | Score computation is pure arithmetic with no randomness (except for individual jokers). A move has an **objectively best** option that can be computed |
+| Decision space | Picking a subset (up to 5) of 8 cards is 218 options per hand, plus the "play or discard" decision, plus the shop. A human physically can't enumerate this; a machine does it instantly |
+| Cost of a mistake | High: one wrongly chosen discard on Ante 8 kills the run |
+| State access | The game is written in Lua + LÖVE 2D, there is a mature mod ecosystem, state is read straight from the engine |
+| Legal aspect | A single-player offline game, no anti-cheat and no multiplayer that could be spoiled |
 
-Ключевое: в Balatro **есть правильный ответ**, и его можно посчитать. Это отличает её от
-игр, где «помощник» скатывается в вкусовые советы.
+The key point: in Balatro **there is a correct answer**, and it can be computed. That sets it
+apart from games where a "helper" slides into taste-based advice.
 
-**Рассмотренные альтернативы** (тоже пошаговые, без экшена):
+**Alternatives considered** (also turn-based, no action):
 
-- *Slay the Spire* — отличная мод-поддержка, но там уже есть сильные готовые боты, и оценка
-  хода упирается в долгосрочную стратегию, а не в счёт. Меньше «вычислимости».
-- *Into the Breach* — полностью детерминированная, но ходы и так прозрачны, помощник почти
-  не добавляет ценности.
-- *Luck be a Landlord* — близка по духу, но сильно проще и меньше сообщество/инструменты.
+- *Slay the Spire* — excellent mod support, but strong ready-made bots already exist, and
+  evaluating a move comes down to long-term strategy rather than score. Less "computability".
+- *Into the Breach* — fully deterministic, but the moves are already transparent, a helper
+  adds almost no value.
+- *Luck be a Landlord* — close in spirit, but much simpler and with a smaller
+  community/tooling.
 
-Итог: **делаем под Balatro**.
+Conclusion: **we build for Balatro**.
 
 ---
 
-## 2. Что именно делает бот
+## 2. What exactly the bot does
 
-### Вехи и их соответствие фазам
+### Milestones and how they map to phases
 
-Единственное определение версий в документе. Везде дальше ссылаемся только на него.
+The single definition of versions in the document. Everywhere further down we refer only to
+this.
 
-| Веха | Фазы | Что умеет |
+| Milestone | Phases | What it can do |
 |---|---|---|
-| **v0.1 «Калькулятор»** | 0–4 | Ручной ввод состояния, выбор лучшего подмножества карт с точным счётом. Первая практическая польза |
-| **v1 «Советник»** | 5–6 | Плюс автоподключение к игре и решение «играть или сбросить». Здесь закрывалась DoD прежней цели |
-| **v2 «Магазин»** | 7 | Плюс покупки и порядок джокеров |
-| **v3 «Стратегия»** | 8 | Плюс решения уровня всего рана (скип блайнда — сделано; экономика — нет) |
-| **v4 «Автопилот»** | 9 | Плюс цикл действий через честные RPC-методы мода и решения там, где раньше советник честно молчал (скип — да/нет, а не числа; магазин — купить/не купить, ваучеры и паки; вскрытие паков; консумаблы перед розыгрышем; легальность хода под правило-модифицирующими боссами). **Новая цель проекта** — раздел ниже |
+| **v0.1 "Calculator"** | 0–4 | Manual state input, picking the best subset of cards with an exact score. First practical use |
+| **v1 "Advisor"** | 5–6 | Plus auto-connection to the game and the "play or discard" decision. This is where the DoD of the old goal was met |
+| **v2 "Shop"** | 7 | Plus purchases and joker order |
+| **v3 "Strategy"** | 8 | Plus whole-run decisions (blind skip — done; economy — not) |
+| **v4 "Autopilot"** | 9 | Plus an action loop through the mod's honest RPC methods and decisions where the advisor used to stay honestly silent (skip — yes/no, not numbers; shop — buy/don't buy, vouchers and packs; opening packs; consumables before a play; move legality under rule-modifying bosses). **The project's new goal** — section below |
 
-### Новая цель: автономное прохождение (Фаза 9)
+### The new goal: autonomous clearing (Phase 9)
 
-Зафиксировано явно, потому что меняет весь раздел «Чего сознательно НЕ делаем» ниже, бывший
-неизменным с самого начала проекта.
+Recorded explicitly, because it changes the whole "What we deliberately do NOT do" section
+below, which had been unchanged since the very start of the project.
 
-**Критерий успеха:** бот стабильно побеждает (доходит до Ante 8 и добивает финального босса)
-на каждой из 8 ставок (`WHITE`…`GOLD`) отдельно — не «повезло один раз», а измеримый винрейт
-по N прогонам на ставку, с отдельным отчётом по каждой ставке. Ставки в Balatro кумулятивны
-(подтверждено по исходнику, `game.lua`: `if self.GAME.stake >= K then ... end`) — `GOLD`
-включает все 8 модификаторов разом (без денег за Small Blind, ускоренный рост требований,
-Eternal/Perishable/Rental джокеры в магазине, −1 сброс). Отсюда порядок обкатки: снизу вверх,
-`WHITE → RED → ... → GOLD`, а не сразу самая тяжёлая — на промежуточных ставках проще понять,
-какой конкретно из 8 модификаторов уронил прогон.
+**Success criterion:** the bot reliably wins (reaches Ante 8 and finishes off the final
+boss) on each of the 8 stakes (`WHITE`…`GOLD`) separately — not "got lucky once", but a
+measurable win-rate over N runs per stake, with a separate report per stake. Stakes in
+Balatro are cumulative (confirmed from source, `game.lua`: `if self.GAME.stake >= K then
+... end`) — `GOLD` includes all 8 modifiers at once (no money for the Small Blind,
+accelerated requirement growth, Eternal/Perishable/Rental jokers in the shop, −1 discard).
+Hence the shakedown order: bottom-up, `WHITE → RED → ... → GOLD`, not the hardest one
+straight away — on the intermediate stakes it's easier to tell which of the 8 modifiers
+sank a run.
 
-**Режим запуска — управляемый, не демон.** `balatro-bot autoplay --deck X --stake Y` играет
-один ран честными действиями до победы или поражения и останавливается с отчётом; массовый
-прогон по N ранов на ставку — обвязка поверх этого же раннера. Работа сутками без присмотра
-(24/7, автоперезапуск ранов) осознанно не входит в объём сейчас — это отдельная надстройка
-(watchdog на зависания, лимиты по времени/попыткам), которую можно добавить позже поверх уже
-работающего управляемого цикла, не переделывая его.
+**Launch mode — managed, not a daemon.** `balatro-bot autoplay --deck X --stake Y` plays one
+run with honest actions to a win or a loss and stops with a report; a mass run of N runs per
+stake is a wrapper on top of that same runner. Running around the clock unattended (24/7,
+auto-restarting runs) is deliberately out of scope for now — it's a separate layer (a
+watchdog for hangs, time/attempt limits) that can be added later on top of the
+already-working managed loop without reworking it.
 
-**Переключение между советником и автопилотом — обязательное требование, не побочный эффект
-того, что оба режима существуют.** Мало того, что `advise`/`doctor`/`watch` не удаляются
-(раздел выше) — должна быть возможность переключиться между ними и `autoplay` по ходу дела:
-начать ран под автопилотом и в любой момент забрать управление себе (доиграть руками дальше)
-либо наоборот — досмотреть советником и передать автопилоту доиграть. Оба режима читают одно и
-то же состояние через один и тот же мост, поэтому переключение — это не перенос данных между
-раздельными системами, а вопрос того, кто в данный момент дёргает действия (`play`/`buy`/...),
-советник этого не делает вообще. `autoplay` обязан уметь корректно завершиться (или встать на
-паузу) в любой момент между действиями, не только в конце рана, — раз человек должен суметь
-перехватить руль посреди игры, а не только между ранами.
+**Switching between advisor and autopilot — a mandatory requirement, not a side effect of
+both modes existing.** Beyond `advise`/`doctor`/`watch` not being removed (section above) —
+it must be possible to switch between them and `autoplay` on the fly: start a run under the
+autopilot and take control back at any moment (finish playing by hand), or the other way
+round — watch as advisor and hand the run to the autopilot to finish. Both modes read the
+same state through the same bridge, so switching isn't a transfer of data between separate
+systems, it's a question of who is currently pulling the actions (`play`/`buy`/...) — the
+advisor doesn't do that at all. `autoplay` must be able to terminate cleanly (or pause) at
+any moment between actions, not only at the end of a run — since the human must be able to
+grab the wheel mid-game, not only between runs.
 
-**Только честные действия.** RPC мода (`src/lua/utils/openrpc.json`) даёт два разных класса
-методов: игровые (`select`, `skip`, `play`, `discard`, `buy`, `sell`, `use`, `reroll`,
-`next_round`, `cash_out`, `rearrange`, `start`) и читерские (`set` — поставить деньги/анте/руки
-напрямую минуя игровые правила, `add` — заспавнить любую карту, `load` — подставить чужое
-сохранение). Автопилот использует только первый класс — это тот же принцип, что уже
-зафиксирован в разделе 8 плана про сид-анализаторы («Идея на потом»): бот не читает будущее и
-не жульничает, только считает и действует в рамках того, что доступно живому игроку. `set`/
-`add`/`load` остаются доступны исключительно тестовой инфраструктуре (`tests/fake_mod.py` и
-подобное), как и сейчас.
+**Honest actions only.** The mod's RPC (`src/lua/utils/openrpc.json`) offers two different
+classes of methods: game actions (`select`, `skip`, `play`, `discard`, `buy`, `sell`,
+`use`, `reroll`, `next_round`, `cash_out`, `rearrange`, `start`) and cheats (`set` — set
+money/ante/hands directly, bypassing the game rules; `add` — spawn any card; `load` — swap
+in someone else's save). The autopilot uses only the first class — the same principle
+already recorded in section 8 of the plan about seed analyzers ("Idea for later"): the bot
+doesn't read the future and doesn't cheat, it only computes and acts within what a live
+player has available. `set`/`add`/`load` stay available exclusively to test infrastructure
+(`tests/fake_mod.py` and the like), as they are now.
 
-### Что показывает v1
+### What v1 shows
 
-Советник, не автопилот. Игрок играет сам, бот в соседнем окне показывает:
+Advisor, not autopilot. The player plays; the bot in a window next to it shows:
 
-1. **Какие карты играть** — **ранжированный список** вариантов с посчитанным счётом и разбивкой,
-   а не единственная рекомендация. Максимум очков не всегда лучший ход: иногда выгоднее еле
-   перебить блайнд, сохранив руки и сбросы, иногда — сыграть слабее ради прокачки уровня нужного
-   типа руки. Выбор остаётся за игроком, задача бота — показать, из чего сложилось число.
-2. **Играть или сбросить** — сравнение «сыграть сейчас» против матожидания «сбросить N карт
-   и сыграть следующей рукой».
-3. **Хватит ли на блайнд** — «эта рука даёт 12 400, до блайнда 30 000, за 2 оставшиеся руки не
-   добиваем → надо перестраивать».
+1. **Which cards to play** — a **ranked list** of options with a computed score and
+   breakdown, not a single recommendation. The maximum score isn't always the best move:
+   sometimes it's better to barely beat the blind, keeping hands and discards; sometimes to
+   play weaker to level up the hand type you need. The choice stays with the player; the
+   bot's job is to show what the number is made of.
+2. **Play or discard** — comparing "play now" against the expected value of "discard N
+   cards and play with the next hand".
+3. **Whether the blind will be met** — "this hand gives 12,400, the blind is 30,000, over 2
+   remaining hands we don't get there → we need to rebuild".
 
-Пункты 1 и 2 здесь описаны как два разных вида совета — по факту реализации (раздел 6,
-Фаза 6) это давно один список: `solver.actions.rank_actions` сливает розыгрыши и сбросы в
-единый ранжированный вывод по убыванию счёта, потому что для игрока это одно и то же решение
-«что делать сейчас», а не два списка для сравнения глазами.
+Points 1 and 2 are described here as two different kinds of advice — in the implementation
+(section 6, Phase 6) it's long been one list: `solver.actions.rank_actions` merges plays and
+discards into a single ranked output by descending score, because for the player it's one
+and the same decision, "what to do now", not two lists to compare by eye.
 
-**Definition of Done для v1:** на вход подано состояние (рука, джокеры, уровни рук, блайнд) —
-на выход за <100 мс выдан ранжированный список ходов с разбивкой счёта, совпадающей с игрой
-до последней единицы.
+**Definition of Done for v1:** given a state (hand, jokers, hand levels, blind) — within
+<100 ms produce a ranked list of moves with a score breakdown that matches the game to the
+last unit.
 
-### Сквозное требование: честность расчёта
+### A cross-cutting requirement: honest computation
 
-Действует **начиная с Фазы 3** и распространяется на все последующие. Ядро всегда возвращает
-не только число, но и **признак полноты расчёта**. Если во входном состоянии встретился джокер,
-улучшение или боссовый эффект, которого движок не знает, расчёт помечается неточным, и
-интерфейс обязан это показать. Молча выдать правдоподобное, но неверное число — худший
-возможный исход для советника.
+In effect **starting from Phase 3** and extends to all subsequent phases. The core always
+returns not only a number but also a **completeness flag for the computation**. If the input
+state contains a joker, enhancement, or boss effect the engine doesn't know, the computation
+is marked inexact, and the interface must show it. Silently returning a plausible but wrong
+number is the worst possible outcome for an advisor.
 
-**Третья категория с Фазы 9: явно помеченная эвристика.** До сих пор у числа было два честных
-состояния — точный расчёт (`exact=True`) или отказ посчитать вовсе (текст вместо числа, как
-`core/tags.py`/`ShopItem.effect` для того, что не с чем сравнить контрфактумом). Советнику
-этого хватало: решение оставалось за человеком. Автопилоту решение принимать всё равно надо —
-молчание для него равносильно случайному выбору, то есть отказ перестаёт быть нейтральным
-вариантом. Отсюда третье состояние: экспертная оценка на основе игрового смысла эффекта (не
-подсчитанная контрфактумом, а назначенная), обязана быть отличима от точного числа так же явно,
-как сейчас `exact=False` отличим от `exact=True` — не тем же полем с той же семантикой,
-означающей «оценка по выборке» (как у `DiscardOption.exact`), а отдельно, потому что здесь
-неточность другого рода: не приближение точного числа, а константа без вычисления вовсе.
+**A third category from Phase 9: an explicitly flagged heuristic.** Until now a number had
+two honest states — an exact computation (`exact=True`) or a refusal to compute at all (text
+instead of a number, like `core/tags.py`/`ShopItem.effect` for things there's nothing to
+compare with via a counterfactual). That was enough for the advisor: the decision stayed
+with the human. The autopilot has to make the decision anyway — silence for it is equivalent
+to a random choice, so a refusal stops being a neutral option. Hence a third state: an
+expert estimate based on the game-sense of the effect (not computed via a counterfactual,
+but assigned), which must be as clearly distinguishable from an exact number as `exact=False`
+is now from `exact=True` — not the same field with the same semantics meaning "sample-based
+estimate" (like `DiscardOption.exact`), but a separate one, because the inexactness here is
+of a different kind: not an approximation of an exact number, but a constant with no
+computation at all.
 
-### Чего сознательно НЕ делаем
+### What we deliberately do NOT do
 
-- **Автоигру теперь делаем — это отменяет исходное решение проекта.** До этой редакции плана
-  здесь стояло «не делаем автоигру, это не нужно для качества решений» — то была осознанная
-  граница ответственности (человек решает, бот считает), а не техническое ограничение. Новая
-  цель (раздел 2, «Автопилот») требует ровно обратного, и решение развёрнуто намеренно, не
-  случайно. Граница смещается на другую ось: не «кто жмёт кнопки», а «какими методами» —
-  см. «Только честные действия» выше.
-- Не читаем сид рана заранее (см. «Идея на потом» в разделе 8) — даже автономно играя, бот не
-  знает будущего магазина/боссов наперёд, только то, что видно живому игроку прямо сейчас.
-- Не делаем ML/нейросети. Здесь работает честный перебор + симулятор, он точнее и объяснимее —
-  это не изменилось: автопилот действует по тем же расчётам солвера, что и раньше показывались
-  человеку, просто без человека посередине.
+- **We now do autoplay — this reverses the project's original decision.** Before this
+  revision of the plan it said here "we don't do autoplay, it isn't needed for decision
+  quality" — that was a deliberate boundary of responsibility (the human decides, the bot
+  computes), not a technical limitation. The new goal (section 2, "Autopilot") requires
+  exactly the opposite, and the decision is reversed on purpose, not by accident. The
+  boundary moves to a different axis: not "who presses the buttons" but "by what methods" —
+  see "Honest actions only" above.
+- We don't read the run's seed ahead of time (see "Idea for later" in section 8) — even
+  playing autonomously, the bot doesn't know the future shop/bosses in advance, only what a
+  live player can see right now.
+- We don't do ML/neural nets. Honest search + a simulator works here; it's more accurate and
+  more explainable — that hasn't changed: the autopilot acts on the same solver computations
+  that used to be shown to the human, just without the human in the middle.
 
 ---
 
-## 3. Архитектура
+## 3. Architecture
 
-Три слоя, жёстко разделённые. Ядро ничего не знает про то, откуда пришло состояние.
+Three layers, strictly separated. The core knows nothing about where the state came from.
+The action layer (autopilot, Phase 9) sits on top of the solver: it takes the solver's
+output and executes it through the same mod bridge it read state from; the advisor just
+displays that same output.
 
 ```mermaid
 flowchart LR
-    subgraph src["Источник состояния (взаимозаменяемые адаптеры)"]
-        A1["Ручной ввод<br/>(CLI) — Фаза 4"]
-        A2["Мод-мост<br/>JSON из игры — Фаза 5"]
-        A3["Скриншот + CV<br/>— резерв, не запланирован"]
+    subgraph src["State source (interchangeable adapters)"]
+        A1["Manual input<br/>(CLI) — Phase 4"]
+        A2["Mod bridge<br/>JSON from the game — Phase 5"]
+        A3["Screenshot + CV<br/>— reserve, not planned"]
     end
     A1 --> S
     A2 --> S
     A3 --> S
-    S["Нормализованное<br/>состояние (GameState)"] --> E
-    E["Ядро: симулятор<br/>подсчёта очков"] --> V
-    V["Солвер:<br/>перебор + EV"] --> U
-    U["Вывод:<br/>ранжированный список"]
+    S["Normalized<br/>state (GameState)"] --> E
+    E["Core: score<br/>simulator"] --> V
+    V["Solver:<br/>search + EV"] --> U
+    V --> P
+    U["Output: ranked<br/>list — advisor"]
+    P["Autopilot: decide_action<br/>→ honest RPC (Phase 9)"] -->|actions| A2
 ```
 
-Почему так: **симулятор скоринга — самая ценная и самая долгоживущая часть**. Способ добычи
-состояния может смениться трижды (мод сломался после патча — переехали на CV), ядро при этом
-не трогаем. Поэтому первым делаем ядро, а не интеграцию.
+Why this way: **the scoring simulator is the most valuable and longest-lived part**. The way
+state is obtained may change three times (the mod broke after a patch — we moved to CV); the
+core is left untouched. So we build the core first, not the integration.
 
 ---
 
-## 4. Как достать состояние игры
+## 4. How to get the game state
 
-Три варианта, в порядке предпочтения.
+Three options, in order of preference.
 
-### Вариант A — мод-мост (выбран, Фаза 5)
+### Option A — the mod bridge (chosen, Phase 5)
 
-Balatro — это LÖVE 2D + Lua, всё состояние живёт в глобальном объекте `G`
+Balatro is LÖVE 2D + Lua, all state lives in the global object `G`
 (`G.hand`, `G.jokers`, `G.shop_jokers`, `G.GAME.blind`, `G.GAME.dollars`, ...).
-Мод на Lua сериализует это в JSON и отдаёт наружу.
+A Lua mod serializes this to JSON and exposes it.
 
-Стек на macOS:
-- [Lovely Injector](https://github.com/ethangreen-dev/lovely-injector) — рантайм-инжектор Lua
-  (для M-серии нужен билд `lovely-aarch64-apple-darwin`). Нужен только сам `liblovely.dylib`:
-  CLI мода подставляет его через `DYLD_INSERT_LIBRARIES` сам, скрипт запуска не требуется.
-  Запускать игру через Steam на macOS нельзя — этому мешает баг клиента.
-- [Steamodded](https://github.com/Steamodded/smods) — фреймворк модов, моды кладутся в
+The macOS stack:
+- [Lovely Injector](https://github.com/ethangreen-dev/lovely-injector) — a runtime Lua
+  injector (M-series needs the `lovely-aarch64-apple-darwin` build). Only `liblovely.dylib`
+  itself is needed: the mod's CLI sets it up via `DYLD_INSERT_LIBRARIES` on its own, no
+  launch script required. You can't launch the game through Steam on macOS — a client bug
+  gets in the way.
+- [Steamodded](https://github.com/Steamodded/smods) — a mod framework; mods go into
   `~/Library/Application Support/Balatro/Mods`.
 
-**Важно: скорее всего не надо писать мод с нуля.** Уже есть
-[`coder/balatrobot`](https://github.com/coder/balatrobot) (MIT) — мод, поднимающий
-**JSON-RPC 2.0 HTTP API** поверх игры: отдаёт состояние и принимает действия (выбор карт,
-покупки в магазине, выбор блайнда). Есть и альтернативы (мод, дампящий состояние в файл
-каждый кадр). План — взять готовое как транспорт и вложить свои силы в мозги, а не в биндинги.
+**Important: most likely there's no need to write a mod from scratch.** There's already
+[`coder/balatrobot`](https://github.com/coder/balatrobot) (MIT) — a mod that brings up a
+**JSON-RPC 2.0 HTTP API** over the game: it exposes state and accepts actions (card
+selection, shop purchases, blind selection). There are alternatives too (a mod that dumps
+state to a file every frame). The plan is to take the ready thing as transport and put our
+effort into the brains, not the bindings.
 
-**Спайк (Фаза 1) делается заранее и вне очереди:** поставить это на конкретном Mac и убедиться,
-что заводится с текущей версией игры. Спайк не блокирует Фазы 2–4, но обязан быть пройден
-до начала Фазы 5, иначе к тому моменту вложения окажутся сделаны в неработающий путь.
-При успехе спайк **фиксирует конкретные версии** игры, Lovely, Steamodded и мода — за время
-Фаз 2–4 они могут обновиться.
+**The spike (Phase 1) is done early and out of order:** install this on the specific Mac and
+confirm it comes up with the current game version. The spike doesn't block Phases 2–4, but
+it must be passed before Phase 5 starts, otherwise by then the investment will have gone
+into a non-working path. On success the spike **pins specific versions** of the game,
+Lovely, Steamodded, and the mod — over the course of Phases 2–4 they may update.
 
-Риски:
-- Steamodded **по умолчанию отключает достижения Steam** (защита от случайной накрутки).
-  Возвращается тумблером в игровом меню модов, но об этом надо знать заранее.
-- Обновление Balatro в Steam может временно сломать Lovely/Steamodded — придётся ждать
-  обновления модов. Отсюда правило: играть можно и без бота, бот не должен быть обязателен.
+Risks:
+- Steamodded **disables Steam achievements by default** (protection against accidental
+  farming). It's restored with a toggle in the in-game mods menu, but you need to know this
+  in advance.
+- A Balatro update on Steam may temporarily break Lovely/Steamodded — you'll have to wait
+  for the mods to update. Hence the rule: you can play without the bot too, the bot must not
+  be mandatory.
 
-### Вариант B — компьютерное зрение (резерв, в дорожную карту не входит)
+### Option B — computer vision (reserve, not in the roadmap)
 
-Захват окна игры + распознавание карт. Плюс: не трогает игру вообще, достижения целы.
-Минус: сильно дороже в разработке и хрупко. **Сознательно не планируется** — задача заводится
-только если Фаза 1 провалилась и мод-путь закрыт. Карты в Balatro визуально контрастные,
-template matching реалистичен, полноценный OCR не нужен.
+Capturing the game window + card recognition. Upside: doesn't touch the game at all,
+achievements are intact. Downside: much more expensive to develop and fragile. **Deliberately
+not planned** — the task starts only if Phase 1 failed and the mod path is closed. Cards in
+Balatro are visually high-contrast, template matching is realistic, full OCR isn't needed.
 
-### Вариант C — ручной ввод (Фаза 4, нужен в любом случае)
+### Option C — manual input (Phase 4, needed in any case)
 
-CLI/TUI, где рука вводится строкой вида `AH KH QH 7C 7D 3S 2S 2C`, джокеры — по именам.
-Это **не костыль**: он позволяет разрабатывать и тестировать ядро, не завися от модов,
-и остаётся как режим отладки навсегда.
+A CLI/TUI where the hand is entered as a string like `AH KH QH 7C 7D 3S 2S 2C`, jokers by
+name. This is **not a crutch**: it lets us develop and test the core without depending on
+mods, and it stays forever as a debug mode.
 
-Важное ограничение, которое надо понимать сразу: ручной ввод даёт полноценный ответ на вопрос
-«какие карты играть», но **не даёт точного состава оставшейся колоды**. Это напрямую бьёт по
-Фазе 6 — см. раздел 6.
+An important limitation to understand right away: manual input gives a full answer to "which
+cards to play", but **doesn't give the exact composition of the remaining deck**. This
+directly hits Phase 6 — see section 6.
 
 ---
 
-## 5. Ядро: симулятор подсчёта очков
+## 5. The core: the score-computation simulator
 
-Это сердце проекта. Счёт = `chips × mult`, но оба множителя собираются в строго определённом
-порядке, и порядок важен (сложение до умножения даёт совсем другой результат).
+This is the heart of the project. Score = `chips × mult`, but both factors are assembled in
+a strictly defined order, and the order matters (adding before multiplying gives a
+completely different result).
 
-Порядок вычисления, который надо воспроизвести:
+The computation order to reproduce:
 
-1. **Определить тип руки** из сыгранных карт → базовые chips/mult **по текущему уровню руки**
-   (уровни повышаются Planet-картами, поэтому уровни рук — часть состояния, а не константа).
-   Учесть модификаторы распознавания: `Four Fingers` (флеш/стрит из 4 карт), `Shortcut`
-   (стрит с пропусками), `Smeared Joker` (масти попарно эквивалентны), Wild-карты,
-   секретные руки (Five of a Kind, Flush House, Flush Five).
-2. **Дебаффы боссового блайнда** — какие карты отключены и не считаются.
-3. **Сыгранные карты слева направо**: chips карты (2–10 = номинал, J/Q/K = 10, A = 11),
-   улучшения (Bonus, Mult, Glass, Steel, Stone, Gold, Lucky), издания (Foil, Holographic,
-   Polychrome), печати; ретриггеры (красная печать, `Hanging Chad`, `Dusk`, `Hack`).
-4. **Карты, оставшиеся в руке** (Steel, `Baron`, ретриггеры от `Mime`).
-5. **Джокеры слева направо** — в порядке их расположения. `Blueprint`/`Brainstorm` копируют
-   соседей, поэтому порядок — это самостоятельная задача оптимизации.
-6. **Финал** — произведение с округлением. Точное правило округления и поведение на очень
-   больших числах **сверяем с исходниками**, а не предполагаем: это не всегда обычный `round`.
+1. **Determine the hand type** from the played cards → base chips/mult **at the current hand
+   level** (levels are raised by Planet cards, so hand levels are part of the state, not a
+   constant). Account for detection modifiers: `Four Fingers` (a flush/straight from 4
+   cards), `Shortcut` (a straight with gaps), `Smeared Joker` (suits pairwise equivalent),
+   Wild cards, secret hands (Five of a Kind, Flush House, Flush Five).
+2. **Boss blind debuffs** — which cards are disabled and don't count.
+3. **Played cards left to right**: card chips (2–10 = face value, J/Q/K = 10, A = 11),
+   enhancements (Bonus, Mult, Glass, Steel, Stone, Gold, Lucky), editions (Foil,
+   Holographic, Polychrome), seals; retriggers (red seal, `Hanging Chad`, `Dusk`, `Hack`).
+4. **Cards left in hand** (Steel, `Baron`, retriggers from `Mime`).
+5. **Jokers left to right** — in their slot order. `Blueprint`/`Brainstorm` copy their
+   neighbours, so the order is an optimization task in its own right.
+6. **Finalize** — the product, with rounding. The exact rounding rule and the behaviour on
+   very large numbers are **checked against the sources**, not assumed: it isn't always a
+   plain `round`.
 
-### Откуда брать точные данные
+### Where to get the exact data
 
-Не выписывать 150+ джокеров руками по памяти — это гарантированные ошибки.
-Исходники игры лежат прямо на диске:
+Don't write out 150+ jokers by hand from memory — that's guaranteed errors. The game's
+sources are right there on disk:
 
 ```
 ~/Library/Application Support/Steam/steamapps/common/Balatro/Balatro.app/Contents/Resources/Balatro.love
 ```
 
-Это обычный zip. Внутри — Lua-код: таблицы `G.P_CENTERS` (все джокеры, улучшения, издания),
-значения покерных рук, функция подсчёта очков. План — **сгенерировать справочник джокеров
-скриптом из исходников игры** и держать его как данные, а в коде описывать только логику
-эффектов. Это же — эталон для сверки порядка вычислений и правила округления.
+This is a plain zip. Inside — Lua code: the `G.P_CENTERS` tables (all jokers, enhancements,
+editions), the poker-hand values, the score-computation function. The plan is to
+**generate the joker catalogue with a script from the game's sources** and keep it as data,
+describing only the effect logic in code. This is also the reference for checking the
+computation order and the rounding rule.
 
-Следствие для планирования: **Фаза 3 требует доступа к установленной игре.** Без файлов игры
-её можно начать (каркас движка), но нельзя закрыть.
+A planning consequence: **Phase 3 requires access to an installed game.** Without the game
+files it can be started (the engine skeleton) but not closed.
 
-### Проверка корректности
+### Correctness check
 
-Golden-тесты: набор реальных ситуаций из игры (рука + джокеры + уровни) и точный счёт,
-который показала игра. Ядро обязано совпадать до единицы.
+Golden tests: a set of real situations from the game (hand + jokers + levels) and the exact
+score the game showed. The core must match to the unit.
 
-**Сбор этих кейсов — отдельная ручная работа человека за игрой**, а не побочный эффект
-написания кода. Она вынесена в дорожную карту как явная задача Фазы 3, потому что без неё
-критерий готовности Фазы 3 недостижим в принципе.
+**Collecting these cases is a separate piece of manual work by a human at the game**, not a
+by-product of writing code. It's carried into the roadmap as an explicit Phase 3 task,
+because without it the readiness criterion for Phase 3 is unreachable in principle.
 
 ---
 
-## 6. Солвер
+## 6. The solver
 
-### Выбор руки (Фаза 4)
+### Hand selection (Phase 4)
 
-Перебор всех подмножеств руки размера 1–5: из 8 карт — 218 вариантов; при увеличенном размере
-руки (`Juggler` даёт +1 карту, есть и другие источники) — до ~640 при десяти картах. Каждое
-подмножество прогоняется через симулятор. Полный перебор, никакой эвристики — доли миллисекунды.
+A search over all hand subsets of size 1–5: from 8 cards — 218 options; with an increased
+hand size (`Juggler` gives +1 card, there are other sources) — up to ~640 at ten cards. Each
+subset is run through the simulator. Full search, no heuristics — fractions of a
+millisecond.
 
-Результат — не одна «лучшая» рука, а ранжированный список с разбивкой счёта (см. раздел 2).
+The result isn't a single "best" hand but a ranked list with a score breakdown (see
+section 2).
 
-### Играть или сбросить (Фаза 6)
+### Play or discard (Phase 6)
 
-Матожидание сброса считаем методом Монте-Карло: сэмплируем N добборов, для каждого считаем
-лучший возможный счёт, усредняем. Сравниваем с «сыграть сейчас» с учётом того, сколько рук
-и сбросов осталось до блайнда.
+The expected value of a discard is computed by Monte-Carlo: sample N draws, compute the best
+possible score for each, average. Compare against "play now", taking into account how many
+hands and discards are left before the blind.
 
-**Точность зависит от источника состояния**, и это надо честно показывать в интерфейсе:
+**Accuracy depends on the state source**, and this must be shown honestly in the interface:
 
-- **С мод-мостом (Фаза 5)** состав оставшейся колоды известен точно — мы видим всю колоду
-  и все ушедшие карты. Оценка корректна.
-- **При ручном вводе** точный состав колоды недоступен: колода меняется за ран (карты
-  добавляются, удаляются, улучшаются), и отслеживать это руками нереально. Работаем
-  на допущении стандартной колоды из 52 карт минус увиденное в текущем раунде, а результат
-  помечаем как приблизительный.
+- **With the mod bridge (Phase 5)** the composition of the remaining deck is known exactly —
+  we see the whole deck and every card that's gone. The estimate is correct.
+- **With manual input** the exact deck composition isn't available: the deck changes over
+  the run (cards added, removed, upgraded), and tracking it by hand is unrealistic. We work
+  on the assumption of a standard 52-card deck minus what's been seen this round, and mark
+  the result approximate.
 
-Отсюда порядок фаз: **Фаза 6 идёт после Фазы 5**, потому что полноценной она становится
-только с автоматическим источником состояния.
+Hence the phase order: **Phase 6 comes after Phase 5**, because it only becomes fully
+capable with an automatic state source.
 
-### Консумаблы до розыгрыша (обнаружено в сессии, не было в исходном плане)
+### Consumables before a play (discovered in a session, wasn't in the original plan)
 
-Солвер не знает о Tarot/Planet-картах, которые лежат неиспользованными в инвентаре
-(`consumables` в состоянии мода) — а их можно применить перед розыгрышем и изменить результат.
-Два случая совсем разного размера:
+The solver doesn't know about Tarot/Planet cards sitting unused in the inventory
+(`consumables` in the mod's state) — and they can be used before a play and change the
+result. Two cases of very different size:
 
-- **Planet-карты** — маленькая механическая задача: поднять уровень нужной руки на 1 по уже
-  существующим таблицам и пересчитать тем же движком. Тот же паттерн, что и перебор порядка
-  джокеров. Не начато — не на чем было проверить (0 Planet-карт в инвентаре на момент
-  обнаружения).
-- **Tarot-карты** — на порядок больше: ~22 разных эффекта, многие не прибавляют число, а
-  трансформируют карты (`Death` — выбор пары карт «донор/цель», отдельное пространство перебора
-  поверх текущего). По объёму сравнимо с реализацией новых джокеров. Не начато; `Death` уже
-  встречался в инвентаре вживую.
+- **Planet cards** — a small mechanical task: raise the level of the needed hand by 1 using
+  the existing tables and recompute with the same engine. The same pattern as the joker
+  order search. **Done** — `solver/consumables.py`, Phase 9.4 (section 6, "Autopilot",
+  item 9.4).
+- **Tarot cards** — an order of magnitude larger: ~22 different effects, many of which don't
+  add a number but transform cards (`Death` — picking a "donor/target" pair of cards, a
+  search dimension on top of the existing one). Comparable in scope to implementing new
+  jokers. Not started (improvement C1); `Death` has already turned up in the inventory live.
 
-Не привязано к номеру фазы: по сути ближе к Фазе 4 (влияет на текущий розыгрыш, не на
-магазин), но всплыло уже после того, как нумерация фаз была зафиксирована.
+Not tied to a phase number: essentially closer to Phase 4 (affects the current play, not the
+shop), but it surfaced after the phase numbering was already fixed.
 
-### Магазин и порядок джокеров (Фаза 7)
+### Shop and joker order (Phase 7)
 
-- Порядок джокеров: перебор перестановок с отсечениями (для 5 слотов — 120 вариантов,
-  считается влёт) на репрезентативной руке. **Сделано** — `solver.play.rank_joker_orders`.
-- **Покупка (сделано)** — `solver.shop.evaluate_shop`. Мод отдаёт настоящий, а не
-  гипотетический магазин (`GameState.shop`/`shop_vouchers`/`shop_packs`, только в фазе
-  `SHOP`) — считать вероятность того, что выпадет, не нужно, ровно как с тегами скипа
-  (раздел «Стратегия рана» ниже). Для джокеров оценка — тот же контрфактум, что у порядка
-  джокеров: добавить кандидата к текущим и посмотреть, насколько вырастет `advise().best`,
-  только не на одной руке игрока (её в фазе `SHOP` нет — `GameState.hand` пуст), а
-  усреднено по `SAMPLE_HANDS = 12` представительным рукам из колоды (`full_deck` в узком
-  случае, иначе `standard_deck()` с честной пометкой `exact_deck=False`). Неизвестный игре
-  джокер получает `expected_uplift=None`, не догадку. Ваучеры и паки оценки не получают
-  вовсе — это осознанное решение, не пробел: ваучер меняет правила рана целиком (скидки,
-  слоты, шансы), а не счёт одной руки, сравнивать контрфактумом не с чем; вместо числа —
-  живой текст эффекта от самой игры (`ShopItem.effect`, то же поле `value.effect`, что даёт
-  `JokerCard.current_value` в других местах). **Поправка на экономику (сделано)** —
-  `JokerOffer.interest_lost`: покупка джокера — это ещё и упущенные проценты в конце
-  ближайшего раунда, не только `item.price`. Формула (`solver.shop._interest`) выписана из
-  `functions/state_events.lua` игры, не по памяти: `interest_amount * min(floor(dollars/5),
-  interest_cap/5)`, константы по умолчанию `interest_amount=1`/`interest_cap=25` — из
-  `game.lua`. Доллары и очки намеренно не сведены в одно число (тот же принцип, что у
-  `core/tags.py`) — `interest_lost` показывается рядом с `expected_uplift`, а не вычитается из
-  него. Две честно признанные неполноты: цифра — только про ближайший конец раунда, не про
-  весь остаток рана (для этого нужно знать число оставшихся раундов — уже размер Фазы 9, не
-  витрины магазина), и она предполагает потолок $25 по умолчанию, потому что `GameState` не
-  хранит уже выкупленные `Seed Money`/`Money Tree` (поднимают потолок до $50/$100) — то есть
-  это честная нижняя граница, не переоценка. Единственный явно отслеживаемый частный случай —
-  `Green Deck` (`GameState.deck_type == "GREEN"`), где `game.lua` отключает проценты вовсе:
-  там `interest_lost` гарантированный ноль, а не приближение. **Вживую на Mac ещё не
-  проверено**: за время разработки игра не доходила до фазы `SHOP` — только `doctor` на
-  пустом магазине (не в фазе `SHOP`) подтверждён без падения. Проверка на реальном
-  предложении джокеров — открытая задача, не выполненная работа.
+- Joker order: a permutation search with pruning (for 5 slots — 120 options, computed
+  instantly) on a representative hand. **Done** — `solver.play.rank_joker_orders`.
+- **Purchasing (done)** — `solver.shop.evaluate_shop`. The mod exposes the real, not a
+  hypothetical, shop (`GameState.shop`/`shop_vouchers`/`shop_packs`, only in phase `SHOP`) —
+  there's no need to compute the probability of what might roll, exactly as with the skip
+  tags ("Run strategy" section below). For jokers the estimate is the same counterfactual as
+  the joker order: add the candidate to the current jokers and see how much `advise().best`
+  grows, only not on the player's single hand (there is none in phase `SHOP` —
+  `GameState.hand` is empty), but averaged over `SAMPLE_HANDS = 12` representative hands from
+  the deck (`full_deck` in the narrow case, otherwise `standard_deck()` with an honest
+  `exact_deck=False` marker). A joker the game doesn't know gets `expected_uplift=None`, not
+  a guess. Vouchers and packs get no estimate at all — a deliberate decision, not a gap: a
+  voucher changes the run's rules wholesale (discounts, slots, odds), not the score of one
+  hand, there's nothing to compare with via a counterfactual; instead of a number — the live
+  effect text from the game itself (`ShopItem.effect`, the same `value.effect` field that
+  gives `JokerCard.current_value` elsewhere). **The economy adjustment (done)** —
+  `JokerOffer.interest_lost`: buying a joker also means forgone interest at the end of the
+  next round, not only `item.price`. The formula (`solver.shop._interest`) is written out
+  from the game's `functions/state_events.lua`, not from memory: `interest_amount *
+  min(floor(dollars/5), interest_cap/5)`, defaults `interest_amount=1`/`interest_cap=25`
+  from `game.lua`. Dollars and points are deliberately not collapsed into one number (the
+  same principle as `core/tags.py`) — `interest_lost` is shown next to `expected_uplift`,
+  not subtracted from it. Two honestly acknowledged incompletenesses: the figure is only
+  about the next round-end, not the whole rest of the run (that needs knowing the number of
+  remaining rounds — already Phase 9 scope, not a shop-screen thing), and it assumes the
+  default $25 cap because `GameState` doesn't store already-redeemed `Seed Money`/`Money
+  Tree` (which raise the cap to $50/$100) — so it's an honest lower bound, not an
+  overestimate. The one explicitly tracked special case is `Green Deck`
+  (`GameState.deck_type == "GREEN"`), where `game.lua` disables interest outright: there
+  `interest_lost` is a guaranteed zero, not an approximation. **Not verified live on a Mac
+  yet**: over the course of development the game never reached the `SHOP` phase — only
+  `doctor` on an empty shop (not in phase `SHOP`) is confirmed not to crash. Verification
+  against a real joker offer is an open task, not completed work.
 
-### Стратегия рана (Фаза 8)
+### Run strategy (Phase 8)
 
-Полная симуляция ранов (прогон тысяч ранов с разными политиками, отбор лучших
-правил) — не первый шаг, а последний: без рабочих эвристик для отдельных
-решений (скип блайнда, магазин, экономика) симулировать нечем — политику для
-симуляции берём как раз из них.
+A full run simulation (running thousands of runs with different policies, selecting the best
+rules) isn't the first step but the last: without working heuristics for individual
+decisions (blind skip, shop, economy) there's nothing to simulate with — the policy for the
+simulation comes from exactly those.
 
-**Уточнение (сессия 2026-08-27): «симуляция» — это прогон настоящей игры через
-автопилот, а не свой офлайн-движок правил.** Явно проговорено и зафиксировано,
-чтобы не перечитывалось двояко в будущих сессиях: свой симулятор потребовал бы
-угадывать шансы генерации магазина/колоды/боссов — ровно то, от чего
-последовательно отказались `solver/skip.py`/`solver/shop.py`/`solver/discard.py`
-(считать только по тому, что реально показала игра, никогда не моделировать
-случайность заранее). «Прогнать тысячу ранов» значит буквально сыграть тысячу
-настоящих ранов ботом через мост к моду и посмотреть на статистику побед — то
-есть этот пункт **жёстко зависит от цикла действий автопилота (Фаза 9, ещё не
-начата)**, а не просто идёт последним по порядку: начинать его раньше
-технически не на чем играть.
+**Clarification (session 2026-08-27): "simulation" means running the real game through the
+autopilot, not our own offline rules engine.** Stated and recorded explicitly so it isn't
+read two ways in future sessions: our own simulator would require guessing the generation
+odds for the shop/deck/bosses — exactly what `solver/skip.py`/`solver/shop.py`/
+`solver/discard.py` have consistently refused to do (compute only from what the game
+actually showed, never model randomness in advance). "Run a thousand runs" means literally
+playing a thousand real runs with the bot through the bridge to the mod and looking at the
+win statistics — so this item **hard-depends on the autopilot's action loop (Phase 9, not
+yet started)**, it's not just last in order: there's technically nothing to play on before
+that.
 
-**Скип блайнда (сделано, первый кусок фазы)** — `solver/skip.py`,
-`evaluate_skip()`. Ключевое наблюдение: экран выбора блайнда — не то место,
-где нужно гадать вероятности. Мод уже отдаёт настоящее состояние: требования
-всех трёх блайндов анте (`GameState.blinds["small"/"big"/"boss"]`) и точный
-текст тега, который достанется при скипе (`Blind.tag_name`/`tag_effect`), а
-не распределение возможных тегов. Поэтому это не симуляция, а честный разбор
-уже известного выбора — тот же принцип, что у `advise_discard`/
-`rank_joker_orders`: не гадать, а посчитать по тому, что реально видно.
+**Blind skip (done, the first slice of the phase)** — `solver/skip.py`, `evaluate_skip()`.
+The key observation: the blind-select screen isn't the place to guess probabilities. The mod
+already exposes the real state: the requirements of all three ante blinds
+(`GameState.blinds["small"/"big"/"boss"]`) and the exact text of the tag you'd get on a skip
+(`Blind.tag_name`/`tag_effect`), not a distribution of possible tags. So this isn't a
+simulation but an honest analysis of an already-known choice — the same principle as
+`advise_discard`/`rank_joker_orders`: don't guess, compute from what's actually visible.
 
-Функция не сводит решение к одному выдуманному числу — часть тегов
-(бесплатный джокер, ваучер, пак) в принципе не переводится в очки или деньги
-без произвольной оценки полезности. Вместо вердикта — разложенные числа:
-во сколько раз следующий блайнд анте тяжелее этого (`requirement_ratio`,
-без хода — на экране выбора блайнда руки ещё нет), гарантированный минимум
-денег за победу (`_BASE_REWARD`: `bl_small=$3`, `bl_big=$4`, выписано из
-`game.lua`, не по памяти), и содержание тега как есть. Точная денежная
-цена тега (`tag_dollars`) считается только там, где формула не требует
-счётчика уровня рана, которого мод нигде не присылает (только
-`round.*`, по раунду): `Investment Tag` ($25, условие — победа над боссом
-этого анте) и `Economy Tag` (`min($40, текущие деньги)`) — точны;
-`Handy`/`Garbage`/`Skip Tag` требуют суммарного числа рук/сбросов/скипов за
-весь ран — `tag_dollars` для них честно `None`, а не догадка. Каталог всех
-24 тегов (`core/tags.py`, `TAGS`) выписан из исходника игры (`game.lua`
-`tag_*`, `tag.lua` `Tag:apply_to_run`) тем же способом, что джокеры —
-структурное описание, что тег механически делает, без оценки полезности.
+The function doesn't collapse the decision to a single made-up number — some tags (a free
+joker, a voucher, a pack) can't be converted to points or dollars at all without an
+arbitrary utility valuation. Instead of a verdict — laid-out numbers: how many times heavier
+the next ante blind is than this one (`requirement_ratio`, no play — on the blind-select
+screen there's no hand yet), the guaranteed minimum money for a win (`_BASE_REWARD`:
+`bl_small=$3`, `bl_big=$4`, written out from `game.lua`, not from memory), and the tag's
+contents as-is. The exact dollar value of a tag (`tag_dollars`) is computed only where the
+formula doesn't need a run-level counter that the mod never sends (only `round.*`, per
+round): `Investment Tag` ($25, conditional on beating this ante's boss) and `Economy Tag`
+(`min($40, current money)`) — exact; `Handy`/`Garbage`/`Skip Tag` need a run-total count of
+hands/discards/skips — `tag_dollars` for them is honestly `None`, not a guess. The catalogue
+of all 24 tags (`core/tags.py`, `TAGS`) is written out from the game's source (`game.lua`
+`tag_*`, `tag.lua` `Tag:apply_to_run`) the same way as jokers — a structural description of
+what a tag mechanically does, with no utility valuation.
 
-Подключено в `doctor`/`watch` (`render_skip_advice`), не в `advise`: на
-экране выбора блайнда `GameState.hand` пустой, `advise()` считать не на
-чем.
+Wired into `doctor`/`watch` (`render_skip_advice`), not `advise`: on the blind-select screen
+`GameState.hand` is empty, there's nothing for `advise()` to compute on.
 
-**Проверено вживую на Mac** 2026-08-22: реальный Big Blind с Investment Tag
-(анте 1) — числа совпали с ручным расчётом ($4 гарантированно за игру против
-$25 условно за скип), решение обсуждалось и подтверждено отдельно от кода.
+**Verified live on a Mac** 2026-08-22: a real Big Blind with an Investment Tag (ante 1) —
+the numbers matched a hand calculation ($4 guaranteed for playing versus $25 conditionally
+for skipping), the decision was discussed and confirmed separately from the code.
 
-Покупка джокеров переехала в Фазу 7 (раздел «Магазин и порядок джокеров»
-выше) — она про магазин конкретно, здесь остаётся более общая экономика
-(проценты, момент реролла) и полная симуляция ранов после неё.
+Joker purchasing moved to Phase 7 ("Shop and joker order" section above) — it's about the
+shop specifically; what stays here is the more general economy (interest, reroll timing) and
+the full run simulation after it.
 
-**Проценты — сделано в Фазе 7** (`JokerOffer.interest_lost`, см. раздел
-«Магазин и порядок джокеров» выше).
+**Interest — done in Phase 7** (`JokerOffer.interest_lost`, see the "Shop and joker order"
+section above).
 
-**Момент рерола (сделано, честно ограниченный объём).** `GameState.reroll_cost`
-— живая цена рерола прямо сейчас, из области `round` мода (`reroll_cost`, та
-же область, что `hands_left`/`discards_left` — было прочитано вживую из
-`tests/fixtures/gamestate.json`, не по памяти). `ShopAdvice.reroll_cost`
-показывает её рядом с оценкой текущего предложения магазина
-(`solver/shop.py`, `doctor`/`watch`). Дальше бот сознательно не идёт: честная
-оценка «стоит ли рероллить» требовала бы знать распределение того, что может
-выпасть вместо текущего предложения (`joker_rate`, шансы редкости из
-`game.lua`) — расчёт по вероятностной модели того, чего ещё нет, а не по
-тому, что игра уже показала, другой по духу и рискованный по объёму по
-сравнению с остальным этим модулем. Тот же принцип, что `solver/skip.py`:
-разложенные числа, не выдуманный вердикт.
+**Reroll timing (done, honestly limited scope).** `GameState.reroll_cost` — the live reroll
+price right now, from the mod's `round` area (`reroll_cost`, the same area as
+`hands_left`/`discards_left` — read live from `tests/fixtures/gamestate.json`, not from
+memory). `ShopAdvice.reroll_cost` shows it next to the evaluation of the current shop offer
+(`solver/shop.py`, `doctor`/`watch`). The bot deliberately goes no further: an honest "is a
+reroll worth it" estimate would require knowing the distribution of what might roll instead
+of the current offer (`joker_rate`, rarity odds from `game.lua`) — a computation over a
+probabilistic model of what doesn't exist yet, rather than over what the game already
+showed, different in spirit and risky in scope compared with the rest of this module. The
+same principle as `solver/skip.py`: laid-out numbers, not a made-up verdict.
 
-### Автопилот (Фаза 9)
+### Autopilot (Phase 9)
 
-Зависит от всего готового ядра решений (Фазы 4–8) — не пересчитывает их заново, а достраивает
-слой действия сверху и закрывает решения, которые раньше честно отдавались человеку. Новая
-цель проекта и её объём — раздел 2. Порядок подзадач ниже — не строгая последовательность
-(зависимости важнее номеров, как и везде в этом документе), но 9.1 и 9.5 логически идут первыми:
-без цикла действий нечем исполнять решения, без каталога боссов автопилот может честно
-посчитать нелегальный ход и застрять, пытаясь его сыграть.
+Depends on the entire finished decision core (Phases 4–8) — it doesn't recompute them, it
+builds an action layer on top and closes the decisions that used to be left honestly to the
+human. The project's new goal and its scope — section 2. The order of the subtasks below
+isn't a strict sequence (dependencies matter more than numbers, as everywhere in this
+document), but 9.1 and 9.5 logically come first: without an action loop there's nothing to
+execute decisions with, and without the boss catalogue the autopilot can honestly compute an
+illegal move and get stuck trying to play it.
 
-**9.1. Цикл действий и честные вызовы моста.** `ModBridge` уже умеет собирать `game_state()`
-и формально имеет клиентские методы `play()`/`discard()`, но их никто не вызывает (см.
-CLAUDE.md). Мод отдаёт куда больше действий, чем сейчас используется, — весь список сверен по
-`openrpc.json` (раздел 2, «Только честные действия»): `select`/`skip` (экран выбора блайнда),
-`play`/`discard` (розыгрыш), `buy`/`sell`/`reroll`/`next_round`/`cash_out` (магазин), `use`
-(консумабль, опционально с целевыми картами), `rearrange` (порядок руки/джокеров/консумаблов —
-нужен, чтобы применить результат `rank_joker_orders`, который солвер уже считает, но некому
-применять), `start` (новый ран с выбранным деском и ставкой). Сам цикл — конечный автомат по
-`GameState.phase`: на каждой фазе конкретное решение (из готового солвера, где оно уже точное;
-из новых подзадач ниже, где раньше был честный отказ) → один RPC-вызов → снова читаем
-состояние. Тот же паттерн опроса и сравнения состояний, что уже есть в `ui/tui.py` для `watch`,
-только `watch` кончает поллингом, а автопилот — действием.
+**9.1. The action loop and honest bridge calls.** `ModBridge` can already assemble
+`game_state()` and formally has client methods `play()`/`discard()`, but nobody calls them
+(see CLAUDE.md). The mod exposes far more actions than are used now — the whole list checked
+against `openrpc.json` (section 2, "Honest actions only"): `select`/`skip` (blind-select
+screen), `play`/`discard` (a play), `buy`/`sell`/`reroll`/`next_round`/`cash_out` (the
+shop), `use` (a consumable, optionally with target cards), `rearrange`
+(hand/joker/consumable order — needed to apply the result of `rank_joker_orders`, which the
+solver already computes but which nobody applies), `start` (a new run with a chosen deck and
+stake). The loop itself is a finite state machine over `GameState.phase`: on each phase a
+concrete decision (from the finished solver, where it's already exact; from the new subtasks
+below, where there used to be an honest refusal) → one RPC call → read state again. The same
+poll-and-compare-states pattern already present in `ui/tui.py` for `watch`, except `watch`
+ends with polling and the autopilot with an action.
 
-Отсюда прямо следует требование переключения (раздел 2): раз оба режима читают состояние
-одним и тем же способом и различаются только тем, кто дёргает действия, `autoplay` обязан
-проверять переключатель «пауза/перехват» между каждым действием цикла (не только между ранами)
-и на паузе вести себя как `watch` — показывать то же самое, ничего не трогая, пока управление
-не вернут обратно.
+This directly implies the switching requirement (section 2): since both modes read state the
+same way and differ only in who pulls the actions, `autoplay` must check a "pause/takeover"
+switch between every action of the loop (not only between runs) and, when paused, behave
+like `watch` — show the same thing, touch nothing — until control is handed back.
 
-**Сделано (`SELECTING_HAND` — розыгрыш/сброс).** `balatro_bot/autopilot.py`:
-`decide_action(state)` в основе берёт топ-1 из `solver.actions.rank_actions` (тот же список,
-что видит человек в `advise`/`watch`) и переводит выбранные карты в 0-based индексы, которых
-ждёт RPC мода (`ModBridge.play`/`.discard`). **Поправка, добавленная после живого прогона:**
-`rank_actions` сравнивает розыгрыши и сбросы по матожиданию, а у сброса оно оптимистично по
-построению (`ActionOption.exact = False`), поэтому «сбросить к флешу» нередко показывает число
-больше, чем «сыграть эту двойную пару» — даже когда пара уже гарантированно закрывает блайнд.
-Человек видит пометку «хватает на блайнд» и не купится; автопилот же разменивал верную победу
-на ставку (вживую: сброс всех четырёх сбросов там, где текущая рука уже закрывала анте-1).
-Теперь `decide_action` сперва проверяет `advise(state).cheapest_sufficient` — самый экономный
-ход, чей **нижний предел** (`Candidate.beats`, не среднее) уже перекрывает оставшееся
-требование, — и играет его; топ-1 `rank_actions` (возможно, сброс) берётся только когда
-гарантированного хода нет. Не новый расчёт счёта, а приоритет «верное над вероятным», тот же
-принцип, что у `decide_skip`.
-`ui/tui.py.autoplay()` — тот же цикл опроса, что `watch`, плюс переключатель «пауза/перехват» на
-клавишу `p` (не отдельная команда — нажимается прямо во время работы), проверяемый на каждой
-итерации, то есть между каждым отдельным действием, а не только между ранами — то самое
-требование выше, зафиксированное как обязательное. Настоящая клавиатура читается через
-`termios`/`tty` в cbreak-режиме (стандартная библиотека, без новых зависимостей); если stdin —
-не терминал, тумблер тихо отключается вместо падения, автопилот продолжает работать без него.
-Отказ мода на честно посчитанный ход (например, ограничение босса, которое `_is_legal_play` ещё
-не покрывает) не роняет цикл — печатает ошибку и продолжает опрос тем же состоянием.
+**Done (`SELECTING_HAND` — play/discard).** `balatro_bot/autopilot.py`:
+`decide_action(state)` at its base takes the top-1 from `solver.actions.rank_actions` (the
+same list the human sees in `advise`/`watch`) and translates the chosen cards into the
+0-based indices the mod's RPC expects (`ModBridge.play`/`.discard`). **A correction added
+after a live run:** `rank_actions` compares plays and discards by expected value, and for a
+discard it's optimistic by construction (`ActionOption.exact = False`), so "discard toward a
+flush" often shows a bigger number than "play this two pair" — even when the pair already
+guarantees clearing the blind. The human sees the "hits the blind" marker and isn't fooled;
+the autopilot, though, traded a certain win for a gamble (live: discarding all four discards
+where the current hand already cleared ante 1). Now `decide_action` first checks
+`advise(state).cheapest_sufficient` — the most economical move whose **lower bound**
+(`Candidate.beats`, not the mean) already covers the remaining requirement — and plays it;
+the top-1 of `rank_actions` (possibly a discard) is taken only when there's no guaranteed
+move. Not a new score computation, but a "certain over probable" priority, the same
+principle as `decide_skip`.
+`ui/tui.py.autoplay()` — the same poll loop as `watch`, plus a "pause/takeover" switch on
+the `p` key (not a separate command — pressed while it's running), checked on every
+iteration, i.e. between every individual action, not only between runs — that same
+requirement above, recorded as mandatory. Real keyboard input is read via `termios`/`tty` in
+cbreak mode (standard library, no new dependencies); if stdin isn't a terminal, the switch
+quietly disables itself instead of crashing, and the autopilot keeps working without it. A
+mod rejection of an honestly computed move (e.g. a boss restriction that `_is_legal_play`
+doesn't cover yet) doesn't bring down the loop — it prints the error and keeps polling with
+the same state.
 
-**Сделано (`BLIND_SELECT` — скип блайнда, первый кусок 9.2).** `autopilot.decide_skip(advice)` —
-предельно консервативная политика поверх уже посчитанных `evaluate_skip` чисел, не новый расчёт:
-скип только если `SkipAdvice.tag_dollars` точно известен (сейчас — только `Investment`/`Economy
-Tag`) и строго больше `play_reward_min`. Структурные теги (бесплатный джокер/ваучер/пак) никогда
-не вызывают скип сами по себе — не потому что они неважны (частый опытный выбор — как раз
-скипать ради них), а потому что оценивать их в долларах здесь значило бы гадать. Когда скип не
-доказан числом (включая случай, когда скипать вообще нельзя — на очереди Boss Blind) — решение
-`select`, играть. `ModBridge.select()`/`.skip()` — новые методы клиента (RPC без параметров,
-`openrpc.json` подтверждает: мод сам знает, какой блайнд сейчас выбираем). Тесты —
+**Done (`BLIND_SELECT` — blind skip, the first slice of 9.2).** `autopilot.decide_skip(advice)`
+— an extremely conservative policy on top of the already-computed `evaluate_skip` numbers,
+not a new computation: skip only if `SkipAdvice.tag_dollars` is known exactly (currently
+only `Investment`/`Economy Tag`) and strictly exceeds `play_reward_min`. Structural tags (a
+free joker/voucher/pack) never trigger a skip on their own — not because they're worthless
+(a common experienced choice is exactly to skip for them), but because valuing them in
+dollars here would mean guessing. When a skip isn't proven by a number (including the case
+where skipping isn't even possible — the Boss Blind is next) — the decision is `select`,
+play. `ModBridge.select()`/`.skip()` — new client methods (parameterless RPC, `openrpc.json`
+confirms: the mod knows which blind is being selected). Tests —
 `tests/test_autopilot.py` (`TestDecideSkip`, `TestDecideActionНаВыбореБлайнда`),
 `tests/test_tui.py::TestAutoplay`, `tests/test_mod_bridge.py::TestКлиент`.
 
-**Сделано (`SHOP`/`ROUND_EVAL` — магазин, второй кусок 9.2).** Между «выиграл раунд» и «зашёл в
-магазин» есть фаза `ROUND_EVAL` («забрать награду за раунд») — решать там нечего, но без явного
-`cash_out` автопилот застрял бы там навсегда, ровно как без `select`/`skip` на выборе блайнда;
-`decide_action` вызывает его безусловно. В магазине политика покупки джокеров максимально
-простая и честная: купить лучшего по приросту (`solver.shop.evaluate_shop`'s `expected_uplift`,
-уже отсортировано по убыванию), если он известен движку (`known`), по карману (`affordable`),
-есть слот (`has_slot`) и прирост строго положителен — все четыре флага уже посчитаны в
-`evaluate_shop`, не новая эвристика. `interest_lost` (упущенные проценты, раздел «Магазин и
-порядок джокеров») сознательно не участвует в решении «покупать ли» — несоизмеримая с приростом
-счёта величина (доллары против очков, тот же принцип, что у `decide_skip`), только показывается
-человеку рядом. Покупка — не более одной за вызов `decide_action`: контрфактум `evaluate_shop`
-для второго джокера не учитывает уже купленного первого (джокеры вроде `Blueprint` зависят от
-соседей), поэтому правильно пересчитывать заново после каждой покупки — цикл опроса и так
-перечитывает состояние на каждой итерации, счёт следующего джокера будет честным сам по себе.
-Когда покупать больше нечего — решение `next_round`, уйти из магазина. Ваучеры, паки и реролл
-намеренно не тронуты вовсе — `evaluate_shop` не даёт им числовой оценки, а `reroll_cost` — цена
-без вердикта (раздел 8 плана, «Момент рерола»); оценивать их здесь значило бы гадать.
-`ModBridge.buy()`/`.next_round()`/`.cash_out()` — новые методы клиента (`buy` мультиплексирует
-`card`/`voucher`/`pack` по схеме мода, здесь используется только `card`). Тесты —
+**Done (`SHOP`/`ROUND_EVAL` — the shop, the second slice of 9.2).** Between "won the round"
+and "entered the shop" there's a `ROUND_EVAL` phase ("collect the round reward") — there's
+nothing to decide there, but without an explicit `cash_out` the autopilot would be stuck
+there forever, exactly as without `select`/`skip` on blind-select; `decide_action` calls it
+unconditionally. In the shop the joker-buying policy is as simple and honest as possible:
+buy the best one by uplift (`solver.shop.evaluate_shop`'s `expected_uplift`, already sorted
+descending) if it's known to the engine (`known`), affordable (`affordable`), has a slot
+(`has_slot`), and the uplift is strictly positive — all four flags are already computed in
+`evaluate_shop`, not a new heuristic. `interest_lost` (forgone interest, "Shop and joker
+order" section) deliberately plays no part in the "buy or not" decision — a quantity
+incommensurable with a score uplift (dollars versus points, the same principle as
+`decide_skip`), only shown to the human alongside. A purchase — at most one per
+`decide_action` call: `evaluate_shop`'s counterfactual for a second joker doesn't account
+for the first one just bought (jokers like `Blueprint` depend on neighbours), so it's right
+to recompute after each purchase — the poll loop re-reads state every iteration anyway, the
+next joker's score will be honest on its own. When there's nothing left to buy — the
+decision is `next_round`, leave the shop. Vouchers, packs, and reroll were deliberately
+untouched in this slice of 9.2 — `evaluate_shop` didn't give them a numeric estimate then;
+later the autopilot learned to buy packs and vouchers (improvements A3/A4, paragraph below),
+reroll — still not (A5, section 8 of the plan, "Reroll timing").
+`ModBridge.buy()`/`.next_round()`/`.cash_out()` — new client methods (`buy` multiplexes
+`card`/`voucher`/`pack` per the mod's schema, only `card` used here). Tests —
 `tests/test_autopilot.py` (`TestDecideActionНаRoundEval`, `TestDecideActionВМагазине`),
 `tests/test_tui.py::TestAutoplay`, `tests/test_mod_bridge.py::TestКлиент`.
 
-Позже (улучшение A1, п. 9.8) сюда добавилась продажа-замена: когда слоты полны и обычная
-покупка невозможна, `_decide_replace_action` продаёт самого слабого джокера под лучший оффер
-(подробности — п. 9.8). Порядок веток в `_decide_shop_action`: купить джокера → купить
-Buffoon-пак → продать-заменить → уйти.
+Later (improvements A1–A4, item 9.8) this branch grew: **A2** — the joker-buy threshold
+raised from "> 0" to 3% of the next blind's requirement (`_worth_buying`); **A4** — buying
+vouchers across all three honesty tiers (`_decide_voucher_action`); **A3** — buying a
+Celestial pack from the shop (the same branch as Buffoon); **A1** — sell-replace when slots
+are full (`_decide_replace_action` sells the weakest non-eternal joker under a noticeably
+better offer). The current branch order in `_decide_shop_action`: buy a joker → buy a
+voucher → buy a Buffoon/Celestial pack → sell-replace → leave (`next_round`). Details of all
+four — item 9.8.
 
-**Сделано (`PLANET_PACK` — вскрытие Celestial/Planet Pack, третий и последний кусок 9.2).**
-`solver/pack.py`'s `evaluate_pack(state)` считает тот же контрфактум, что джокеры в магазине
-(`_evaluate_joker_offer`): поднять уровень нужного типа руки в копии `GameState.hand_info`
-(`_level_up`, шаг — из уже проверенной `core.hands.PER_LEVEL_VALUES`), пересчитать `advise()` на
-представительных руках (та же выборка, что в `solver/shop.py` — `GameState.full_deck`, если он
-известен точно, иначе стандартная колода), взять разницу со старым счётом. `PLANET_HAND_TYPES` —
-таблица «ключ планеты -> тип руки» на все 12 планет, выписанная из уже проверенных текстов эффектов
-в `core/catalogue.py` (`c_pluto`, `c_mercury`, ...), не по памяти; покрытие (все 12 типов руки
-ровно по одному разу) проверяет `tests/test_pack.py`. Политика автопилота (`_decide_pack_action`)
-проще, чем скип/магазин: подъём уровня руки по построению не может ухудшить лучший достижимый
-счёт (это чисто добавочные фишки/множитель одного конкретного типа, не отбирающие ничего у
-остальных) — значит вопроса «а стоит ли» тут вообще нет, только «какую из предложенных карт»;
-`skip_pack` — только защитный случай, когда в паке не нашлось ни одной опознанной планеты.
-Джамбо/мега-паки (1 из 5 / до 2 из 5) не потребовали отдельной ветки: цикл опроса и так
-перечитывает состояние каждую итерацию, и если пак остаётся открытым после одного выбора,
-следующий выбор посчитается заново на уже обновлённом состоянии. Новый клиентский метод моста —
-`ModBridge.open_pack(*, card=None, skip=None)` (RPC-метод у мода называется `pack`, на клиенте
-переименован, чтобы не путать с `buy(pack=...)` — это индекс пака в витрине магазина, другое
-понятие). `GameState.pack` — новая область (`ShopItem`, та же форма, что у `shop`/`shop_vouchers`/
-`shop_packs`). Рендер — `render_pack_advice`, показывается в `doctor`/`watch`/`autoplay`
-безусловно, как и остальные виды совета. Тесты — `tests/test_pack.py` (сам расчёт),
+**Done (`PLANET_PACK` — opening a Celestial/Planet Pack, the third and last slice of 9.2).**
+`solver/pack.py`'s `evaluate_pack(state)` computes the same counterfactual as jokers in the
+shop (`_evaluate_joker_offer`): raise the level of the needed hand type in a copy of
+`GameState.hand_info` (`_level_up`, the step from the already-verified
+`core.hands.PER_LEVEL_VALUES`), recompute `advise()` on representative hands (the same
+sample as in `solver/shop.py` — `GameState.full_deck` if known exactly, otherwise the
+standard deck), take the difference from the old score. `PLANET_HAND_TYPES` — a "planet key
+-> hand type" table for all 12 planets, written out from the already-verified effect texts
+in `core/catalogue.py` (`c_pluto`, `c_mercury`, ...), not from memory; coverage (all 12 hand
+types exactly once) is checked by `tests/test_pack.py`. The autopilot's policy
+(`_decide_pack_action`) is simpler than skip/shop: raising a hand level can't by construction
+worsen the best achievable score (it's purely additive chips/mult for one specific type,
+taking nothing from the others) — so there's no "is it worth it" question here at all, only
+"which of the offered cards"; `skip_pack` is only a defensive case when the pack contained
+no recognized planet. Jumbo/mega packs (1 of 5 / up to 2 of 5) needed no separate branch:
+the poll loop re-reads state every iteration anyway, and if the pack stays open after one
+pick, the next pick is recomputed on the already-updated state. The new bridge client method
+is `ModBridge.open_pack(*, card=None, skip=None)` (the mod's RPC method is called `pack`,
+renamed on the client to avoid confusion with `buy(pack=...)` — that's a pack index in the
+shop, a different concept). `GameState.pack` — a new area (`ShopItem`, the same shape as
+`shop`/`shop_vouchers`/`shop_packs`). Rendering — `render_pack_advice`, shown in
+`doctor`/`watch`/`autoplay` unconditionally, like the other kinds of advice. Tests —
+`tests/test_pack.py` (the computation itself),
 `tests/test_autopilot.py::TestDecideActionНаВскрытииПака`, `tests/test_tui.py::TestAutoplay`,
 `tests/test_mod_bridge.py::TestКлиент`/`TestРазборСостояния`.
 
-Все четыре части (`SELECTING_HAND`/`BLIND_SELECT`/`SHOP`+`ROUND_EVAL`/`PLANET_PACK`) — **вживую на
-Mac не проверялись**, пока только на фальшивом моде (`tests/fake_mod.py`, который не симулирует ни
-реальный розыгрыш, ни реальный переход между фазами).
+All four parts (`SELECTING_HAND`/`BLIND_SELECT`/`SHOP`+`ROUND_EVAL`/`PLANET_PACK`) — **not
+verified live on a Mac**, so far only against the fake mod (`tests/fake_mod.py`, which
+simulates neither a real play nor a real transition between phases).
 
-Любая фаза, кроме перечисленных выше (вскрытие Tarot/Spectral/Standard/Buffoon-пака,
-`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK`/`BUFFOON_PACK`), по-прежнему намеренно возвращает
-`None` — решения там ещё не замкнуты, автопилот на них ничего не делает, ровно как `watch`.
+Any phase other than those listed above (opening a Tarot/Spectral/Standard/Buffoon pack,
+`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK`/`BUFFOON_PACK`) still deliberately returns
+`None` — the decisions there aren't closed yet, the autopilot does nothing on them, exactly
+like `watch`.
 
-**9.2. Замыкание решений без готового вердикта — закрыто полностью.** Скип блайнда, покупка
-джокеров в магазине и вскрытие Celestial/Planet Pack сделаны выше. Остальные типы паков
-(Arcana/Tarot, Spectral, Standard, Buffoon) — отдельная задача, см. 9.3/9.4 ниже: они не сводятся
-к тому же простому контрфактуму (трансформируют конкретные карты или содержат RNG, которого этот
-пак не имеет).
+**9.2. Closing decisions without a ready verdict — fully closed.** Blind skip, shop joker
+purchasing, and opening a Celestial/Planet Pack are done above. The other pack types
+(Arcana/Tarot, Spectral, Standard, Buffoon) are a separate task, see 9.3/9.4 below: they
+don't reduce to the same simple counterfactual (they transform specific cards or contain RNG
+this pack doesn't have).
 
-**9.3. Оценка ваучеров и паков.** 32 ваучера разобраны по `card.lua`/`game.lua` (`Card:apply_to_run`,
-таблица `v_*` в `game.lua`) на группы по тому, насколько честно их можно оценить — не бинарно
-«считаем/не считаем», а по трём уровням, согласно новой третьей категории честности выше:
-  - **Точный расчёт, без новых допущений — сделано (`solver/vouchers.py`).** `Grabber`/
-    `Nacho Tong` (+1 руке за раунд каждый, проверено по `card.lua`: `config.extra` действительно
-    прибавляется, не задаёт абсолютное значение) оцениваются как чистый средний лучший счёт
-    (`advise().best.score`) по представительным рукам — без вычитания базы, лишняя рука создаёт
-    целиком новую возможность розыгрыша, а не улучшает существующую. `Paint Brush`/`Palette`
-    (+1 к размеру руки каждый) — тем же контрфактумом, что джокеры в `solver/shop.py`: одна
-    выборка руки размером `_HAND_SIZE + 1`, счёт с ней и счёт по первым `_HAND_SIZE` картам той
-    же выборки, разница — так прирост считается по одной конкретно добавленной карте, а не по
-    двум независимо насэмплированным рукам. `Wasteful`/`Recyclomancy` (+1 сбросу за раунд
-    каждый) — единственный случай в этой группе, честно **уже не идеально «без новых
-    допущений»**: ценность меряется только через `rank_single_discards` (единственный размер
-    сброса с всегда дешёвым точным перебором), не через полный `rank_discards` до пяти карт —
-    это на порядок дороже на каждый семпл и не укладывается в бюджет захода в магазин
-    (~1.5 с на 4 ваучера при живом замере). Число — честная нижняя граница
-    (`VoucherOffer.note` говорит об этом прямо), не переоценка: настоящий выигрыш от
-    многокарточного сброса может быть больше.
+**9.3. Valuing vouchers and packs.** The 32 vouchers were analyzed against
+`card.lua`/`game.lua` (`Card:apply_to_run`, the `v_*` table in `game.lua`) into groups by
+how honestly they can be valued — not binary "we compute / we don't", but across three
+tiers, per the new third honesty category above:
+  - **Exact computation, no new assumptions — done (`solver/vouchers.py`).** `Grabber`/
+    `Nacho Tong` (+1 hand per round each, verified against `card.lua`: `config.extra` really
+    is added, doesn't set an absolute value) are valued as the plain average best score
+    (`advise().best.score`) over representative hands — no baseline subtracted, an extra hand
+    creates a wholly new play opportunity rather than improving an existing one. `Paint
+    Brush`/`Palette` (+1 hand size each) — by the same counterfactual as jokers in
+    `solver/shop.py`: one sample of a hand of size `_HAND_SIZE + 1`, the score with it and
+    the score over the first `_HAND_SIZE` cards of the same sample, the difference — so the
+    uplift is measured over the one specific added card, not over two independently sampled
+    hands. `Wasteful`/`Recyclomancy` (+1 discard per round each) — the one case in this
+    group that's honestly **no longer quite "no new assumptions"**: the value is measured
+    only through `rank_single_discards` (the one discard size whose exact search is always
+    cheap), not through the full `rank_discards` up to five cards — that's an order of
+    magnitude more expensive per sample and doesn't fit a shop-visit budget (~1.5 s for 4
+    vouchers in a live measurement). The number is an honest lower bound
+    (`VoucherOffer.note` says so directly), not an overestimate: a real multi-card discard
+    could be worth more.
 
-    **`Hieroglyph`/`Petroglyph` — честно отложены, не сделаны.** Более ранняя редакция этого
-    пункта плана предполагала, что «требования блайндов по анте» уже посчитаны существующими
-    кусками — при реализации выяснилось, что это не так: нигде в проекте нет формулы требования
-    блайнда по номеру анте (`get_blind_amount(ante)` в `functions/misc_functions.lua` — точная,
-    детерминированная таблица для антов 1–8 и степенная формула дальше, но зависит ещё и от
-    ставки и колоды, которые тоже не учтены нигде). Строить её сейчас — это заметно больше
-    объёма, чем «просто ещё один ваучер», поэтому `Hieroglyph`/`Petroglyph` попадают в тот же
-    честный `None` с пояснением, что и второй/третий уровень ниже, а не тихо пропускаются и не
-    получают неверную оценку.
-  - **Денежная формула с явным горизонтом — сделано (`solver/vouchers.py`).** `Seed Money`/
-    `Money Tree` (`core.economy.interest_cap`) оцениваются как `(проценты с новым потолком −
-    проценты со старым) × горизонт`, где горизонт — не выдуманное «до конца анте» словами, а
-    посчитанное число: сколько блайндов этого анте ещё не `DEFEATED` в `GameState.blinds`.
-    Единственное явно помеченное допущение — что сумма денег на конец каждого будущего раунда
-    останется примерно такой же, как сейчас (реально может вырасти или упасть). `Reroll
-    Surplus`/`Reroll Glut` оцениваются заметно у́же: только экономия на *ближайшем* реролле по
-    текущей `GameState.reroll_cost`, не на всех рероллах до конца рана — тот же принцип
-    неполноты, что уже был у `JokerOffer.interest_lost`. `Clearance Sale`/`Liquidation`
-    (`core.economy.discount_percent`) оцениваются по товару, уже показанному в этом заходе в
-    магазин (`GameState.shop` + `shop_packs`), а не по спроецированным будущим визитам —
-    горизонт снова взят из показанного, а не выдуман; обратный пересчёт цены без скидки из уже
-    показанной (нужен, только если скидка уже частично активна) — приближение на единицы
-    долларов из-за `floor()` в исходной формуле цены игры, `VoucherOffer.note` говорит об этом
-    прямо.
+    **`Hieroglyph`/`Petroglyph` — honestly deferred, not done.** An earlier revision of this
+    plan item assumed that "per-ante blind requirements" were already computed by existing
+    pieces — during implementation it turned out they aren't: nowhere in the project is
+    there a formula for a blind requirement by ante number (`get_blind_amount(ante)` in
+    `functions/misc_functions.lua` — an exact, deterministic table for antes 1–8 and a power
+    formula beyond, but it also depends on the stake and the deck, which aren't accounted
+    for anywhere either). Building it now is noticeably more scope than "just one more
+    voucher", so `Hieroglyph`/`Petroglyph` fall into the same honest `None` with an
+    explanation as tiers two and three below, rather than being silently skipped or given a
+    wrong estimate.
+  - **A dollar formula with an explicit horizon — done (`solver/vouchers.py`).** `Seed
+    Money`/`Money Tree` (`core.economy.interest_cap`) are valued as `(interest at the new
+    cap − interest at the old cap) × horizon`, where the horizon isn't an invented "until
+    the end of the ante" in words but a computed number: how many of this ante's blinds are
+    not yet `DEFEATED` in `GameState.blinds`. The one explicitly flagged assumption is that
+    the money total at each future round-end stays roughly what it is now (it may actually
+    grow or shrink). `Reroll Surplus`/`Reroll Glut` are valued noticeably more narrowly:
+    only the saving on the *next* reroll at the current `GameState.reroll_cost`, not on
+    every reroll to the end of the run — the same partiality that `JokerOffer.interest_lost`
+    already had. `Clearance Sale`/`Liquidation` (`core.economy.discount_percent`) are valued
+    against the goods already shown in this shop visit (`GameState.shop` + `shop_packs`),
+    not against projected future visits — the horizon is again taken from what's shown, not
+    invented; inverting an already-discounted price back to the undiscounted base (needed
+    only if a discount is already partly active) is an approximation of a few dollars
+    because of the `floor()` in the game's own price formula, `VoucherOffer.note` says so
+    directly.
 
-    **Побочная находка и починка: `GameState.used_vouchers`.** Чтобы вообще посчитать «текущий
-    потолок»/«текущую скидку» точно, а не по умолчанию, понадобилось знать, какие ваучеры уже
-    выкуплены в этом ране — в схеме мода (`openrpc.json`'s `GameState.used_vouchers`) это поле
-    есть, но мост его никогда не парсил. Добавлено (`adapters/mod_bridge.py`,
-    `core/economy.py` — общая формула процентов/скидки, вынесенная из `solver/shop.py`, чтобы
-    два места с одной и той же логикой не разошлись). Это заодно закрывает более раннее честно
-    признанное допущение `solver/shop.py`'s `JokerOffer.interest_lost`, которое раньше всегда
-    предполагало потолок $25 по умолчанию именно потому, что этого поля не было.
-  - **Эвристическая константа — сделано (`solver/vouchers.py`).** `Hone`/`Glow Up` (шанс изданий
-    в магазине), `Tarot`/`Planet Merchant`/`Tycoon` (частота консумаблов), `Overstock`/`Overstock
-    Plus` (+1 слот магазина), `Crystal Ball` (+1 слот консумабля), `Antimatter` (+1 слот
-    джокера), `Telescope`/`Observatory` (Celestial-пак всегда содержит нужную планету / бонус
-    мульта от планет в инвентаре) — все 12 меняют будущую RNG или будущие решения, точного числа
-    не будет никогда; получили не молчание, а явно отдельное поле `VoucherOffer.heuristic_value`
-    (не `expected_uplift` — раздел 2, «Третья категория»: неточность здесь другого рода, чем
-    приближённый расчёт, поэтому и поле обязано быть структурно другим, не тем же с флагом).
-    Числа ранжированы по игровому смыслу эффекта, не посчитаны: слот джокера (`Antimatter`)
-    оценён выше всего, `Observatory` — ниже всего (помогает только пока нужная планета реально
-    лежит неиспользованной в инвентаре); `render_shop_advice` подписывает их «экспертно», не
-    «прирост», чтобы визуально не путались с первыми двумя уровнями. Ран-раннер (9.7) даст
-    измеримый винрейт, по которому эти двенадцать чисел можно и нужно будет пересматривать.
+    **A side finding and fix: `GameState.used_vouchers`.** To compute the "current
+    cap"/"current discount" exactly at all rather than by default, we needed to know which
+    vouchers have already been redeemed this run — the field exists in the mod's schema
+    (`openrpc.json`'s `GameState.used_vouchers`), but the bridge never parsed it. Added
+    (`adapters/mod_bridge.py`, `core/economy.py` — the shared interest/discount formula,
+    extracted from `solver/shop.py` so two places with the same logic don't drift). This
+    also closes an earlier honestly acknowledged assumption in `solver/shop.py`'s
+    `JokerOffer.interest_lost`, which used to always assume the default $25 cap precisely
+    because this field wasn't there.
+  - **A heuristic constant — done (`solver/vouchers.py`).** `Hone`/`Glow Up` (edition odds
+    in the shop), `Tarot`/`Planet Merchant`/`Tycoon` (consumable frequency),
+    `Overstock`/`Overstock Plus` (+1 shop slot), `Crystal Ball` (+1 consumable slot),
+    `Antimatter` (+1 joker slot), `Telescope`/`Observatory` (a Celestial pack always
+    contains the needed planet / a mult bonus from planets in the inventory) — all 12 change
+    future RNG or future decisions, there will never be an exact number; they got not
+    silence but an explicitly separate field `VoucherOffer.heuristic_value` (not
+    `expected_uplift` — section 2, "Third category": the inexactness here is of a different
+    kind than an approximate computation, so the field must be structurally different too,
+    not the same one with a flag). The numbers are ranked by the game-sense of the effect,
+    not computed: a joker slot (`Antimatter`) is ranked highest, `Observatory` lowest (it
+    helps only while the needed planet actually sits unused in the inventory);
+    `render_shop_advice` labels them "экспертно", not "прирост", so they don't visually mix
+    with the first two tiers. The run-runner (9.7) will give a measurable win-rate against
+    which these twelve numbers can and should be revised.
 
-    Заодно найдена и починена одна честная неточность: `v_blank` («Does nothing?» в тексте самой
-    игры) — не эвристика, а подтверждённый по `card.lua` факт (`Card:apply_to_run` для него не
-    делает ничего, кроме проверки ачивки), поэтому получил точный `expected_uplift = 0.0`, а не
-    догадку. Остальные ваучеры, не упомянутые даже в исходном списке этого уровня
-    (`Director's Cut`/`Retcon` — переролл Boss Blind, `Illusion`/`Magic Trick` — покупка игральных
-    карт, `Omen Globe` — Spectral в Arcana Pack), по-прежнему честно `None`.
+    A side finding was also fixed: `v_blank` ("Does nothing?" in the game's own text) — not
+    a heuristic but a fact confirmed against `card.lua` (`Card:apply_to_run` does nothing
+    for it beyond an achievement check), so it got an exact `expected_uplift = 0.0`, not a
+    guess. The other vouchers not even mentioned in this tier's original list
+    (`Director's Cut`/`Retcon` — Boss Blind reroll, `Illusion`/`Magic Trick` — buying
+    playing cards, `Omen Globe` — a Spectral in an Arcana Pack) stay honestly `None`.
 
-  **Паки — Celestial и Buffoon сделаны.** Магазин показывает только тип и цену; содержимое
-  генерируется при вскрытии — контрфактум *до покупки* невозможен, только матожидание по пулу.
-  - **Вскрытие** (`solver/pack.py`, `evaluate_pack`, фазы `PLANET_PACK`/`BUFFOON_PACK`):
-    Celestial/Planet — точный level-up руки через уже существующие таблицы; Buffoon — джокеры
-    *видны*, никакого RNG, тот же контрфактум, что джокер в витрине (`solver.shop.joker_uplift`,
-    вынесен в общий код). Планета не может ухудшить счёт → берём лучшую всегда; плохой джокер
-    может → берём только при строго положительном приросте и свободном слоте, иначе `skip_pack`
-    (`autopilot._decide_pack_action`).
-  - **Покупка** (`solver/shop.py`, `PackPurchaseOffer` в `ShopAdvice.packs`): только Buffoon и
-    только **нижней границей** — средний прирост от одного случайного реализованного джокера по
-    `PACK_JOKER_SAMPLE = 16` штук; настоящий пак даёт выбор лучшего из 2–4, так что реальная
-    ценность выше (`VoucherOffer`-стиль честной пометки). `autopilot._decide_shop_action`
-    покупает Buffoon-пак (`Action.kind = "buy_pack"` → `ModBridge.buy(pack=...)`), если джокеров
-    брать нечего, оценка положительна, есть слот и по карману.
-  - `TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK` — оценить нечем (нужны механики консумаблов/карт
-    колоды, следующий пункт), но автопилот на них берёт `skip_pack`, а не застревает.
-  - Celestial-пак *в витрине* (покупка) оценивается — тем же приёмом, что Buffoon (матожидание
-    по 12 планетам, `_planet_uplift_pool` + `_monte_carlo_pack`), улучшение A3 (п. 9.8).
+  **Packs — Celestial and Buffoon are done.** The shop shows only the type and price; the
+  contents are generated on opening — a counterfactual *before the purchase* is impossible,
+  only an expected value over the pool.
+  - **Opening** (`solver/pack.py`, `evaluate_pack`, phases `PLANET_PACK`/`BUFFOON_PACK`):
+    Celestial/Planet — an exact hand level-up via the existing tables; Buffoon — the jokers
+    are *visible*, no RNG, the same counterfactual as a shop joker (`solver.shop.joker_uplift`,
+    extracted into shared code). A planet can't worsen the score → always take the best one;
+    a bad joker can → take one only on a strictly positive uplift and a free slot, otherwise
+    `skip_pack` (`autopilot._decide_pack_action`).
+  - **Purchasing** (`solver/shop.py`, `PackPurchaseOffer` in `ShopAdvice.packs`): Buffoon
+    only, via an honest expected value of the pack mechanic — `joker_uplift` over
+    `PACK_JOKER_SAMPLE = 24` random implemented jokers (once per shop visit), then a cheap
+    resample `_monte_carlo_pack` "best `choose` of `extra`" by pack size (Normal 2/1, Jumbo
+    4/1, Mega 4/2, from `game.lua`). An early version took a lower bound — the mean uplift of
+    one random joker, always positive, which made the autopilot buy every pack (3 of 4
+    bought live were then skipped); replaced after live run 5.
+    `autopilot._decide_shop_action` buys a Buffoon pack (`Action.kind = "buy_pack"` →
+    `ModBridge.buy(pack=...)`) if there are no jokers worth taking, the estimate is
+    positive, there's a slot, and it's affordable.
+  - `TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK` — nothing to value them with (they need the
+    consumable/deck-card mechanics, the next item), but the autopilot takes `skip_pack` on
+    them rather than getting stuck.
+  - A Celestial pack *in the shop* (purchasing) is valued — by the same technique as Buffoon
+    (an expected value over the 12 planets, `_planet_uplift_pool` + `_monte_carlo_pack`),
+    improvement A3 (item 9.8).
 
-**9.4. Консумабли и подготовка руки перед розыгрышем — Planet-кусок сделан
-(`solver/consumables.py`).** Раздел «Консумаблы до розыгрыша» выше был помечен «обнаружено
-вживую, не сделано» без привязки к фазе — теперь это прямая зависимость автопилота. Новая
-область состояния `GameState.consumables` (мод присылает её весь ран, не только на одной
-фазе, как `shop`/`pack`) даёт список Tarot/Planet/Spectral-карт в инвентаре.
+**9.4. Consumables and hand preparation before a play — the Planet slice is done
+(`solver/consumables.py`).** The "Consumables before a play" section above was marked
+"discovered live, not done" with no phase attached — now it's a direct dependency of the
+autopilot. A new state area `GameState.consumables` (the mod sends it for the whole run, not
+just on one phase like `shop`/`pack`) gives the list of Tarot/Planet/Spectral cards in the
+inventory.
 
-Planet-карты оказались даже проще, чем ожидалось: механически это тот же level-up, что выбор
-карты из Celestial Pack (`solver.pack.level_up`, теперь публичная функция, переиспользуется, а
-не дублируется), но здесь есть настоящая текущая рука (`SELECTING_HAND` всегда её даёт) — вместо
-сэмплирования представительных рук, как в `solver/pack.py`/`solver/shop.py`, точный `advise()`
-считается прямо на настоящих картах руки дважды (без уровня / с уровнем). Это честно неполная
-цифра: прирост посчитан только для *этой* руки, не для всех будущих розыгрышей этого типа в
-оставшемся ране (тот же принцип, что у `JokerOffer.interest_lost` — только ближайшее, не весь
-горизонт), поэтому политика автопилота не ждёт положительного числа — использует любую найденную
-Planet-карту сразу, ровно как `_decide_pack_action` в 9.2 (level-up не может ухудшить счёт).
+Planet cards turned out even simpler than expected: mechanically it's the same level-up as
+picking a card from a Celestial Pack (`solver.pack.level_up`, now a public function, reused
+rather than duplicated), but here there's a real current hand (`SELECTING_HAND` always
+provides one) — instead of sampling representative hands, as in `solver/pack.py`/
+`solver/shop.py`, an exact `advise()` is computed directly on the real hand cards twice
+(without the level / with the level). This is an honestly incomplete figure: the uplift is
+computed only for *this* hand, not for every future play of this type in the rest of the run
+(the same principle as `JokerOffer.interest_lost` — only the nearest, not the whole
+horizon), so the autopilot's policy doesn't wait for a positive number — it uses any Planet
+card it finds right away, exactly like `_decide_pack_action` in 9.2 (a level-up can't worsen
+the score).
 
-**Побочная находка: `v_observatory` создаёт реальный, но непосчитанный компромисс.** Этот
-ваучер (третий уровень честности, `solver/vouchers.py`) даёт X1.5 множителя за каждую
-*неиспользованную* Planet-карту в инвентаре, совпадающую по типу с разыгрываемой рукой — то
-есть использование карты сейчас может стоить повторяемого бонуса ради разового level-up. Сам
-бонус нигде не реализован в движке подсчёта (только текст в `core/catalogue.py`, не формула в
-`core/scoring.py`), поэтому сравнить «использовать» и «придержать» здесь не на чем —
-`PlanetConsumableOffer.note` честно предупреждает об этом, если `v_observatory` выкуплен, а не
-молчит про реальный компромисс. Новый клиентский метод моста — `ModBridge.use(consumable, *,
-cards=None)` (`openrpc.json`'s `use`; Planet-карты `cards` не используют — целей не нужно).
+**A side finding: `v_observatory` creates a real but uncomputed trade-off.** This voucher
+(the third honesty tier, `solver/vouchers.py`) gives X1.5 mult per *unused* Planet card in
+the inventory that matches the type of the hand being played — so using the card now may
+cost a repeatable bonus for the sake of a one-time level-up. The bonus itself isn't
+implemented anywhere in the scoring engine (only text in `core/catalogue.py`, not a formula
+in `core/scoring.py`), so there's nothing here to compare "use" against "hold" —
+`PlanetConsumableOffer.note` honestly warns about this if `v_observatory` is redeemed,
+rather than staying silent about a real trade-off. The new bridge client method is
+`ModBridge.use(consumable, *, cards=None)` (`openrpc.json`'s `use`; Planet cards don't use
+`cards` — no targets needed).
 
-**Tarot-карты по-прежнему не тронуты** — по объёму сравнимы с реализацией новых джокеров: ~22
-разных эффекта, часть не прибавляет число, а трансформирует конкретные карты (`Death` —
-донор/цель, отдельное пространство перебора поверх текущего).
+**Tarot cards are still untouched** — comparable in scope to implementing new jokers: ~22
+different effects, some of which don't add a number but transform specific cards (`Death` —
+donor/target, a search dimension on top of the existing one).
 
-**9.5. Правило-модифицирующие боссы — каталог сделан, фильтр и починка счёта ещё нет.**
-Допущение №10 (раздел 8.3) было «молчаливо неверный совет», который замечал человек. Для
-автопилота это не мелкий дефект: бот может честно посчитать нелегальный ход и попытаться его
-сыграть через `play`, получить отказ мода и не знать, что делать дальше. **Каталог сделан** —
-`core/bosses.py`, все 28 боссовых блайндов (`game.lua`'s `P_BLINDS`, ключи `bl_*`; `bl_small`/
-`bl_big` туда не входят, это обычные блайнды), выписаны из `blind.lua`
-(`Blind:debuff_hand`/`modify_hand`/`press_play`/`set_blind`/`disable`, дёргаются по `self.name`
-— английскому идентификатору из `game.lua`, тому же, что мод отдаёт в `BlindInfo.name`
-независимо от локали интерфейса) и `functions/state_events.lua` (довесок для `The Serpent`), не
-по памяти — тот же паттерн, что `core/tags.py`. Покрытие — `tests/test_bosses.py`, 28 ключей
-ровно по одному разу (тот же принцип, что `test_tags.py`).
+**9.5. Rule-modifying bosses — catalogue, legality filter, and score fix all done.**
+Assumption #10 (section 8.3) used to be "silently wrong advice" that a human would catch.
+For the autopilot it isn't a minor defect: the bot can honestly compute an illegal move and
+try to play it via `play`, get a mod rejection, and not know what to do next. **The
+catalogue is done** — `core/bosses.py`, all 28 boss blinds (`game.lua`'s `P_BLINDS`, `bl_*`
+keys; `bl_small`/`bl_big` aren't in there, they're ordinary blinds), written out from
+`blind.lua` (`Blind:debuff_hand`/`modify_hand`/`press_play`/`set_blind`/`disable`, dispatched
+on `self.name` — the English identifier from `game.lua`, the same one the mod sends as
+`BlindInfo.name` regardless of interface locale) and `functions/state_events.lua` (an
+addendum for `The Serpent`), not from memory — the same pattern as `core/tags.py`. Coverage
+— `tests/test_bosses.py`, 28 keys exactly once (the same principle as `test_tags.py`).
 
-Из 28 боссов только три реально бьют по *составу конкретного розыгрыша* (`BossEffect.
-restricts_legal_plays=True`, помечены в каталоге): `The Mouth` (только один тип руки за весь
-раунд), `The Eye` (нельзя повторно играть уже сыгранный тип руки), `The Psychic` (нельзя играть
-меньше 5 карт). Остальные — либо уже честно отражены живыми полями состояния без отдельного
-кода (`The Water`/`The Needle` — `discards_left`/`hands_left`; `The Manacle` — размер живого
-`GameState.hand`), либо общий случай дебаффа по масти/рангу/картинке (`Card.debuffed`, уже
-работает — допущение «дебафф не влияет на тип руки» подтверждено вживую, `The Goad`, раздел 8.3
-№4), либо чисто визуальные (рубашка вверх у `The Fish`/`The House`/`The Mark`/`The Wheel` — не
-меняют состав руки, которую видит бот через мод), либо экономические побочные эффекты без
-влияния на счёт (`The Tooth`: −$1 за карту; `The Ox`: обнуление денег; `The Hook`: форс-сброс 2
-карт после розыгрыша) — честно зафиксированы в `summary`, но не блокируют ни один ход.
+Of the 28 bosses, only three actually hit the *composition of a specific play*
+(`BossEffect.restricts_legal_plays=True`, flagged in the catalogue): `The Mouth` (only one
+hand type for the whole round), `The Eye` (can't replay an already-played hand type),
+`The Psychic` (can't play fewer than 5 cards). The rest are either already honestly
+reflected by live state fields with no separate code (`The Water`/`The Needle` —
+`discards_left`/`hands_left`; `The Manacle` — the size of the live `GameState.hand`), or the
+generic suit/rank/face debuff case (`Card.debuffed`, already working — the assumption "a
+debuff doesn't affect the hand type" confirmed live, `The Goad`, section 8.3 #4), or purely
+visual (face-down cards for `The Fish`/`The House`/`The Mark`/`The Wheel` — they don't
+change the hand composition the bot sees through the mod), or economic side effects with no
+influence on the score (`The Tooth`: −$1 per card; `The Ox`: zeroing out money; `The Hook`:
+a forced discard of 2 cards after a play) — honestly recorded in `summary`, but they block
+no move.
 
-**`The Flint` — починено.** Базовые фишки и множитель руки уполовинены при подсчёте
-(`floor(x*0.5+0.5)`, минимум 1 у множителя и 0 у фишек — из `blind.lua`'s `Blind:modify_hand`) —
-это было **нигде не реализовано в `core/scoring.py`**, то есть при этом боссе бот завышал счёт
-примерно вдвое, а не просто рисковал предложить нелегальный ход. Обнаружено при построении
-каталога, не было отдельным пунктом допущений раньше. Исправлено в
-`core/scoring.py._apply_boss_score_modifier`, шаг 1.5 конвейера (раздел 5) — с одной честно
-признанной неполнотой: в игре The Flint срабатывает после хендовых джокеров вроде `Joker`
-(безусловных/условных-по-руке бонусов), но до подсчёта отдельных карт; наш конвейер считает
-джокеров последним шагом ради `Blueprint`/`Brainstorm`/порядка `XMult`, и точно воспроизвести
-это разделение «до/после» нельзя — без джокеров в раскладке результат точен, а с любым джокером
-расчёт честно помечается `unknown`, а не тихо занижает или завышает настоящий эффект. Тесты —
-`tests/test_scoring.py::TestБоссФлинт`.
+**`The Flint` — fixed.** The base hand chips and mult are halved during scoring
+(`floor(x*0.5+0.5)`, minimum 1 for mult and 0 for chips — from `blind.lua`'s
+`Blind:modify_hand`) — this was **implemented nowhere in `core/scoring.py`**, i.e. under
+this boss the bot overstated the score by roughly 2x, not merely risked proposing an
+illegal move. Discovered while building the catalogue, wasn't a separate assumption item
+before. Fixed in `core/scoring.py._apply_boss_score_modifier`, step 1.5 of the pipeline
+(section 5) — with one honestly acknowledged incompleteness: in the game The Flint fires
+after hand-level jokers like `Joker` (unconditional / hand-conditional bonuses) but before
+individual card scoring; our pipeline evaluates jokers as the last step for the sake of
+`Blueprint`/`Brainstorm`/`XMult` ordering, and that "before/after" split can't be reproduced
+exactly — with no jokers in play the result is exact, and with any joker the calculation is
+honestly marked `unknown` rather than silently under- or over-counting the real effect.
+Tests — `tests/test_scoring.py::TestБоссФлинт`.
 
-**Фильтр нелегальных вариантов в `solver/play.py` — сделано.** `rank_plays` теперь отфильтровывает
-нелегальные под текущим боссом варианты (`_is_legal_play`) до того, как они попадут в
-ранжированный список, а не после того, как автопилот попробует их сыграть и получит отказ. Для
-`The Mouth`/`The Eye` использует историю сыгранных в этом раунде типов руки —
-`PokerHandInfo.played_this_round` (уже было в состоянии, добавлено ради `j_card_sharp`, раздел
-8.3 №3); для `The Psychic` — просто длину набора карт (`≥ 5`). Список из трёх имён боссов сверен
-тестом с `BossEffect.restricts_legal_plays` в `core/bosses.py`, чтобы не разойтись молча.
-Вырожденный случай (фильтр оставил бы список пустым — например, `The Psychic` при руке короче
-5 карт) — фильтр честно отступает и отдаёт нефильтрованный список: промолчать было бы хуже, чем
-показать вариант с сомнительной легальностью. Тесты — `tests/test_solver.py::TestЛегальностьПодБоссом`.
-Допущение №10 (раздел 8.3) закрыто полностью этим и предыдущим (`The Flint`) исправлением.
+**The illegal-option filter in `solver/play.py` — done.** `rank_plays` now filters out
+options illegal under the current boss (`_is_legal_play`) before they reach the ranked list,
+rather than after the autopilot tries to play one and gets rejected. For `The Mouth`/`The
+Eye` it uses the history of hand types played this round —
+`PokerHandInfo.played_this_round` (already in the state, added for `j_card_sharp`, section
+8.3 #3); for `The Psychic` — just the card-set length (`≥ 5`). The list of three boss names
+is cross-checked by a test against `BossEffect.restricts_legal_plays` in `core/bosses.py` so
+the two can't silently drift. A degenerate case (filtering would leave the list empty — e.g.
+`The Psychic` with a hand shorter than 5 cards) — the filter honestly backs off and returns
+the unfiltered list: staying silent would be worse than showing an option of doubtful
+legality. Tests — `tests/test_solver.py::TestЛегальностьПодБоссом`. Assumption #10 (section
+8.3) is fully closed by this and the previous (`The Flint`) fix.
 
-`The Arm` (навсегда понижает уровень типа руки при розыгрыше) и `The Serpent` (добор после
-первого хода — не больше 3 карт) — тоже реальные эффекты, но информационные для советника
-(предупредить о цене хода/будущем размере руки), не про легальность и не про сам подсчёт этого
-розыгрыша — не входят в объём этого пункта.
+`The Arm` (permanently lowers a hand type's level on a play) and `The Serpent` (the draw
+after the first move — no more than 3 cards) are also real effects, but informational for
+the advisor (warn about the cost of a move / the future hand size), not about legality and
+not about the scoring of this play itself — out of scope for this item.
 
-**9.6. Ставки — уже кумулятивны, частично уже читаются.** Подтверждено по исходнику
-(`game.lua`: `if self.GAME.stake >= K then ... end`, восемь условий подряд) — `GOLD` включает
-все 8 модификаторов разом, не только свой. Требования блайндов по анте читаются из мода живьём
-(`BlindInfo.required_score`), не предсказываются формулой — значит ускоренный рост требований
-на `GREEN`/`PURPLE` не требует нового кода, он уже учтён самим фактом чтения актуального числа.
-**Стикеры ставок — сделано (`solver/shop.py`).** `JokerCard.eternal` парсился и раньше (мод
-отдаёт поле с `BLACK` и выше), а `perishable` (`ORANGE`+) и `rental` (`GOLD`) — нет, хотя мод
-отдаёт оба в той же области `modifier`. Теперь их парсит `adapters/mod_bridge.py` в
-`ShopItem` (`eternal`/`perishable_rounds`/`rental`), и `solver/shop.py`'s `JokerOffer` несёт
-каждый отдельным полем по образцу `interest_lost`, не сворачивая в `expected_uplift`:
-`rental_cost_per_round` (`core.economy.RENTAL_RATE`, $3 за каждый раунд владения — выписано
-из `game.lua`'s `GAME_MOD.rental_rate`, `card.lua`'s `Card:calculate_rental`; ловушка при
-опущенной игрой до $1 цене покупки, `Card:set_cost`), `perishable_rounds` (остаточный
-счётчик, мод присылает уже актуальный, не стартовые `perishable_rounds = 5`), `eternal`
-(купленного не продать — риск «бюджета слотов при неудачной покупке»). Оценка счёта на
-представительных руках остаётся верной для тех раундов, что «портящийся» джокер активен —
-срок показывается рядом фактом, не вычитается из оценки (для этого нужен горизонт оставшихся
-раундов, та же неполнота, что у `interest_lost`). **Уточнение по механике (`card.lua`):**
-«портящийся» джокер на нуле счётчика **не исчезает** («таймер до бесплатного исчезновения» в
-более ранней редакции этого пункта было неверно) — игра вызывает `set_debuff`, джокер
-перестаёт считаться, но слот остаётся занят неработающей картой. Рендер
-(`render_shop_advice`) показывает все три пометки; `autopilot._decide_shop_action` на них
-пока **не действует** — сделать ли `rental`/`eternal` стоп-фактором для автопокупки
-(доллары/срок против очков — та же несоизмеримость, что у `interest_lost`) — отдельное, ещё
-не принятое решение политики, ровно как автопокупка ваучеров.
+**9.6. Stakes — already cumulative, partly already read.** Confirmed from source (`game.lua`:
+`if self.GAME.stake >= K then ... end`, eight conditions in a row) — `GOLD` includes all 8
+modifiers at once, not just its own. Per-ante blind requirements are read live from the mod
+(`BlindInfo.required_score`), not predicted by a formula — so the accelerated requirement
+growth on `GREEN`/`PURPLE` needs no new code, it's already accounted for by the very fact of
+reading the current number. **Stake stickers — done (`solver/shop.py`).** `JokerCard.eternal`
+was parsed before too (the mod sends the field at `BLACK` and above), but `perishable`
+(`ORANGE`+) and `rental` (`GOLD`) weren't, even though the mod sends both in the same
+`modifier` area. Now `adapters/mod_bridge.py` parses them into `ShopItem`
+(`eternal`/`perishable_rounds`/`rental`), and `solver/shop.py`'s `JokerOffer` carries each
+as a separate field modeled on `interest_lost`, not folded into `expected_uplift`:
+`rental_cost_per_round` (`core.economy.RENTAL_RATE`, $3 per round of ownership — written out
+from `game.lua`'s `GAME_MOD.rental_rate`, `card.lua`'s `Card:calculate_rental`; a trap
+because the game force-drops the purchase price to $1, `Card:set_cost`), `perishable_rounds`
+(the residual counter, the mod sends the current value, not the starting `perishable_rounds
+= 5`), `eternal` (can't sell what's bought — a "slot budget on a bad purchase" risk). The
+score estimate on representative hands stays correct for the rounds a perishable joker is
+active — the term is shown alongside as a fact, not subtracted from the estimate (that would
+need a horizon of remaining rounds, the same incompleteness as `interest_lost`).
+**A mechanics clarification (`card.lua`):** a perishable joker at counter zero **doesn't
+disappear** ("a timer until it vanishes for free" in an earlier revision of this item was
+wrong) — the game calls `set_debuff`, the joker stops counting, but the slot stays occupied
+by a non-working card. Rendering (`render_shop_advice`) shows all three markers;
+`autopilot._decide_shop_action` does **not act on them yet** — whether to make
+`rental`/`eternal` a stop factor for an autonomous buy (dollars/term versus points — the
+same incommensurability as `interest_lost`) is a separate, not-yet-taken policy decision,
+exactly like autonomous voucher buying.
 
-**Ещё открыто в этом пункте.** `JokerCard` (джокеры уже в слотах, не витрина) новых полей не
-получил — постоянный отток аренды и обратный отсчёт «порчи» у уже купленных джокеров важны
-для планирования будущих раундов, а это Фаза 9.7 (ран-раннер), не витрина магазина.
-`GREEN`/`PURPLE` (ускоренный рост требований) и кумулятивность ставок (`game.lua`:
-`if self.GAME.stake >= K then ... end`, восемь условий подряд — `GOLD` включает все восемь
-разом) нового кода не требуют: требования блайндов читаются из мода живьём
-(`BlindInfo.required_score`), не предсказываются формулой.
+**Still open in this item.** `JokerCard` (jokers already in slots, not the shop) got no new
+fields — the ongoing rent drain and the perish countdown on already-bought jokers matter for
+planning future rounds, and that's Phase 9.7 (the run-runner), not the shop screen.
+`GREEN`/`PURPLE` (accelerated requirement growth) and stake cumulativity (`game.lua`:
+`if self.GAME.stake >= K then ... end`, eight conditions in a row — `GOLD` includes all
+eight at once) need no new code: blind requirements are read live from the mod
+(`BlindInfo.required_score`), not predicted by a formula.
 
-**9.7. Ран-раннер и измерение винрейта — сделано (`balatro_bot/runner.py`).** `balatro-bot
-autoplay --deck X [--stake Y] [--seed S]` теперь играет один ран честными действиями от
-`ModBridge.start` до победы (`GameState.won`), поражения (`phase == "GAME_OVER"`) или затыка и
-останавливается с отчётом (`RunReport`) и логом каждого решения (`DecisionEntry` — тот же
-смысл, что у golden-тестов для скоринга, только для целого рана). `--all-stakes`/`--runs N` —
-пакетный прогон: `run_batch` гоняет N ранов на каждой из 8 ставок отдельно в кумулятивном
-порядке `WHITE → RED → GREEN → BLACK → BLUE → PURPLE → ORANGE → GOLD` (сверен по `game.lua`'s
-`stake_level` 1..8) и печатает винрейт по каждой ставке (`render_batch_summary`). Без `--deck`
-команда работает как раньше — живой режим `ui/tui.py.autoplay` (следить + играть, пауза
-клавишей `p`).
+**9.7. The run-runner and win-rate measurement — done (`balatro_bot/runner.py`).**
+`balatro-bot autoplay --deck X [--stake Y] [--seed S]` now plays one run with honest actions
+from `ModBridge.start` to a win (`GameState.won`), a loss (`phase == "GAME_OVER"`), or a
+stall, and stops with a report (`RunReport`) and a log of every decision (`DecisionEntry` —
+the same idea as golden tests for scoring, but for a whole run). `--all-stakes`/`--runs N` —
+a batch run: `run_batch` plays N runs on each of the 8 stakes separately in the cumulative
+order `WHITE → RED → GREEN → BLACK → BLUE → PURPLE → ORANGE → GOLD` (checked against
+`game.lua`'s `stake_level` 1..8) and prints a win-rate per stake (`render_batch_summary`).
+Without `--deck` the command works as before — the live `ui/tui.py.autoplay` mode (watch +
+play, pause with `p`).
 
-Цикл `play_run` — **не поллинг**: каждое действие моста возвращает уже осевшее следующее
-состояние, опрос (`game_state`) нужен только чтобы переждать анимационную фазу
-(`HAND_PLAYED`/`DRAW_TO_HAND`/`NEW_ROUND`/`PLAY_TAROT`), где `decide_action` честно отдаёт
-`None`. На любой другой фазе `None` означает незамкнутое решение (Tarot/Spectral/Standard/
-Buffoon-паки — Фаза 9.3/9.4), и ран честно фиксируется как «застрял здесь» с фазой в
-`RunReport.note`, а не гадает. Затыком считается и `stall_limit` (по умолчанию 3) шагов
-подряд без изменения состояния, подряд отклонённых модом действий или подряд пустых опросов
-на одной и той же переходной фазе (мод завис на анимации), и превышение `max_steps` (по
-умолчанию 2000) — чтобы один зависший ран не подвесил весь пакет. Любое нажатие клавиши
-(`key_reader`) обрывает ран с исходом `aborted` и останавливает пакет — раз человек
-вмешался, следующие раны не начинаем (раздел 2 — переключение советник ⇄ автопилот по ходу
-дела); `Ctrl+C` в пакетном прогоне тоже не теряет уже собранное — `run_batch` возвращает
-сводку по тому, что успел. Одиночный управляемый ран печатает прогресс по строке на решение
-(`on_step`), чтобы длинный ран не выглядел зависшим; пакетный — по строке на ран (`on_run`).
+The `play_run` loop is **not polling**: each bridge action returns the already-settled next
+state, polling (`game_state`) is needed only to wait out an animation phase
+(`HAND_PLAYED`/`DRAW_TO_HAND`/`NEW_ROUND`/`PLAY_TAROT`), where `decide_action` honestly
+returns `None`. On any other phase `None` means an unclosed decision
+(Tarot/Spectral/Standard/Buffoon packs — Phase 9.3/9.4), and the run is honestly recorded as
+"stuck here" with the phase in `RunReport.note`, rather than guessing. A stall also covers
+`stall_limit` (default 3) consecutive steps with no state change, consecutive mod-rejected
+actions, or consecutive empty polls on the same transitional phase (the mod hung on an
+animation), and exceeding `max_steps` (default 2000) — so one hung run doesn't hang the
+whole batch. Any keypress (`key_reader`) aborts the run with the outcome `aborted` and stops
+the batch — since the human stepped in, the following runs don't start (section 2 —
+advisor ⇄ autopilot switching on the fly); `Ctrl+C` in a batch run also doesn't lose what's
+been collected — `run_batch` returns a summary of what it managed. A single managed run
+prints progress one line per decision (`on_step`), so a long run doesn't look hung; a batch
+— one line per run (`on_run`).
 
-Побочные добавления, которых требовал раннер: `ModBridge.start(deck, stake, seed=None)` и
-`.menu()` (честные RPC мода, раньше клиент их не имел); `GameState.won` (мост не парсил поле
-`won` вовсе — без него победу не отличить от `GAME_OVER`); `autopilot.dispatch_action` (общий
-перевод `Action.kind` → RPC-метод, вынесен из цикла `ui/tui.py`, теперь общий с раннером) и
-`autopilot.describe_action` (строка лога, тоже вынесена из `tui`).
+Side additions the runner required: `ModBridge.start(deck, stake, seed=None)` and `.menu()`
+(honest mod RPCs the client didn't have before); `GameState.won` (the bridge didn't parse
+the `won` field at all — without it a win can't be told from `GAME_OVER`);
+`autopilot.dispatch_action` (the shared `Action.kind` → RPC-method translation, extracted
+from the `ui/tui.py` loop, now shared with the runner) and `autopilot.describe_action` (the
+log line, also extracted from `tui`).
 
-**Что осознанно НЕ входит в этот объём.** 24/7-режим без присмотра (watchdog на зависания,
-автоперезапуск, лимиты по времени) — отдельная надстройка поверх уже работающего
-управляемого цикла (раздел 2). Раннер не пытается вытащить ран из незамкнутой фазы (открытие
-не-Celestial пака и т.п.) — он на ней честно останавливается, и это сигнал закрыть
-соответствующее решение в `autopilot`, а не задача самого раннера. `run_batch` с фиксированным
-`--seed` даёт N одинаковых ранов (полезно для регрессии, не для винрейта) — для честного
-замера сид не задают.
+**What's deliberately NOT in this scope.** An unattended 24/7 mode (a watchdog for hangs,
+auto-restart, time limits) — a separate layer on top of the already-working managed loop
+(section 2). The runner doesn't try to pull a run out of an unclosed phase (opening a
+non-Celestial pack, etc.) — it honestly stops there, and that's a signal to close the
+corresponding decision in `autopilot`, not a job for the runner itself. `run_batch` with a
+fixed `--seed` gives N identical runs (useful for regression, not for win-rate) — for an
+honest measurement the seed is not set.
 
-### 9.8. Дорожная карта улучшений по итогам живых прогонов
+### 9.8. An improvement roadmap from the live runs
 
-Пять живых прогонов на Mac (RED/WHITE, поражения на анте 3–5; прогон 5 дошёл до анте 4
-р12 — рекорд) выявили один потолок: **экономический движок**. Автопилот умеет только
-«купить ≤5 джокеров в анте 1–2, потом сидеть на деньгах» — не продаёт, не рероллит, не
-покупает ваучеры/Celestial-паки, не использует Tarot. В прогоне 5: $79 мёртвым грузом с
-анте 3, потому что все 5 слотов заняты слабыми джокерами и купить больше нечего.
+Six live runs on a Mac (RED/WHITE). Runs 1–5 lost on antes 3–5 (run 5 reached ante 4 r12)
+and revealed one ceiling: **the economy engine** — the autopilot could only "buy ≤5 jokers
+on antes 1–2, then sit on money", not sell, reroll, or buy vouchers/Celestial packs/Tarot
+(run 5: $79 of dead weight from ante 3, all 5 slots on weak jokers, nothing else to buy).
+A1–A4 and D1 address most of that and worked live for the first time in **run 6**, which
+reached **ante 5** (a new record) before being stopped manually to fix what run 6 surfaced.
+B1 (over-aggressive discarding) and A5 (shop reroll) are now closed on top of those, so the
+economy engine is complete (buy / sell-replace / voucher / pack / reroll); F1 (decision-loop
+speed) is now the last thing blocking batch measurement (E1).
 
-Намеченный порядок (буквенные метки — рабочие, не из общей нумерации фаз):
+The planned order (letter labels are working ones, not from the general phase numbering):
 
-- **A1. Продажа-замена джокеров — сделано.** `solver.shop.joker_contributions` считает
-  зеркальный `joker_uplift` контрфактум (насколько упадёт лучший счёт, если убрать
-  каждого джокера из слота). `evaluate_shop` цепляет самого слабого невечного джокера
-  как `ReplaceCandidate` к каждому оценённому офферу (`JokerOffer.replaces`).
-  `autopilot._decide_replace_action`: когда слоты полны, продать жертву, если оффер
-  строго лучше её вклада **и** либо вклад ниже `_DEAD_JOKER_REQ_FRACTION` (3%) требования
-  ближайшего блайнда (мёртвый груз), либо оффер вдвое сильнее (`_REPLACE_UPLIFT_RATIO`,
-  защита от прокрутки на шуме). Продажа — отдельное действие (`Action.kind="sell"` →
-  `ModBridge.sell(joker=…)`), покупку решает следующий вызов на свободном слоте. Оба
-  порога калибруются на живых прогонах. Настоящий размен (не только мёртвый груз)
-  разрешён пользователем явно. Тесты — `tests/test_shop.py::TestПродажаЗамена`,
-  `tests/test_autopilot.py`, `tests/test_mod_bridge.py`.
-- **D1. Перестановка джокеров — сделано.** `autopilot._decide_rearrange_action` на
-  `SELECTING_HAND` (после консумаблов, перед play/discard) гоняет `rank_joker_orders` на
-  текущей руке; если лучший порядок даёт относительный прирост счёта
-  `>= _MIN_REORDER_GAIN_FRAC = 0.02`, отдаёт `Action(kind="rearrange")` →
-  `ModBridge.rearrange(jokers=…)` (перестановка текущих индексов). Отдельное действие,
-  проверяется на каждой руке; порог отсекает дёрганье на шуме. Кап
-  `MAX_JOKERS_FOR_ORDER_SEARCH` (6). Тесты — `tests/test_autopilot.py`,
+- **A1. Joker sell-replace — done.** `solver.shop.joker_contributions` computes the mirror
+  `joker_uplift` counterfactual (how much the best score drops if each joker is removed from
+  its slot). `evaluate_shop` attaches the weakest non-eternal joker as a `ReplaceCandidate`
+  to every priced offer (`JokerOffer.replaces`). `autopilot._decide_replace_action`: when
+  slots are full, sell the victim if the offer is strictly better than its contribution
+  **and** either the contribution is below `_DEAD_JOKER_REQ_FRACTION` (3%) of the next
+  blind's requirement (dead weight) or the offer is twice as strong
+  (`_REPLACE_UPLIFT_RATIO`, a guard against churn on noise). Selling is a standalone action
+  (`Action.kind="sell"` → `ModBridge.sell(joker=…)`), the purchase is decided by the next
+  call on the freed slot. Both thresholds are calibrated on live runs. A real trade (not
+  just dead weight) is explicitly allowed by the user. Tests —
+  `tests/test_shop.py::TestПродажаЗамена`, `tests/test_autopilot.py`,
   `tests/test_mod_bridge.py`.
-- **A3. Покупка Celestial-пака из витрины — сделано.** `solver.shop._planet_uplift_pool`
-  считает прирост от подъёма уровня каждого из 12 типов руки (общий
-  `solver.pack.level_up`, импорт отложенный — `shop`↔`pack` обоюдный цикл), затем общий
-  `_monte_carlo_pack` — «лучшие choose из extra» по размеру пака (`_CELESTIAL_PACK_SIZES`:
-  Normal 3/1, Jumbo 5/1, Mega 5/2, сверено с `game.lua`'s `P_CENTERS`). Планете слот не
-  нужен (берётся и применяется сразу) → `has_slot` у Celestial-оффера всегда `True`.
-  Автопилот покупает через ту же ветку паков, что и Buffoon (порог «> 0»). Тесты —
+- **D1. Joker rearrange — done.** `autopilot._decide_rearrange_action` on `SELECTING_HAND`
+  (after consumables, before play/discard) runs `rank_joker_orders` on the current hand; if
+  the best order gives a relative score uplift `>= _MIN_REORDER_GAIN_FRAC = 0.02`, it emits
+  `Action(kind="rearrange")` → `ModBridge.rearrange(jokers=…)` (a permutation of the current
+  indices). A standalone action, re-checked on every hand; the threshold cuts flip-flopping
+  on noise. Cap `MAX_JOKERS_FOR_ORDER_SEARCH` (6). Tests — `tests/test_autopilot.py`,
+  `tests/test_mod_bridge.py`.
+- **A3. Buying a Celestial pack from the shop — done.** `solver.shop._planet_uplift_pool`
+  computes the uplift of leveling each of the 12 hand types (shared `solver.pack.level_up`,
+  a deferred import — `shop`↔`pack` is a two-way cycle), then the shared `_monte_carlo_pack`
+  — "best choose of extra" by pack size (`_CELESTIAL_PACK_SIZES`: Normal 3/1, Jumbo 5/1,
+  Mega 5/2, checked against `game.lua`'s `P_CENTERS`). A planet needs no slot (it's taken
+  and applied immediately) → `has_slot` on a Celestial offer is always `True`. The autopilot
+  buys via the same pack branch as Buffoon (threshold "> 0"). Tests —
   `tests/test_shop.py::TestПокупкаПака`, `tests/test_autopilot.py`.
-- **A2. Строже порог покупки джокера — сделано.** `autopilot._worth_buying`: купить
-  джокера в свободный слот, только если `expected_uplift` не ниже
-  `_MIN_BUY_REQ_FRACTION` (3%, = порогу мёртвого груза A1) от требования ближайшего
-  блайнда — не занимать слот тем, что тут же сочли бы мёртвым грузом. При неизвестном
-  требовании (ручной ввод) — откат к старому «> 0». Ветку Buffoon-пака порог **не**
-  трогает (пак — хедж из 2–4 и единственный сток денег до A3/A5). Тесты —
+- **A2. A stricter joker-buy threshold — done.** `autopilot._worth_buying`: buy a joker into
+  a free slot only if `expected_uplift` is not below `_MIN_BUY_REQ_FRACTION` (3%, = A1's
+  dead-weight threshold) of the next blind's requirement — don't take up a slot with
+  something we'd immediately call dead weight. With an unknown requirement (manual input) —
+  fall back to the old "> 0". The threshold does **not** touch the Buffoon-pack branch (a
+  pack is a hedge of 2–4 and the only money sink before A3/A5). Tests —
   `tests/test_autopilot.py::TestDecideActionВМагазине`.
-- **A4. Покупка ваучеров — сделано.** Вердикт пользователя: покупать по всем трём уровням.
-  `autopilot._decide_voucher_action` — порог по уровню честности (новое поле
-  `VoucherOffer.value_unit`): `"score"` (1-й) — тот же `_worth_buying`, что у джокера;
-  `"dollars"` (2-й) — чистый плюс в долларах (оценка ≥ цены); `heuristic_value` (3-й,
-  экспертная константа, не расчёт) — только структурные апгрейды
-  `>= _MIN_HEURISTIC_VOUCHER_VALUE = 5.0` (Antimatter, Glow Up). Ваучер слота не занимает,
-  идёт после джокера, перед паком. `Action.kind = "buy_voucher"` → `ModBridge.buy(voucher=…)`.
-  `render_shop_advice` помечает 2-й уровень «в деньгах ~$N». Тесты —
+- **A4. Buying vouchers — done.** The user's verdict: buy across all three tiers.
+  `autopilot._decide_voucher_action` — a threshold per honesty tier (the new field
+  `VoucherOffer.value_unit`): `"score"` (tier 1) — the same `_worth_buying` as a joker;
+  `"dollars"` (tier 2) — a net dollar gain (estimate ≥ price); `heuristic_value` (tier 3, an
+  expert constant, not a computation) — only structural upgrades
+  `>= _MIN_HEURISTIC_VOUCHER_VALUE = 5.0` (Antimatter, Glow Up). A voucher takes no slot, it
+  goes after the joker, before the pack. `Action.kind = "buy_voucher"` →
+  `ModBridge.buy(voucher=…)`. `render_shop_advice` labels tier 2 "в деньгах ~$N". Tests —
   `tests/test_vouchers.py::TestValueUnit`, `tests/test_autopilot.py`.
-- **A5. Реролл магазина.** PLAN.md явно оставил незакрытым (нужна модель непросмотренного
-  ролла). Мост: `ModBridge.reroll`.
-- **B1. Умерить переагрессивный сброс.** `advise_discard` EV оптимистичен;
-  `cheapest_sufficient` ловит только «выиграть прямо сейчас». На среднем ходу бот почти
-  всегда сбрасывает «в цель» — пользователь это флагнул («погоня за очками»).
-- **C1. Tarot-консумабли** (Фаза 9.4, второй кусок) — ~22 эффекта, часть таргетные.
-- **E1/E2. Массовый замер винрейта на живом Mac → 24/7-режим.** Блокируется тем, что
-  раны пока проигрывают на анте 3–5.
+- **B1. Temper the over-aggressive discarding — done (run 6 confirmed).** Two guards over
+  `rank_actions`'s top-1 in `autopilot.decide_action` on `SELECTING_HAND`, both sitting
+  after the existing `cheapest_sufficient` check:
+  - `_on_pace_without_discard` — if `best_play.score × hands_left` already covers the
+    remaining requirement with a `_DISCARD_PACE_MARGIN = 1.5` cushion (and ≥ 2 hands are
+    left), play the best hand and skip `advise_discard` entirely. Catches the case where
+    `cheapest_sufficient` is empty only because a variance joker (`Misprint`) pulled a
+    play's guaranteed floor under the requirement while its mean is comfortably over.
+  - `_discard_edge_is_noise` — if the top-1 is still a discard but its EV beats the best
+    play by less than `_DISCARD_EDGE_MARGIN = 1.15` (the ±15 % tolerance `advise_discard`
+    documents for itself, §7 `docs/Discard Spec.md`), play the hand: the "edge" is smaller
+    than the estimator's own error. Kills run 6's 7,371→7,427 (+0.7 %) last-discard trade
+    on a 10,000 boss directly.
+  Both constants are calibrated on live runs and live next to the other autopilot
+  thresholds. The guards touch only the autopilot — `rank_actions` / `advise` / `watch`
+  output is unchanged (a human reads the "hits the blind" markers and isn't fooled). Tests —
+  `tests/test_autopilot.py::TestOnPaceWithoutDiscard`, `::TestDiscardEdgeIsNoise`,
+  `::TestDecideActionB1`.
+- **A5. Shop reroll — done (run 6's economy ceiling).** `ModBridge.reroll` (mod's `reroll`
+  endpoint, no params) + `Action(kind="reroll")`. `RerollOutlook` (`ShopAdvice.reroll`,
+  `solver/shop.py`) is the first place the module reasons about the *unseen* roll rather than
+  the already-generated shop: a Monte-Carlo of the roll mechanic itself — each of
+  `GameState.shop_slots` slots is a joker with probability
+  `economy.SHOP_JOKER_RATE / (joker+tarot+planet rate)` (20/28, from `game.lua`'s
+  `GAME_MOD`), joker uplift drawn from the same random-implemented-joker sample the Buffoon
+  pack estimate uses (`random_joker_uplifts`, computed once per shop visit). Documented
+  simplification in `RerollOutlook.note`: rarity (`game.lua` 70/25/5 C/U/R) is only reflected
+  by averaging over implemented jokers, not stratified into three pools — a follow-up if live
+  runs show bias. New parsed field `GameState.shop_slots` (mod's `shop` area `limit`, mirrors
+  `joker_slots`). `autopilot._decide_reroll_action` — the verdict, last branch before
+  `next_round` (so only when nothing here is worth buying/selling): reroll when the blind
+  requirement is known, `expected_best_uplift` clears the same `_worth_buying` bar as a joker
+  buy, and `money − cost ≥ _REROLL_MONEY_RESERVE = 12` (leaves money for the buy itself and
+  stops a drain to $0 — run 4's bug; the escalating reroll cost plus this reserve end a
+  streak in a few steps). Tests — `tests/test_shop.py::TestОценкаРерола`,
+  `tests/test_autopilot.py::TestDecideActionРеролМагазина`, `tests/test_mod_bridge.py`,
+  `tests/test_economy.py::TestShopRates`. Calibration notes for live runs: `expected_best_uplift`
+  is a mean and tail-inflated (a 5 % Rare can dominate it), so the effective policy is closer
+  to "reroll while cash-rich and nothing to buy" than a tight EV compare — `_REROLL_MONEY_RESERVE`
+  is the real limiter and the knob to tune.
+- **F1. Decision-loop performance / optimization.** A single `decide_action` on
+  `SELECTING_HAND` with 5 jokers and a 9-card hand (Paint Brush) takes 15–40 s live:
+  `rank_joker_orders` (up to 120 permutations, each a full `advise()`) plus `advise_discard`'s
+  per-bucket sampling over several candidates dominate. Fine for one watched run,
+  unacceptable for E1 batch measurement (thousands of decisions). Directions: prune the
+  joker-order search (most permutations are dominated), share the `advise()` result between
+  the order search and the discard evaluation, cap the search adaptively, or make
+  `--no-joker-order` + a cheaper discard eval the batch default. Profile first.
+- **A6. Shop branch order — sell-replace vs. a cheap pack/voucher.** In
+  `autopilot._decide_shop_action` the order is joker-buy → voucher → pack → sell-replace →
+  leave. Run 6: a `Joker`/`Abstract Joker` offer worth +776/+3576 uplift with no free slot
+  sat untaken for 2–3 shop-poll cycles because a positive Celestial pack (~44 uplift) kept
+  pre-empting the sell-replace branch. It self-corrects once packs are exhausted (one action
+  per poll) but wastes money and time. A sell-replace that captures a vastly better joker
+  should outrank buying a cheap pack.
+- **A7. Voucher tier-3 threshold when cash-rich with empty slots.** Run 6 skipped `Overstock`
+  ($10, +1 shop slot, `heuristic_value ~3` < `_MIN_HEURISTIC_VOUCHER_VALUE = 5.0`) while
+  sitting on $29 with 3 empty joker slots. The flat 5.0 bar is fine when money is tight; when
+  the bot is cash-rich and slot-starved a structural shop upgrade is worth more than the
+  constant says. Consider scaling the threshold by spare cash / empty slots.
+- **C1. Tarot consumables** (Phase 9.4, the second slice) — ~22 effects, some targeted.
+- **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** First real progress: run 6
+  (RED/WHITE, first off the fake mod) reached **ante 5** and was stopped manually to start on
+  B1/A5/F1, not lost — A1–A4, D1, `decide_skip`, pack opening via `SMODS_BOOSTER_OPENED`, and
+  the boss-debuff path all worked live for the first time. B1 and A5 are now closed; E1's last
+  blocker is F1 (15–40 s per decision — too slow for a batch of thousands). The A5 reroll
+  policy and B1's new guards also still want a live shakedown run before a full batch.
 
 ---
 
-## 7. Стек и структура репозитория
+## 7. Stack and repository structure
 
-- **Python 3.12+**, менеджер зависимостей — `uv`.
-- `pytest` — тесты, `ruff` — линт/формат, `mypy` — типы (ядро типизируем строго).
-- **Ноль зависимостей в рантайме** (`pyproject.toml`: `dependencies = []`) — план изначально
-  предполагал `pydantic` для валидации состояния и `textual`/`rich` для TUI, но ни то ни
-  другое не понадобилось: разбор состояния от мода делает `adapters/mod_bridge.py` сам, без
-  схем; живое окно (`ui/tui.py`) обходится голыми ANSI-кодами (раздел 8.2). Отступление
-  зафиксировано там же, здесь просто отражена итоговая реальность, а не повторный план.
+- **Python 3.12+**, dependency manager — `uv`.
+- `pytest` — tests, `ruff` — lint/format, `mypy` — types (the core is strictly typed).
+- **Zero runtime dependencies** (`pyproject.toml`: `dependencies = []`) — the plan
+  originally assumed `pydantic` for state validation and `textual`/`rich` for the TUI, but
+  neither was needed: `adapters/mod_bridge.py` parses the mod's state itself, without
+  schemas; the live window (`ui/tui.py`) gets by on bare ANSI codes (section 8.2). The
+  deviation is recorded there; here we just reflect the resulting reality, not a repeated
+  plan.
 
-Дерево ниже — фактическая структура на 2026-08-22, не то, что предполагалось изначально;
-свежее состояние всегда можно свериться командой `find balatro_bot tests tools -name "*.py"`.
+The tree below is the actual structure as of 2026-08-31, not what was originally assumed;
+the current state can always be checked with `find balatro_bot tests tools -name "*.py"`.
 
 ```
 balatro_bot/
   core/
-    cards.py               # карта: ранг, масть, улучшение, издание, печать
-    hands.py                # распознавание покерных рук + балатровские правила
-    scoring.py               # симулятор подсчёта очков (порядок из раздела 5)
-    catalogue.py              # справочник джокеров из enums.lua мода — сгенерирован, не редактировать
-    tags.py                    # каталог всех 24 тегов скипа блайнда, из game.lua/tag.lua
-    state.py                    # GameState, BlindInfo, ShopItem, JokerCard — нормализованное состояние
+    cards.py            # card: rank, suit, enhancement, edition, seal
+    hands.py            # poker-hand recognition + Balatro rules
+    scoring.py          # the score-computation simulator (order from section 5)
+    economy.py          # money formulas (interest, cap, discount, RENTAL_RATE) — shared by shop/vouchers
+    catalogue.py        # joker reference from the mod's enums.lua — generated, do not edit
+    tags.py             # catalogue of all 24 blind-skip tags, from game.lua/tag.lua
+    bosses.py           # catalogue of all 28 boss blinds, from game.lua/blind.lua
+    state.py            # GameState, BlindInfo, ShopItem, JokerCard — the normalized state
     jokers/
-      __init__.py              # реестр джокеров, протокол Joker, build_jokers()
-      implementations.py        # логика эффектов каждого джокера
+      __init__.py       # joker registry, the Joker protocol, build_jokers()
+      implementations.py # each joker's effect logic
   solver/
-    play.py                   # ранжированный список подмножеств, порядок джокеров
-    discard.py                  # точный EV заданного сброса + advise_discard (Discard Spec)
-    actions.py                   # rank_actions — единый список розыгрышей и сбросов
-    skip.py                       # evaluate_skip — совет по скипу блайнда
-    shop.py                        # evaluate_shop — совет по покупке джокеров в магазине
+    play.py            # ranked list of subsets, joker order, boss-legality filter
+    discard.py         # exact EV of a given discard + rank_discards + advise_discard (Discard Spec)
+    actions.py         # rank_actions — one merged list of plays and discards
+    skip.py            # evaluate_skip — blind-skip advice
+    shop.py            # evaluate_shop — joker buy / sell-replace, packs, vouchers
+    vouchers.py        # evaluate_vouchers — voucher valuation across three honesty tiers
+    pack.py            # evaluate_pack — pick a card from an opened Celestial/Buffoon pack
+    consumables.py     # evaluate_planet_consumables — a Planet card from inventory before a play
   adapters/
-    manual.py                    # ручной ввод состояния с клавиатуры
-    mod_bridge.py                  # клиент к JSON-RPC мосту (только чтение — play()/discard() есть, не вызываются)
+    manual.py          # manual state entry from the keyboard (can't execute actions)
+    mod_bridge.py      # client to the JSON-RPC bridge: honest game actions + state parsing
   ui/
-    render.py                    # форматирование вывода, общее для advise/doctor/watch
-    tui.py                         # watch — поллинг + перерисовка по изменению состояния
-  cli.py                          # команды install/advise/watch/doctor/record
-  install.py                       # установщик мод-стека на macOS одной командой
+    render.py          # output formatting, shared by advise/doctor/watch/autoplay
+    tui.py             # watch — poll + redraw; autoplay — the same loop with the right to act
+  autopilot.py         # decide_action(state) → Action; dispatch_action/describe_action (shared with the runner)
+  runner.py            # play_run/run_batch — run a whole run / a batch of runs, win-rate measurement (9.7)
+  cli.py               # commands install/advise/watch/autoplay/doctor/record
+  install.py           # one-command macOS mod-stack installer
 tools/
-  generate_catalogue.py             # Balatro.love → core/catalogue.py (было extract_game_data.py, 8.2)
+  generate_catalogue.py # the mod's enums.lua → core/catalogue.py (was extract_game_data.py, 8.2)
 tests/
-  golden/                          # эталонные дампы состояния + счёт из реальной игры
-  fixtures/                         # gamestate.json — каноничный снимок состояния
-  fake_mod.py                        # фальшивый JSON-RPC сервер по спецификации мода
-  test_*.py                           # по одному файлу на модуль ядра/солвера/адаптера
+  golden/              # reference state dumps + score from the real game
+  fixtures/            # gamestate.json — the canonical state snapshot
+  fake_mod.py          # a fake JSON-RPC server per the mod's spec
+  test_*.py            # one file per core/solver/adapter module + autopilot/runner/tui/render
 docs/
-  mac-setup.md                        # установка мод-стека вручную, шаг за шагом
-  Discard Spec.md                      # спецификация advise_discard (раздел 6, Фаза 6)
+  mac-setup.md         # installing the mod stack by hand, step by step
+  Discard Spec.md      # the advise_discard spec (section 6, Phase 6)
 ```
 
 ---
 
-## 8. Дорожная карта
+## 8. Roadmap
 
-Фазы пронумерованы по порядку выполнения, но **зависимости важнее номеров** — см. колонку
-«Зависит от». Фаза 1 стоит рано намеренно: она проверяет самый большой внешний риск проекта,
-но при этом никого не блокирует до Фазы 5.
+Phases are numbered in execution order, but **dependencies matter more than numbers** — see
+the "Depends on" column. Phase 1 is placed early on purpose: it checks the project's biggest
+external risk, while blocking no one until Phase 5.
 
-| Фаза | Зависит от | Содержание | Готово, когда |
+| Phase | Depends on | Content | Done when |
 |---|---|---|---|
-| **0. Каркас** | — | Репозиторий, `uv`, `ruff`, `mypy`, `pytest`, CI на GitHub Actions | Все проверки CI зелёные на smoke-тесте (пустой `pytest` без тестов даёт код 5 и валит CI — нужен хотя бы один настоящий тест) |
-| **1. Спайк интеграции** | доступ к Mac с игрой | Поставить Lovely + Steamodded + `balatrobot`, руками дёрнуть API, посмотреть реальный JSON. Включить тумблер достижений. Зафиксировать версии | Есть сохранённый дамп реального состояния игры и записанный список версий |
-| **2. Карты и руки** | 0 | Модель карты, распознавание всех типов рук включая секретные. `Four Fingers`/`Shortcut`/`Smeared`/Wild реализуются как **абстрактные флаги-модификаторы** — привязка их к конкретным джокерам будет в Фазе 3 | Тесты на все типы рук, на каждый модификатор и на пограничные случаи (`A-2-3-4-5` валиден, `Q-K-A-2-3` нет) |
-| **3. Скоринг** | 2 + файлы игры | Симулятор подсчёта, `extract_game_data.py`, уровни рук, ~30 самых частых джокеров, **механизм пометки неточного расчёта** (раздел 2) | Golden-тесты совпадают с игрой до единицы; неизвестный джокер помечает расчёт неточным, а не игнорируется |
-| **3a. Сбор golden-кейсов** | игра под рукой | **Ручная работа человека:** записать ~20 реальных ситуаций (рука, джокеры, уровни, блайнд) и показанный игрой счёт | Кейсы лежат в `tests/golden/`, Фаза 3 может быть закрыта |
-| **4. Солвер + ручной ввод** | 3 | Перебор подмножеств, ранжированный вывод, CLI. **Первая практическая польза (v0.1)** | Ввожу с клавиатуры руку, джокеров и блайнд — получаю список ходов со счётом и ответ «хватает / не хватает» |
-| **5. Автоподключение** | 1, 4 | Мост к моду, TUI обновляется сам во время игры | Играю, не трогая бота — советы появляются сами |
-| **6. Сброс и EV** | 5 | Монте-Карло по колоде, отслеживание вышедших карт. При ручном вводе — режим допущения (раздел 6). **Здесь закрывается v1** | Бот говорит «сбрось эти 3», объясняет числами и честно помечает, точная оценка или приблизительная |
-| **7. Магазин и джокеры** | 3, 5 | Покрытие остальных джокеров, советы по покупкам и порядку (v2) | Бот рекомендует перестановку джокеров с приростом счёта; доля «неизвестных джокеров» упала до нуля |
-| **8. Стратегия рана** | 7 | Скипы блайндов, теги, экономика, симуляция ранов (v3) | Оценка политик на массовых прогонах |
-| **9. Автопилот** | 4–8 | Цикл действий через честные RPC мода, ваучеры/паки, вскрытие паков, консумабли перед розыгрышем, каталог правило-модифицирующих боссов, Perishable/Rental джокеры, ран-раннер (v4) — раздел 6, «Автопилот» | Стабильный винрейт по N прогонам на каждой из 8 ставок отдельно (раздел 2, критерий успеха) |
+| **0. Skeleton** | — | Repository, `uv`, `ruff`, `mypy`, `pytest`, CI on GitHub Actions | All CI checks green on a smoke test (an empty `pytest` with no tests exits 5 and fails CI — at least one real test is needed) |
+| **1. Integration spike** | access to a Mac with the game | Install Lovely + Steamodded + `balatrobot`, poke the API by hand, look at real JSON. Turn on the achievements toggle. Pin the versions | There's a saved dump of real game state and a recorded list of versions |
+| **2. Cards and hands** | 0 | The card model, recognition of all hand types including secret ones. `Four Fingers`/`Shortcut`/`Smeared`/Wild are implemented as **abstract modifier flags** — binding them to specific jokers is in Phase 3 | Tests for every hand type, every modifier, and the boundary cases (`A-2-3-4-5` valid, `Q-K-A-2-3` not) |
+| **3. Scoring** | 2 + game files | The score simulator, `extract_game_data.py`, hand levels, ~30 most common jokers, **the inexact-calculation marking mechanism** (section 2) | Golden tests match the game to the unit; an unknown joker marks the calculation inexact rather than being ignored |
+| **3a. Collecting golden cases** | the game at hand | **Manual human work:** record ~20 real situations (hand, jokers, levels, blind) and the score the game showed | The cases are in `tests/golden/`, Phase 3 can be closed |
+| **4. Solver + manual input** | 3 | Subset search, ranked output, CLI. **First practical use (v0.1)** | I type a hand, jokers, and a blind — I get a list of moves with scores and a "meets it / doesn't" answer |
+| **5. Auto-connection** | 1, 4 | The bridge to the mod, the TUI refreshes itself during play | I play without touching the bot — advice appears on its own |
+| **6. Discard and EV** | 5 | Monte-Carlo over the deck, tracking cards that are out. With manual input — the assumption mode (section 6). **v1 is closed here** | The bot says "discard these 3", explains with numbers, and honestly marks whether the estimate is exact or approximate |
+| **7. Shop and jokers** | 3, 5 | Coverage of the remaining jokers, purchase and order advice (v2) | The bot recommends a joker rearrange with a score uplift; the share of "unknown jokers" has dropped to zero |
+| **8. Run strategy** | 7 | Blind skips, tags, economy, run simulation (v3) | Policy evaluation on mass runs |
+| **9. Autopilot** | 4–8 | An action loop through the mod's honest RPC, vouchers/packs, opening packs, consumables before a play, the rule-modifying boss catalogue, Perishable/Rental jokers, the run-runner (v4) — section 6, "Autopilot" | A stable win-rate over N runs on each of the 8 stakes separately (section 2, the success criterion) |
 
-**Фазы 0–4 дают работающий инструмент без единого мода** — это v0.1. Он считает точно, но
-состояние вводится руками, а совет по сбросу ещё не даётся.
+**Phases 0–4 give a working tool without a single mod** — that's v0.1. It computes exactly,
+but state is entered by hand, and discard advice isn't given yet.
 
-### 8.1. Где мы сейчас
+### 8.1. Where we are now
 
-| Фаза | Состояние | Что осталось |
+| Phase | State | What's left |
 |---|---|---|
-| 0. Каркас | **закрыта** | — |
-| 1. Спайк интеграции | **закрыта** — стек ставится и заводится на Apple Silicon. Версии: игра 1.0.1o-FULL, Lovely 0.9.0, Steamodded 1.0.0~BETA-1814a, BalatroBot v1.5.2 (внутри мода отдаёт себя как 1.5.1). Дамп состояния — `tests/golden/20260820-104352-phase1-spike.json` | — |
-| 2. Карты и руки | **закрыта** | — |
-| 3. Скоринг | движок готов, реализовано 149 джокеров из 150 | сверка чисел с игрой (Фаза 3a); `j_hiker` — единственный осознанно отложенный (см. раздел 8.2) |
-| 3a. Сбор golden-кейсов | доступ к Mac есть | ~20 случаев: сыграть руку, дописать к дампу счёт из игры |
-| 4. Солвер + ручной ввод | **закрыта** | — |
-| 5. Автоподключение | **закрыта** — мост и `watch` проверены вживую 2026-08-21: `uvx balatrobot serve` держал реальную партию несколько антов подряд, `doctor`/`watch` читали состояние без сбоев, живая сессия и вскрыла дефект издания джокера (см. 8.4) | — |
-| 6. Сброс и EV | `solver.discard.discard_outcome` считает точный EV сброса **одного заданного** набора карт — раньше честным перебором сырых доборов (упирался в комбинаторику уже на 2 картах), теперь через сжатый перебор **композиций классов эквивалентности** (`_build_classes`/`_enumerate_compositions`): карты, неотличимые по итоговому счёту (совпадают ранг, релевантная масть, улучшение, издание, печать, дебафф), считаются один раз и взвешиваются комбинаторным коэффициентом вместо перебора каждой сырой карты — тот же точный ответ, на порядки дешевле по числу вызовов `advise()`. Масть схлопывается в общую корзину только когда это доказуемо безопасно: либо она физически не может успеть собрать флеш в пределах этого сброса, либо в раскладке вовсе нет джокера, различающего конкретные масти (`_SUIT_SENSITIVE_JOKER_KEYS`, 12 ключей, сверены по коду `implementations.py`, покрытие — поведенческими тестами, не сканированием исходника). Это подняло практический потолок точного расчёта с «едва 2 карты» до «обычно все 5» — `balatro-bot advise --discard "карты"` сравнивает результат с розыгрышем сейчас. Мост parse-ит область `cards` мода в `GameState.deck` — с ним колода точна, без него используется приближение (52 минус рука), и это честно помечается. **Общий случай («что сбрасывать» без заданного набора) закрыт дважды, на выбор**: `solver.discard.advise_discard` (`docs/Discard Spec.md`, старый и дешёвый путь) перебирает не сбросы, а **цели** (флеш/стрит/N одинаковых/фулл-хаус/«оставить как есть») с гипергеометрической вероятностью и оценкой по представительной выборке (`DiscardOption.exact` всегда `False`) — остаётся дефолтом в `advise`/`watch` через `solver.actions.rank_actions` именно из-за дешевизны. `solver.discard.rank_discards` (новый, точный путь) честно перебирает ВСЕХ до 218 возможных наборов сброса размера 1..5 (как `rank_plays` перебирает розыгрыш), каждый кандидат — настоящий `discard_outcome`, не оценка; кандидат, не уложившийся в бюджет композиций даже после сжатия, просто выпадает из результата (честный пропуск, не догадка) — на реальных руках без suit-джокера и без уже почти собранного флеша укладывается в единицы секунд, вызывается только явно (`advise --discard-search`), не входит в дефолт `advise`/`watch` из-за собственной цены (перебор добора внутри каждого из 218 кандидатов). **`solver.actions.rank_actions`** сливает `advise_discard` с `rank_plays` в один список «что делать сейчас» — это безусловный (не по флагу) вывод `balatro-bot advise` и `watch`, стоячее требование пользователя | точность `advise_discard` по-прежнему оценка по построению (кроме `success_probability` — она точна); `rank_discards` не гарантирует нахождение глобального точного оптимума, если бюджет композиций где-то честно исчерпался — только то, что каждый показанный кандидат сам по себе точен; **проверено вживую на Mac** 2026-08-22 (`advise_discard`/`rank_actions` — на реальной раздаче с Crazy Joker: расчёт правильно предпочёл сбор стрита флешу из-за джокера, бьющего только по стриту; узкий срез (`discard_outcome`) проверялся ранее; сжатие композиций и `rank_discards` — новые, вживую пока не проверялись) |
-| 7. Магазин и джокеры | «порядок джокеров» (`solver.play.rank_joker_orders`, `advise --joker-order`), «покупка» (`solver.shop.evaluate_shop`, `doctor`/`watch`) и поправка на экономику (`JokerOffer.interest_lost`) сделаны — см. раздел «Магазин и порядок джокеров» выше | `j_hiker` (см. раздел 8.3, №3); проверка магазина вживую на Mac (игра пока не доходила до фазы `SHOP`) |
-| 8. Стратегия рана | скип блайнда (`solver.skip.evaluate_skip`, `doctor`/`watch`) и экономика (проценты — Фаза 7; момент рерола — `ShopAdvice.reroll_cost`, честно без вердикта) сделаны — **все эвристики отдельных решений фазы закрыты**; советы по покупкам переехали в Фазу 7 (см. её строку выше) как относящиеся именно к магазину; механизм полной симуляции ранов готов — `balatro_bot/runner.py` (Фаза 9.7), прогон реального автопилота, не свой движок правил (уточнено 2026-08-27, см. раздел 6) | сам массовый замер винрейта ещё не проведён — раннер прогонялся только на `tests/fake_mod.py`, нужен Mac с игрой |
-| 9. Автопилот | подзадача 9.5 («Правило-модифицирующие боссы») **закрыта полностью** — каталог (`core/bosses.py`), починка счёта под `The Flint` и фильтр нелегальных ходов в `solver/play.py`; подзадача 9.1 (цикл действий) закрывает розыгрыш/сброс (`SELECTING_HAND` → `ModBridge.play`/`.discard`) и переключатель «пауза/перехват» на клавишу `p`; **9.2 закрыта полностью** — скип блайнда (`BLIND_SELECT` → `.select`/`.skip`), сбор награды (`ROUND_EVAL` → `.cash_out`), покупка джокеров в магазине (`SHOP` → `.buy`/`.next_round`, консервативная политика поверх `evaluate_shop`) и вскрытие Celestial/Planet Pack (`PLANET_PACK` → `.open_pack`, `solver/pack.py`, политика без консерватизма — подъём уровня руки не может ухудшить счёт) — вживую на Mac не проверялось, только на `tests/fake_mod.py`; **9.3 — все три уровня сделаны** (`solver/vouchers.py`): точный расчёт (`Grabber`/`Nacho Tong`/`Paint Brush`/`Palette`/`Wasteful`/`Recyclomancy`), денежная формула с явным горизонтом (`Seed Money`/`Money Tree`/`Reroll Surplus`/`Reroll Glut`/`Clearance Sale`/`Liquidation`) и эвристическая константа для 12 ваучеров, влияющих на будущий RNG (`Antimatter`/`Hone`/`Glow Up`/`Tarot`/`Planet Merchant`/`Tycoon`/`Overstock`/`Overstock Plus`/`Crystal Ball`/`Telescope`/`Observatory`) — новое отдельное поле `VoucherOffer.heuristic_value`, структурно отличное от `expected_uplift` (раздел 2, «Третья категория»), плюс `v_blank` починен до точного `expected_uplift = 0.0` (подтверждённый по `card.lua` факт, не оценка). Заодно добавлен `GameState.used_vouchers` (мост раньше не парсил эту область мода вовсе) и `core/economy.py`, что попутно закрыло старое допущение `JokerOffer.interest_lost` о потолке процентов $25 по умолчанию. `ShopAdvice.vouchers` несёт все эти оценки; автопилот покупает по ним с улучшения A4 (см. ниже); **9.4 — Planet-кусок сделан** (`solver/consumables.py`): использование Planet-карты из инвентаря перед розыгрышем (`SELECTING_HAND` → `.use`), тот же level-up, что в 9.2, только точный расчёт на настоящей текущей руке вместо сэмплирования; попутно найдено, что `v_observatory` создаёт реальный, но непосчитанный компромисс (движок подсчёта не реализует её X1.5 множителя) — честно отражено в `PlanetConsumableOffer.note`; **9.6 — стикеры ставок сделаны**: мост парсит `eternal`/`perishable`/`rental` в `ShopItem`, `JokerOffer` несёт `rental_cost_per_round` ($3/раунд, `core.economy.RENTAL_RATE`), `perishable_rounds` и `eternal` отдельными полями по образцу `interest_lost` (не сворачиваются в `expected_uplift`), `render_shop_advice` их показывает; **9.7 — ран-раннер сделан** (`balatro_bot/runner.py`): `autoplay --deck X [--stake Y] [--seed S]` играет ран от `ModBridge.start` до `won`/`GAME_OVER`/затыка с `RunReport` и логом решений; `--all-stakes`/`--runs N` — пакетный прогон с винрейтом по каждой из 8 ставок в кумулятивном порядке; попутно добавлены `ModBridge.start`/`.menu`, `GameState.won`, `autopilot.dispatch_action`/`.describe_action` (вынесены из цикла `ui/tui.py`); **Buffoon-паки — вскрытие и покупка сделаны** (`solver/pack.py` + `solver/shop.py`): джокер из открытого пака оценивается тем же контрфактумом, что джокер в витрине (`joker_uplift`, общий код); покупка пака из витрины — Монте-Карло самого механизма пака (`PackPurchaseOffer`): `joker_uplift` для выборки из 24 случайных реализованных джокеров, затем дешёвый пересэмплинг «лучшие `choose` из `extra`» по размеру пака (Normal 2/1, Jumbo 4/1, Mega 4/2 — из `game.lua`). `autopilot` берёт лучшего джокера из открытого пака при свободном слоте (без порога «строго положительный прирост» — пак уже оплачен, а `joker_uplift` по 12 рукам у условных джокеров сплошь и рядом выходит `0.0` из-за маленькой выборки, не из-за бесполезности) и покупает Buffoon-пак, если джокеров в витрине брать нечего. Tarot/Spectral/Standard-паки автопилот `skip_pack`-ает, а не застревает. **5 живых прогонов на Mac** (RED/WHITE), поражения на анте 3–5 (прогон 5 — анте 4 р12, рекорд); каждый вскрыл баг, невидимый на `tests/fake_mod.py`: (1) таймаут `play` → `TimedOutError`/`ACTION_TIMEOUT`, мод держит ответ до конца анимации; (2) затык на `SMODS_BOOSTER_OPENED` — Steamodded схлопывает per-type фазы паков в одну, тип теперь определяется по содержимому `state.pack`; (3) размен верной победы на сброс — `decide_action` сперва проверяет `advise().cheapest_sufficient`; (4) 3 из 4 купленных паков скипались (порог `> 0` при шумной оценке) + слив до $0 — снят порог на вскрытии, оценка покупки переведена с нижней границы на Монте-Карло механизма. Прогон 5 выявил потолок — экономический движок: **A1 (продажа-замена джокеров) и A2 (порог покупки) сделаны** — A1: `solver.shop.joker_contributions`/`JokerOffer.replaces` + `autopilot._decide_replace_action` + `ModBridge.sell`; когда слоты полны, продаёт слабейшего невечного джокера под заметно лучший оффер (пороги — доля требования блайнда и кратность). A2: `autopilot._worth_buying` — не покупать джокера в слот, если прирост ниже 3% требования блайнда. A3: покупка Celestial-пака из витрины — Монте-Карло по 12 планетам (`_planet_uplift_pool` + общий `_monte_carlo_pack`), автопилот берёт через ту же ветку паков. A4: автопокупка ваучеров по всем трём уровням честности (`_decide_voucher_action`, порог зависит от `VoucherOffer.value_unit`: очки → как джокер, доллары → чистый плюс ≥ цены, `heuristic_value` → структурные апгрейды ≥ 5.0) — вердикт пользователя. D1: перестановка джокеров перед розыгрышем (`_decide_rearrange_action` → `ModBridge.rearrange`, порог `_MIN_REORDER_GAIN_FRAC` 2%). Остальная дорожная карта улучшений — п. 9.8 | Arcana/Spectral/Standard-паки — ни вскрытие, ни покупка (нужны механики консумаблов/карт колоды); `Hieroglyph`/`Petroglyph` (нужна формула требований блайнда по анте, которой нет вовсе) и 6 прочих ваучеров (`Director's Cut`/`Retcon`/`Illusion`/`Magic Trick`/`Omen Globe`) не оцениваются (`heuristic_value` = `None`, автопилот их и не покупает); автопилот не реагирует на `rental`/`eternal` при автопокупке джокера (открытый вопрос политики); не рероллит (улучшение A5); Tarot-консумабли (9.4, второй кусок) не начаты; в 9.6 `JokerCard` (джокеры в слотах) новых полей не получил; 24/7-режим без присмотра (watchdog, автоперезапуск) — надстройка поверх раннера, не начата; **сам винрейт вживую на Mac ещё не замерен** — весь цикл 9.1–9.7 прогонялся только на `tests/fake_mod.py`, который не симулирует ни розыгрыш, ни переходы фаз |
+| 0. Skeleton | **closed** | — |
+| 1. Integration spike | **closed** — the stack installs and comes up on Apple Silicon. Versions: game 1.0.1o-FULL, Lovely 0.9.0, Steamodded 1.0.0~BETA-1814a, BalatroBot v1.5.2 (the mod reports itself as 1.5.1 internally). State dump — `tests/golden/20260820-104352-phase1-spike.json` | — |
+| 2. Cards and hands | **closed** | — |
+| 3. Scoring | the engine is ready, 149 of 150 jokers implemented | verifying the numbers against the game (Phase 3a); `j_hiker` is the one deliberately deferred (see section 8.2) |
+| 3a. Collecting golden cases | Mac access available | ~20 cases: play a hand, add the game's score to the dump |
+| 4. Solver + manual input | **closed** | — |
+| 5. Auto-connection | **closed** — the bridge and `watch` verified live 2026-08-21: `uvx balatrobot serve` held a real game for several antes in a row, `doctor`/`watch` read state without failures, and the live session surfaced the joker edition defect (see 8.4) | — |
+| 6. Discard and EV | `solver.discard.discard_outcome` computes the exact EV of discarding **one given** set of cards — previously by an honest search over raw draws (which hit combinatorics already at 2 cards), now by a compressed search over **compositions of equivalence classes** (`_build_classes`/`_enumerate_compositions`): cards indistinguishable by the final score (matching rank, relevant suit, enhancement, edition, seal, debuff) are counted once and weighted by a binomial coefficient instead of enumerating each raw card — the same exact answer, orders of magnitude cheaper in `advise()` calls. A suit collapses into one bucket only when that's provably safe: either it physically can't complete a flush within this discard, or there's no joker in play that discriminates specific suits at all (`_SUIT_SENSITIVE_JOKER_KEYS`, 12 keys, checked against the `implementations.py` code, coverage — by behavioral tests, not a source scan). This raised the practical exactness ceiling from "barely 2 cards" to "usually all 5" — `balatro-bot advise --discard "cards"` compares the result against playing now. The bridge parses the mod's `cards` area into `GameState.deck` — with it the deck is exact, without it an approximation is used (52 minus the hand), and this is honestly marked. **The general case ("what to discard" without a given set) is closed twice, take your pick**: `solver.discard.advise_discard` (`docs/Discard Spec.md`, the old and cheap path) enumerates not discards but **targets** (flush/straight/N of a kind/full house/"keep as is") with a hypergeometric probability and an estimate over a representative sample (`DiscardOption.exact` always `False`) — it stays the default in `advise`/`watch` via `solver.actions.rank_actions` precisely because it's cheap. `solver.discard.rank_discards` (the new, exact path) honestly enumerates ALL up to 218 possible discard sets of size 1..5 (as `rank_plays` enumerates plays), each candidate a real `discard_outcome`, not an estimate; a candidate that doesn't fit the composition budget even after compression simply drops out of the result (an honest omission, not a guess) — on real hands with no suit joker and no nearly-built flush it fits in a few seconds, is called only explicitly (`advise --discard-search`), and isn't in the `advise`/`watch` default because of its own cost (a draw search inside each of the 218 candidates). **`solver.actions.rank_actions`** merges `advise_discard` with `rank_plays` into one "what to do now" list — this is the unconditional (not flag-gated) output of `balatro-bot advise` and `watch`, a standing user requirement | `advise_discard`'s accuracy is still an estimate by construction (except `success_probability` — that's exact); `rank_discards` doesn't guarantee finding the global exact optimum if the composition budget was honestly exhausted somewhere — only that each shown candidate is itself exact; **verified live on a Mac** 2026-08-22 (`advise_discard`/`rank_actions` — on a real deal with a Crazy Joker: the computation correctly preferred building a straight over a flush because of the joker that only hits straights; the narrow slice (`discard_outcome`) was verified earlier; composition compression and `rank_discards` are new, not verified live yet) |
+| 7. Shop and jokers | "joker order" (`solver.play.rank_joker_orders`, `advise --joker-order`), "purchasing" (`solver.shop.evaluate_shop`, `doctor`/`watch`), and the economy adjustment (`JokerOffer.interest_lost`) are done — see the "Shop and joker order" section above | `j_hiker` (see section 8.3, #3); verifying the shop live on a Mac (the game hasn't reached the `SHOP` phase yet) |
+| 8. Run strategy | blind skip (`solver.skip.evaluate_skip`, `doctor`/`watch`) and the economy (interest — Phase 7; reroll timing — `ShopAdvice.reroll_cost`, honestly with no verdict) are done — **all the individual-decision heuristics of the phase are closed**; purchase advice moved to Phase 7 (see its row above) as being about the shop specifically; the full run-simulation mechanism is ready — `balatro_bot/runner.py` (Phase 9.7), running the real autopilot, not our own rules engine (clarified 2026-08-27, see section 6) | the mass win-rate measurement itself hasn't been done — the runner has only run against `tests/fake_mod.py`, a Mac with the game is needed |
+| 9. Autopilot | subtask 9.5 ("Rule-modifying bosses") is **fully closed** — the catalogue (`core/bosses.py`), the score fix for `The Flint`, and the illegal-move filter in `solver/play.py`; subtask 9.1 (the action loop) closes play/discard (`SELECTING_HAND` → `ModBridge.play`/`.discard`) and the "pause/takeover" switch on the `p` key; **9.2 is fully closed** — blind skip (`BLIND_SELECT` → `.select`/`.skip`), reward collection (`ROUND_EVAL` → `.cash_out`), shop joker purchasing (`SHOP` → `.buy`/`.next_round`, a conservative policy on top of `evaluate_shop`), and opening a Celestial/Planet Pack (`PLANET_PACK` → `.open_pack`, `solver/pack.py`, a non-conservative policy — raising a hand level can't worsen the score) — not verified live on a Mac, only against `tests/fake_mod.py`; **9.3 — all three tiers done** (`solver/vouchers.py`): exact computation (`Grabber`/`Nacho Tong`/`Paint Brush`/`Palette`/`Wasteful`/`Recyclomancy`), a dollar formula with an explicit horizon (`Seed Money`/`Money Tree`/`Reroll Surplus`/`Reroll Glut`/`Clearance Sale`/`Liquidation`), and a heuristic constant for 12 vouchers that affect future RNG (`Antimatter`/`Hone`/`Glow Up`/`Tarot`/`Planet Merchant`/`Tycoon`/`Overstock`/`Overstock Plus`/`Crystal Ball`/`Telescope`/`Observatory`) — a new separate field `VoucherOffer.heuristic_value`, structurally distinct from `expected_uplift` (section 2, "Third category"), plus `v_blank` fixed to an exact `expected_uplift = 0.0` (a fact confirmed against `card.lua`, not an estimate). `GameState.used_vouchers` was also added (the bridge didn't parse this mod area at all before) along with `core/economy.py`, which incidentally closed the old `JokerOffer.interest_lost` assumption of a default $25 interest cap. `ShopAdvice.vouchers` carries all these estimates; the autopilot buys by them as of improvement A4 (see below); **9.4 — the Planet slice is done** (`solver/consumables.py`): using a Planet card from the inventory before a play (`SELECTING_HAND` → `.use`), the same level-up as in 9.2 but an exact computation on the real current hand instead of sampling; it was also found that `v_observatory` creates a real but uncomputed trade-off (the scoring engine doesn't implement its X1.5 mult) — honestly reflected in `PlanetConsumableOffer.note`; **9.6 — stake stickers done**: the bridge parses `eternal`/`perishable`/`rental` into `ShopItem`, `JokerOffer` carries `rental_cost_per_round` ($3/round, `core.economy.RENTAL_RATE`), `perishable_rounds`, and `eternal` as separate fields modeled on `interest_lost` (not folded into `expected_uplift`), `render_shop_advice` shows them; **9.7 — the run-runner is done** (`balatro_bot/runner.py`): `autoplay --deck X [--stake Y] [--seed S]` plays a run from `ModBridge.start` to `won`/`GAME_OVER`/a stall with a `RunReport` and a decision log; `--all-stakes`/`--runs N` — a batch run with a win-rate per each of the 8 stakes in cumulative order; `ModBridge.start`/`.menu`, `GameState.won`, `autopilot.dispatch_action`/`.describe_action` (extracted from the `ui/tui.py` loop) were added along the way; **Buffoon packs — opening and purchasing done** (`solver/pack.py` + `solver/shop.py`): a joker from an open pack is valued by the same counterfactual as a shop joker (`joker_uplift`, shared code); buying a pack from the shop — a Monte-Carlo of the pack mechanic itself (`PackPurchaseOffer`): `joker_uplift` over a sample of 24 random implemented jokers, then a cheap resample "best `choose` of `extra`" by pack size (Normal 2/1, Jumbo 4/1, Mega 4/2 — from `game.lua`). The `autopilot` takes the best joker from an open pack with a free slot (with no "strictly positive uplift" threshold — the pack is already paid for, and `joker_uplift` over 12 hands routinely reads `0.0` for conditional jokers because of the small sample, not because they're worthless) and buys a Buffoon pack if there are no jokers worth taking in the shop. The autopilot `skip_pack`s Tarot/Spectral/Standard packs rather than getting stuck. **6 live runs on a Mac** (RED/WHITE): runs 1–5 lost on antes 3–5 (run 5 — ante 4 r12), run 6 reached ante 5 and was stopped manually; each of the first five surfaced a bug invisible against `tests/fake_mod.py`: (1) a `play` timeout → `TimedOutError`/`ACTION_TIMEOUT`, the mod holds the response until the animation ends; (2) a stall on `SMODS_BOOSTER_OPENED` — Steamodded collapses the per-type pack phases into one, the type is now determined from the contents of `state.pack`; (3) trading a certain win for a discard — `decide_action` first checks `advise().cheapest_sufficient`; (4) 3 of 4 bought packs were skipped (the `> 0` threshold on a noisy estimate) + draining to $0 — the threshold on opening was removed, the purchase estimate switched from a lower bound to a Monte-Carlo of the mechanic. Run 5 revealed the ceiling — the economy engine: **A1 (joker sell-replace) and A2 (buy threshold) done** — A1: `solver.shop.joker_contributions`/`JokerOffer.replaces` + `autopilot._decide_replace_action` + `ModBridge.sell`; when slots are full, it sells the weakest non-eternal joker under a noticeably better offer (thresholds — a fraction of the blind requirement and a ratio). A2: `autopilot._worth_buying` — don't buy a joker into a slot if the uplift is below 3% of the blind requirement. A3: buying a Celestial pack from the shop — a Monte-Carlo over the 12 planets (`_planet_uplift_pool` + the shared `_monte_carlo_pack`), the autopilot takes it via the same pack branch. A4: autonomous voucher buying across all three honesty tiers (`_decide_voucher_action`, the threshold depends on `VoucherOffer.value_unit`: points → like a joker, dollars → a net gain ≥ price, `heuristic_value` → structural upgrades ≥ 5.0) — the user's verdict. D1: joker rearrange before a play (`_decide_rearrange_action` → `ModBridge.rearrange`, threshold `_MIN_REORDER_GAIN_FRAC` 2%). The rest of the improvement roadmap — item 9.8 | Arcana/Spectral/Standard packs — neither opening nor purchasing (they need the consumable/deck-card mechanics); `Hieroglyph`/`Petroglyph` (needs a per-ante blind-requirement formula that doesn't exist at all) and 6 other vouchers (`Director's Cut`/`Retcon`/`Illusion`/`Magic Trick`/`Omen Globe`) aren't valued (`heuristic_value` = `None`, the autopilot doesn't buy them either); the autopilot doesn't react to `rental`/`eternal` when auto-buying a joker (an open policy question); Tarot consumables (9.4, the second slice) aren't started; in 9.6 `JokerCard` (jokers in slots) got no new fields; an unattended 24/7 mode (watchdog, auto-restart) — a layer on top of the runner, not started; **run 6 (RED/WHITE) was the first full live run of the 9.1–9.7 loop** — it reached ante 5 (a new record) and was stopped manually, not lost, with A1–A4, D1, `decide_skip`, and `SMODS_BOOSTER_OPENED` pack opening all working live for the first time; **B1 done** — two guards in `autopilot.decide_action` on `SELECTING_HAND` (`_on_pace_without_discard`, `_discard_edge_is_noise`) stop the autopilot trading a sufficient play for a marginally-higher-EV discard (run 6 burned its last discard on a 10,000 boss to gain 0.7%); **A5 done** — `ModBridge.reroll` + `RerollOutlook` (a Monte-Carlo of the roll mechanic: `shop_slots` slots, joker w.p. 20/28 from `game.lua`, uplift from the Buffoon-pack joker sample) + `autopilot._decide_reroll_action` (reroll as the last shop branch when `expected_best_uplift` clears the joker-buy bar and `money − cost ≥ _REROLL_MONEY_RESERVE`), plus the new parsed field `GameState.shop_slots`; the economy engine (buy/sell-replace/voucher/pack/reroll) is now complete; the mass win-rate measurement (E1) is still not done, blocked on F1 (15–40 s per decision) — see item 9.8 |
 
-### 8.2. Отступления от плана
+### 8.2. Deviations from the plan
 
-Зафиксировано, чтобы расхождение документа с кодом не копилось молча.
+Recorded so the gap between the document and the code doesn't pile up silently.
 
-- **Появился установщик**, которого в плане не было: `balatro-bot install` ставит весь
-  мод-стек одной командой. Фаза 1 от этого не исчезла, но сократилась до «запустить и
-  посмотреть».
-- **Часть Фазы 5 сделана до Фазы 1**, хотя план требовал обратного порядка. Причина в том,
-  что клиент к моду оказался полностью проверяемым против фальшивого сервера, собранного по
-  спецификации мода. Риск, ради которого Фаза 1 стояла первой, это не снимает: сам стек на
-  macOS по-прежнему никем не запускался.
-- **`extract_game_data.py` заменён на `generate_catalogue.py`** с другим источником данных
-  (см. раздел 5).
-- **`ui/tui.py` написан без `textual`/`rich`**, вопреки стеку из раздела 7: живое окно
-  (`balatro-bot watch`) обходится опросом раз в секунду и перерисовкой через голые ANSI-коды
-  (`\x1b[2J\x1b[H`) — этого достаточно для read-only вывода без интерактивности, а зависимостей
-  по-прежнему ноль (правило из CLAUDE.md). Отрисовка вынесена в `ui/render.py` и переиспользуется
-  командами `advise`/`doctor`, чтобы не разойтись в форматировании.
-- **Значения рук приходят от игры**, поэтому таблицы из `hands.py` понижены до запасного
-  пути для ручного ввода.
-- **Область `cards` в ответе мода оказалась оставшейся колодой**, а не всем деском: на
-  golden-дампах `hand.count + cards.count` всегда равно размеру всей колоды. В исходной
-  нумерации фаз это не упоминалось явно, план предполагал Монте-Карло по неизвестному
-  составу — на деле мост из Фазы 5 отдаёт состав точно, и это разблокировало точный (не
-  сэмплированный) перебор для узкого среза Фазы 6.
-- **Общий случай сброса («что сбрасывать» без заданного набора) реализован не как Монте-Карло
-  по доборам**, вопреки формулировке раздела 6 выше, а по отдельной спецификации
-  `docs/Discard Spec.md`: перебираются цели (флеш/стрит/N одинаковых/фулл-хаус), их вероятность
-  считается точно гипергеометрически, и сэмплирование остаётся только внутри одной корзины
-  «пришло ровно i аутов» — иначе перебор всех сбросов с Монте-Карло добора внутри каждого не
-  укладывался по времени (раздел 8.3, допущение №9). Подробности — `solver.discard.advise_discard`.
-- **Допущение №9 снято позже не через отсечение кандидатов (как планировалось изначально), а
-  через сжатие самого перебора добора**: карты, неотличимые по влиянию на итоговый счёт
-  (совпадают ранг, релевантная масть, улучшение, издание, печать, дебафф), считаются как один
-  представитель класса и взвешиваются комбинаторно, а не перебираются по отдельности
-  (`solver.discard._build_classes`/`_enumerate_compositions`). Это не оценка и не Монте-Карло —
-  математически тот же результат, что честный перебор сырых доборов, просто с на порядки
-  меньшим числом вызовов `advise()`. Итог — два новых, независимо переиспользуемых
-  результата: `discard_outcome` для заданного набора теперь тянет точный расчёт до сбросов
-  почти любого размера (раньше упирался в ~2 карты), а `rank_discards` — честный перебор ВСЕХ
-  до 218 возможных наборов сброса (`advise --discard-search`), настоящая альтернатива
-  `advise_discard` там, где на неё есть время.
-- **Консумаблы (Tarot/Planet) до розыгрыша** — целый пласт, не учтённый в исходной нумерации
-  фаз. Обнаружен вживую, не сделан. Подробности — раздел 6, «Консумаблы до розыгрыша».
-- **В спецификации мода (`openrpc.json`) нет отдельного поля для полного состава колоды** —
-  только `cards` («Cards remaining in deck»), то есть то, что ещё можно добрать, а не всё,
-  чем владеет игрок. Для джокеров, считающих по всей колоде (`j_steel_joker`, `j_stone`,
-  `j_drivers_license`, `j_erosion`), это разрешено узким случаем: пока за раунд ничего не
-  сыграно и не сброшено (`round.hands_played == 0` и `round.discards_used == 0`), `hand ∪
-  cards` и есть вся колода — `GameState.full_deck` заполняется только тогда, иначе `None`, и
-  джокер честно помечает расчёт неточным. `j_erosion` дополнительно нужен стартовый размер
-  колоды — он зависит от выбранной колоды рана (`GameState.deck_type`, из top-level поля
-  `deck` в ответе мода): у всех колод 52 карты, кроме `ABANDONED` (начинает без картинок — 40).
-  Таблица `_DECK_STARTING_SIZE` в `implementations.py` захардкожена по игровому знанию, не по
-  данным мода — это статические игровые правила, а не история событий рана, поэтому не
-  подпадает под правило «не гадать текстом эффекта» ниже.
-- **`Oops! All 6s` (`j_oops`) удваивает вероятность у Lucky-карт и `j_bloodstone`** через
-  `core.scoring.double_chance` — общую функцию для любого джокера с двухвариантной таблицей
-  «не повезло / бонус». Misprint не тронут: у него не шанс, а равномерный разброс 0–23,
-  удваивать нечего. Джокеры, что дают только деньги при срабатывании (`j_business`,
-  `j_reserved_parking`, `j_8_ball`), Oops не трогает: их вероятность реальна, но эффект и без
-  удвоения не входит в chips/mult этого розыгрыша.
-- **Джокеры-накопители читают готовое число из текста эффекта, а не пересчитывают историю.**
-  Изначально план (и раздел 8.3 в прежней редакции) считал 27 накопительных джокеров
-  недостижимыми: их реальный эффект копится по событиям, которых состояние игры не хранит
-  (прошлые сбросы, продажи, рероллы). Но сама игра уже считает текущее значение и подставляет
-  его в текст эффекта («+3 множ. за каждую карту джокера (сейчас +15 множ.)» — обнаружено
-  вживую на `Abstract Joker` при разборе бага с изданием джокера, см. 8.4). Мост
-  (`mod_bridge._extract_current_value`) вытаскивает число из последней скобочной группы текста
-  структурно — по позиции и наличию цифры, не по конкретному слову — поэтому не зависит от
-  языка игры (проверено на русском и английском текстах), и кладёт его в новое поле
-  `JokerCard.current_value`. 23 из 27 накопителей (`core/jokers/implementations.py`,
-  `_LiveAccumulator`/`_accumulator(...)`) читают это поле напрямую и прикладывают его как есть
-  нужным эффектом (`AddChips`/`AddMult`/`XMult` — тип эффекта уже известен из текста каталога,
-  само число просто подставляется). Работает только вживую: при ручном вводе или если в тексте
-  эффекта скобочной группы с числом не нашлось, `current_value` — `None`, джокер честно
-  помечает расчёт неточным.
-- **Оставшиеся 6 джокеров закрыты разбором исходников игры** (`Balatro.love` — архив движка
-  LÖVE внутри `Balatro.app`, распаковывается как обычный zip; `card.lua` — реализация всех
-  джокеров, `localization/{ru,en-us}.lua` — тексты). Раньше 4 из них (`j_hiker`,
-  `j_loyalty_card`, `j_popcorn`, `j_ramen`) считались недостижимыми, потому что в статическом
-  тексте каталога (`catalogue.py`, собран из `enums.lua`) не было скобочной группы с текущим
-  значением — но это оказалось артефактом статической выгрузки, не отсутствием данных:
-  - **`j_popcorn`, `j_ramen`** — `card.lua` показывает `loc_vars = {self.ability.mult, ...}` /
-    `{self.ability.x_mult, ...}` — текущее (затухающее) значение живое, просто стоит **первым**
-    числом в тексте эффекта, а не последним в скобках, как у остальных 23. Добавлена вторая
-    функция извлечения, `mod_bridge._extract_leading_value` → `JokerCard.leading_value`, и
-    класс `_LeadingValueJoker`.
-  - **`j_ancient`, `j_idol`** — текущая цель (масть у `Ancient Joker`; ранг и масть у `The
-    Idol`) — это `G.GAME.current_round.ancient_card`/`idol_card`, поле уровня раунда, которого
-    в схеме мода (`openrpc.json`) нет вообще ни в каком виде — только сама игра подставляет имя
-    масти/ранга словом прямо в текст эффекта (`localize(suit, 'suits_singular')` и т.п.). Нет
-    способа получить это структурно, поэтому `mod_bridge._extract_word` ищет по словарю
-    известных слов (`_SUIT_WORDS`, `_RANK_WORDS`) — единственное место в проекте, где
-    распознавание завязано на язык игры, а не на структуру текста. Сейчас словарь покрывает
-    только русский и английский; на любом другом языке `target_suit`/`target_rank` останутся
-    `None`, и джокер честно пометит расчёт неточным, а не промолчит неверно. Отдельная защита от
-    ложного срабатывания: у `The Idol` множитель всегда `X2` (`config.extra = 2`), поэтому цифра
-    «2» есть в тексте эффекта постоянно и не годится как признак ранга — `_RANK_WORDS`
-    намеренно не содержит числового ключа `"2"`, так что если цель — именно двойка, бот честно
-    её не найдёт, а не один раз угадает по omonимичной цифре.
-  - **`j_loyalty_card`** — настоящая формула триггера (`(every - 1 - (hands_played -
-    hands_played_at_create)) % (every + 1) == 0`) зависит от момента покупки конкретного
-    джокера, которого состояние не хранит нигде — вычислить самим нельзя. Но игра сама рисует
-    в тексте эффекта готовый ответ: слово «Активно!»/«Active!», когда X4 сработает в этот
-    розыгрыш, или «N осталось»/«N remaining» — когда нет. `mod_bridge._extract_loyalty_active`
-    распознаёт оба маркера (снова только на русском/английском) → `JokerCard.loyalty_active`.
-  - **`j_hiker`** остался единственным нереализованным. Механизм подтверждён по исходнику:
-    бонус (+5 фишек за розыгрыш) навешивается не на джокер, а перманентно на саму сыгранную
-    ИГРАЛЬНУЮ карту (`context.other_card.ability.perma_bonus`, накапливается весь ран) и
-    рендерится через тот же общий пайплайн текста, что и у джокеров (`bonus_chips =
-    ability.bonus + perma_bonus` в `generate_UIBox_ability_table`, тот же код что уже строит
-    `value.effect` для карт руки). Но точный текст, который при этом получится (например,
-    строка «+30 доп. фишек», которую видели вживую у Bonus-карты в начале этой сессии), не
-    совпадает слово в слово с шаблоном `"Бонус +#1# шт. фишек"` из `localization/ru.lua` того
-    же `Balatro.love` — либо Steamodded подменяет текст на лету, либо ответственная функция
-    другая. Реализовывать по неподтверждённому тексту решили не рисковать: ждём живую карту,
-    тронутую `Hiker`, чтобы свериться, прежде чем писать регулярку.
+- **An installer appeared** that wasn't in the plan: `balatro-bot install` installs the
+  whole mod stack in one command. Phase 1 didn't vanish because of it, but shrank to "run it
+  and look".
+- **Part of Phase 5 was done before Phase 1**, though the plan required the reverse order.
+  The reason is that the mod client turned out to be fully testable against a fake server
+  built to the mod's spec. This doesn't remove the risk Phase 1 stood first for: the stack
+  itself on macOS still hasn't been launched by anyone.
+- **`extract_game_data.py` was replaced with `generate_catalogue.py`** using a different
+  data source (see section 5).
+- **`ui/tui.py` is written without `textual`/`rich`**, contrary to the stack in section 7:
+  the live window (`balatro-bot watch`) gets by on a once-a-second poll and a redraw via
+  bare ANSI codes (`\x1b[2J\x1b[H`) — that's enough for read-only output with no
+  interactivity, and dependencies are still zero (the rule from CLAUDE.md). Rendering is
+  moved into `ui/render.py` and reused by `advise`/`doctor` so the formatting doesn't drift.
+- **Hand values come from the game**, so the tables in `hands.py` are downgraded to a
+  fallback path for manual input.
+- **The `cards` area in the mod's response turned out to be the remaining deck**, not the
+  whole deck: on golden dumps `hand.count + cards.count` always equals the whole deck size.
+  This wasn't stated explicitly in the original phase numbering; the plan assumed a
+  Monte-Carlo over an unknown composition — in fact the bridge from Phase 5 exposes the
+  composition exactly, and this unblocked the exact (not sampled) search for the narrow
+  slice of Phase 6.
+- **The general discard case ("what to discard" without a given set) is implemented not as a
+  Monte-Carlo over draws**, contrary to the wording of section 6 above, but per a separate
+  spec `docs/Discard Spec.md`: targets (flush/straight/N of a kind/full house) are
+  enumerated, their probability is computed exactly with the hypergeometric distribution,
+  and sampling remains only inside one "exactly i outs drawn" bucket — otherwise enumerating
+  all discards with a Monte-Carlo draw inside each didn't fit in time (section 8.3,
+  assumption #9). Details — `solver.discard.advise_discard`.
+- **Assumption #9 was removed later not by pruning candidates (as originally planned) but by
+  compressing the draw search itself**: cards indistinguishable in their effect on the final
+  score (matching rank, relevant suit, enhancement, edition, seal, debuff) are counted as
+  one class representative and weighted combinatorially, rather than enumerated individually
+  (`solver.discard._build_classes`/`_enumerate_compositions`). This is neither an estimate
+  nor a Monte-Carlo — mathematically the same result as an honest search over raw draws,
+  just with orders of magnitude fewer `advise()` calls. The upshot is two new, independently
+  reusable results: `discard_outcome` for a given set now carries an exact computation up to
+  discards of almost any size (it used to hit ~2 cards), and `rank_discards` — an honest
+  search over ALL up to 218 possible discard sets (`advise --discard-search`), a real
+  alternative to `advise_discard` where there's time for it.
+- **Consumables (Tarot/Planet) before a play** — a whole layer not accounted for in the
+  original phase numbering. Discovered live. The Planet slice is done (Phase 9.4,
+  `solver/consumables.py`), Tarot isn't (improvement C1). Details — section 6, "Consumables
+  before a play" and item 9.4.
+- **The mod's spec (`openrpc.json`) has no separate field for the full deck composition** —
+  only `cards` ("Cards remaining in deck"), i.e. what can still be drawn, not everything the
+  player owns. For jokers that count over the whole deck (`j_steel_joker`, `j_stone`,
+  `j_drivers_license`, `j_erosion`), this is allowed by a narrow case: while nothing has
+  been played or discarded this round (`round.hands_played == 0` and
+  `round.discards_used == 0`), `hand ∪ cards` is the whole deck — `GameState.full_deck` is
+  filled only then, otherwise `None`, and the joker honestly marks the calculation inexact.
+  `j_erosion` additionally needs the starting deck size — it depends on the run's chosen
+  deck (`GameState.deck_type`, from the top-level `deck` field in the mod's response): every
+  deck has 52 cards except `ABANDONED` (starts with no face cards — 40). The
+  `_DECK_STARTING_SIZE` table in `implementations.py` is hardcoded from game knowledge, not
+  from mod data — these are static game rules, not a run's event history, so it doesn't fall
+  under the "don't guess from effect text" rule below.
+- **`Oops! All 6s` (`j_oops`) doubles the probability for Lucky cards and `j_bloodstone`**
+  via `core.scoring.double_chance` — a shared function for any joker with a two-outcome "no
+  luck / bonus" table. Misprint is untouched: it isn't a chance but a uniform spread 0–23,
+  nothing to double. Jokers that only give money when they trigger (`j_business`,
+  `j_reserved_parking`, `j_8_ball`) are untouched by Oops: their probability is real, but the
+  effect isn't part of this play's chips/mult even without doubling.
+- **Accumulator jokers read a ready number from the effect text instead of recomputing
+  history.** The plan originally (and section 8.3 in a former revision) considered 27
+  accumulator jokers unreachable: their real effect accumulates over events the game state
+  doesn't store (past discards, sells, rerolls). But the game itself already computes the
+  current value and substitutes it into the effect text ("+3 Mult for each joker card
+  (currently +15 Mult)" — discovered live on `Abstract Joker` while investigating the joker
+  edition bug, see 8.4). The bridge (`mod_bridge._extract_current_value`) pulls the number
+  out of the last parenthesized group of the text structurally — by position and the
+  presence of a digit, not by a specific word — so it doesn't depend on the game language
+  (verified on Russian and English texts), and puts it into a new field
+  `JokerCard.current_value`. 23 of the 27 accumulators (`core/jokers/implementations.py`,
+  `_LiveAccumulator`/`_accumulator(...)`) read this field directly and apply it as-is with
+  the appropriate effect (`AddChips`/`AddMult`/`XMult` — the effect type is already known
+  from the catalogue text, only the number is substituted). Works live only: with manual
+  input, or if the effect text had no parenthesized group with a number, `current_value` is
+  `None` and the joker honestly marks the calculation inexact.
+- **The remaining 6 jokers are closed by a dive into the game's sources** (`Balatro.love` —
+  the LÖVE engine archive inside `Balatro.app`, unpacks as a plain zip; `card.lua` — every
+  joker's implementation, `localization/{ru,en-us}.lua` — the texts). 4 of them (`j_hiker`,
+  `j_loyalty_card`, `j_popcorn`, `j_ramen`) were previously considered unreachable because
+  the static catalogue text (`catalogue.py`, built from `enums.lua`) had no parenthesized
+  group with the current value — but that turned out to be an artifact of the static export,
+  not missing data:
+  - **`j_popcorn`, `j_ramen`** — `card.lua` shows `loc_vars = {self.ability.mult, ...}` /
+    `{self.ability.x_mult, ...}` — the current (decaying) value is live, it's just the
+    **first** number in the effect text, not the last one in parentheses like the other 23.
+    A second extraction function was added, `mod_bridge._extract_leading_value` →
+    `JokerCard.leading_value`, and a class `_LeadingValueJoker`.
+  - **`j_ancient`, `j_idol`** — the current target (a suit for `Ancient Joker`; a rank and a
+    suit for `The Idol`) is `G.GAME.current_round.ancient_card`/`idol_card`, a round-level
+    field that isn't in the mod's schema (`openrpc.json`) in any form — only the game itself
+    substitutes the suit/rank name as a word right into the effect text
+    (`localize(suit, 'suits_singular')` etc.). There's no way to get it structurally, so
+    `mod_bridge._extract_word` matches against a dictionary of known words (`_SUIT_WORDS`,
+    `_RANK_WORDS`) — the one place in the project where recognition is tied to the game
+    language rather than the text structure. The dictionary currently covers only Russian
+    and English; in any other language `target_suit`/`target_rank` stay `None` and the joker
+    honestly marks the calculation inexact rather than staying silently wrong. A separate
+    guard against a false positive: `The Idol`'s multiplier is always `X2`
+    (`config.extra = 2`), so the digit "2" is always in the effect text and is useless as a
+    rank marker — `_RANK_WORDS` deliberately has no numeric key `"2"`, so if the target
+    really is a two, the bot honestly doesn't find it rather than guessing right once from
+    the homonymous digit.
+  - **`j_loyalty_card`** — the real trigger formula (`(every - 1 - (hands_played -
+    hands_played_at_create)) % (every + 1) == 0`) depends on when the specific joker was
+    bought, which the state stores nowhere — we can't compute it ourselves. But the game
+    itself draws the ready answer in the effect text: the word "Active!" when X4 will fire
+    on this play, or "N remaining" when it won't. `mod_bridge._extract_loyalty_active`
+    recognizes both markers (again only in Russian/English) → `JokerCard.loyalty_active`.
+  - **`j_hiker`** remained the only unimplemented one. The mechanism is confirmed from
+    source: the bonus (+5 chips per play) attaches not to the joker but permanently to the
+    played PLAYING card itself (`context.other_card.ability.perma_bonus`, accumulates over
+    the whole run) and is rendered through the same shared text pipeline as jokers
+    (`bonus_chips = ability.bonus + perma_bonus` in `generate_UIBox_ability_table`, the same
+    code that already builds `value.effect` for hand cards). But the exact text this
+    produces (e.g. the string "+30 extra chips" seen live on a Bonus card at the start of
+    this session) doesn't match word for word the template `"Bonus +#1# chips"` from
+    `localization/ru.lua` in the same `Balatro.love` — either Steamodded swaps the text on
+    the fly, or a different function is responsible. Implementing from an unconfirmed text
+    was judged too risky: we wait for a live card touched by `Hiker` to check against before
+    writing a regex.
 
-### 8.3. Открытые допущения и дефекты
+### 8.3. Open assumptions and defects
 
-Список упорядочен по влиянию: сверху то, что искажает каждое число, снизу — узкие случаи.
-Пометка «нужен Mac» означает, что закрыть пункт можно только эталонными случаями из игры
-(задача 3a).
+The list is ordered by impact: at the top what distorts every number, at the bottom the
+narrow cases. A "needs a Mac" note means the item can only be closed with reference cases
+from the game (task 3a).
 
-| № | Что | Влияние | Как закрыть |
+| # | What | Impact | How to close |
 |---|---|---|---|
-| 1 | Базовые значения рук выписаны по памяти | искажает **каждый** расчёт | нужен Mac |
-| 2 | Порядок шагов подсчёта не сверен с исходниками игры | искажает расчёты со сложными джокерами | нужен Mac либо разбор `Balatro.love` |
-| 3 | Реализовано 149 джокеров из 150. Немалая часть — джокеры «известны, но эффект не трогает chips/mult розыгрыша» (деньги, расходники, размер руки/сбросов, уже отражённый в состоянии, события после подсчёта): `j_burnt`, `j_rough_gem`, `j_business`, `j_reserved_parking`, `j_ticket`, `j_8_ball`, `j_astronomer`, `j_juggler`, `j_burglar`, `j_certificate`, `j_mr_bones`, `j_midas_mask`, `j_space` и ещё около 25 в этом духе — молчаливый `BaseJoker` для них честный посчитанный ноль, а не догадка. Ради части джокеров расширено состояние: `PokerHandInfo.played_this_round` (`j_card_sharp`), `GameState.hands_played` (`j_ice_cream`), `GameState.joker_slots` (`j_stencil`), `JokerCard.sell_value` (`j_swashbuckler`), `GameState.full_deck` (`j_steel_joker`, `j_stone`, `j_drivers_license`, `j_erosion` — точен только в узком случае, см. докстринг поля и раздел 8.2), `GameState.deck_type` (`j_erosion` — стартовый размер колоды по её типу), `JokerCard.current_value` (23 джокера-накопителя), `JokerCard.leading_value` (`j_popcorn`, `j_ramen`), `JokerCard.target_suit`/`target_rank` (`j_ancient`, `j_idol` — только на русском/английском текстах эффекта), `JokerCard.loyalty_active` (`j_loyalty_card` — тоже только ru/en; всё это — раздел 8.2). Три новые правило-модифицирующие карты в `HandModifiers`: `pareidolia` (любая карта — картинка), `chicot` (дебафф боссового блайнда снят), `oops` (`core.scoring.double_chance` удваивает вероятность бонусного исхода у Lucky-карт и `j_bloodstone`). Отдельно захардкожена таблица редкости всех 150 джокеров (`_JOKER_RARITY` в `implementations.py`, ради `j_baseball`) — статичное игровое правило, а не история событий, сверена и по трём категориям вики сообщества (61/64/20/5, совпадает с официальными числами), и по `rarity` прямо в `game.lua` | `j_hiker` — единственный оставшийся: бонус навешивается на игральные карты, а не на джокера, нужен новый механизм на уровне карт колоды (раздел 8.2). Фаза 7 |
-| 4 | Допущение: дебафф карты не влияет на определение типа руки | боссовые блайнды | **подтверждено на игре** 2026-08-20 (The Goad, дебафф пик): `3S 3H 3D` → three_of_a_kind, 108, счёт совпал точь-в-точь — `tests/golden/20260820-104835-boss-goad-debuffed-spade-trips.json` |
-| 5 | Допущение: `Supernova` не считает текущую руку | один джокер | нужен Mac |
-| 6 | Допущение: `Photograph` срабатывает повторно при ретриггере | связка двух джокеров | нужен Mac |
-| 7 | Допущение: роял-флеш считается обычным стрит-флешем | название руки в выводе | нужен Mac |
-| 8 | При цикле `Blueprint` ⇄ `Brainstorm` цепочка обрывается | редкая расстановка | нужен Mac |
-| 9 | ~~Монте-Карло Фазы 6 упрётся в скорость: 1000 выборок × 218 вариантов ≈ 13 с~~ — снято не отсечением кандидатов, а сжатием перебора: `solver.discard._enumerate_compositions`/`_build_classes` группируют неотличимые по итоговому счёту карты добора в классы эквивалентности (ранг + релевантная масть + улучшение + издание + печать + дебафф) и взвешивают каждый класс комбинаторным коэффициентом вместо перебора каждой сырой карты отдельно — тот же точный ответ, что честный перебор, на порядки дешевле. `discard_outcome` для одного заданного сброса дотягивает точный перебор с ~2 карт (раньше) до практически всех 5; `rank_discards` — честный перебор ВСЕХ до 218 наборов сброса (`advise --discard-search`), каждый кандидат — точный `discard_outcome`, не оценка по выборке | закрыто. Кандидат, чей перебор добора не уложился в бюджет композиций даже после сжатия, честно выпадает из результата (`None`, не догадка) — это не Монте-Карло и не отсечение по эвристике, а прямое следствие того же принципа, что и везде в проекте |
-| 10 | **Закрыто полностью.** Каталог — `core/bosses.py`, 28 боссов из `game.lua`/`blind.lua`/`functions/state_events.lua` (раздел 6 «Автопилот» п. 9.5). `The Flint` (уполовинивание базовых фишек/множителя) — починено в `core/scoring.py._apply_boss_score_modifier`, с одной честно признанной неполнотой: без джокеров расчёт точен, с любым джокером честно помечается `unknown` (наш конвейер считает джокеров последним шагом, раздел 5, и не воспроизводит порядок «до/после» относительно The Flint из настоящей игры). Фильтр нелегальных вариантов (`The Mouth`/`The Eye`/`The Psychic`) — в `solver/play.py._is_legal_play`, до попадания в ранжированный список | было: молчаливо неверное число при `The Flint`, молчаливо неверный совет о легальности хода при трёх других боссах — оба хуже, чем `unknown` | закрыто |
+| 1 | Base hand values written from memory | distorts **every** calculation | needs a Mac |
+| 2 | The scoring step order isn't checked against the game's sources | distorts calculations with complex jokers | needs a Mac or a `Balatro.love` dive |
+| 3 | 149 of 150 jokers implemented. A sizeable share are "known, but the effect doesn't touch this play's chips/mult" jokers (money, consumables, hand/discard size already reflected in the state, post-scoring events): `j_burnt`, `j_rough_gem`, `j_business`, `j_reserved_parking`, `j_ticket`, `j_8_ball`, `j_astronomer`, `j_juggler`, `j_burglar`, `j_certificate`, `j_mr_bones`, `j_midas_mask`, `j_space`, and ~25 more in this vein — a silent `BaseJoker` for them is an honest computed zero, not a guess. For some jokers the state was extended: `PokerHandInfo.played_this_round` (`j_card_sharp`), `GameState.hands_played` (`j_ice_cream`), `GameState.joker_slots` (`j_stencil`), `JokerCard.sell_value` (`j_swashbuckler`), `GameState.full_deck` (`j_steel_joker`, `j_stone`, `j_drivers_license`, `j_erosion` — exact only in the narrow case, see the field's docstring and section 8.2), `GameState.deck_type` (`j_erosion` — the starting deck size by its type), `JokerCard.current_value` (23 accumulator jokers), `JokerCard.leading_value` (`j_popcorn`, `j_ramen`), `JokerCard.target_suit`/`target_rank` (`j_ancient`, `j_idol` — only on Russian/English effect texts), `JokerCard.loyalty_active` (`j_loyalty_card` — also only ru/en; all this is section 8.2). Three new rule-modifying cards in `HandModifiers`: `pareidolia` (any card is a face card), `chicot` (the boss blind debuff is removed), `oops` (`core.scoring.double_chance` doubles the bonus-outcome probability for Lucky cards and `j_bloodstone`). Separately, a hardcoded rarity table for all 150 jokers (`_JOKER_RARITY` in `implementations.py`, for `j_baseball`) — a static game rule, not event history, checked both against the three community wiki categories (61/64/20/5, matching the official numbers) and against `rarity` directly in `game.lua` | `j_hiker` is the only one left: the bonus attaches to playing cards, not the joker, needs a new deck-card-level mechanism (section 8.2). Phase 7 |
+| 4 | Assumption: a card debuff doesn't affect hand-type detection | boss blinds | **confirmed on the game** 2026-08-20 (The Goad, spade debuff): `3S 3H 3D` → three_of_a_kind, 108, the score matched exactly — `tests/golden/20260820-104835-boss-goad-debuffed-spade-trips.json` |
+| 5 | Assumption: `Supernova` doesn't count the current hand | one joker | needs a Mac |
+| 6 | Assumption: `Photograph` triggers again on a retrigger | a combo of two jokers | needs a Mac |
+| 7 | Assumption: a royal flush is scored as a plain straight flush | the hand name in the output | needs a Mac |
+| 8 | With a `Blueprint` ⇄ `Brainstorm` cycle the chain breaks | a rare arrangement | needs a Mac |
+| 9 | ~~The Phase 6 Monte-Carlo will hit speed: 1000 samples × 218 options ≈ 13 s~~ — removed not by pruning candidates but by compressing the search: `solver.discard._enumerate_compositions`/`_build_classes` group draw cards indistinguishable by the final score into equivalence classes (rank + relevant suit + enhancement + edition + seal + debuff) and weight each class by a binomial coefficient instead of enumerating each raw card separately — the same exact answer as an honest search, orders of magnitude cheaper. `discard_outcome` for one given discard carries the exact search from ~2 cards (before) to practically all 5; `rank_discards` — an honest search over ALL up to 218 discard sets (`advise --discard-search`), each candidate an exact `discard_outcome`, not a sample-based estimate | closed. A candidate whose draw search doesn't fit the composition budget even after compression honestly drops out of the result (`None`, not a guess) — this is neither a Monte-Carlo nor a heuristic prune, but a direct consequence of the same principle used everywhere in the project |
+| 10 | **Fully closed.** The catalogue — `core/bosses.py`, 28 bosses from `game.lua`/`blind.lua`/`functions/state_events.lua` (section 6 "Autopilot" item 9.5). `The Flint` (halving base chips/mult) — fixed in `core/scoring.py._apply_boss_score_modifier`, with one honestly acknowledged incompleteness: with no jokers the calculation is exact, with any joker it's honestly marked `unknown` (our pipeline scores jokers last, section 5, and doesn't reproduce the real game's "before/after" order relative to The Flint). The illegal-option filter (`The Mouth`/`The Eye`/`The Psychic`) — in `solver/play.py._is_legal_play`, before reaching the ranked list | it was: a silently wrong number under `The Flint`, silently wrong legality advice under the three other bosses — both worse than `unknown` | closed |
 
-Каждое допущение из этого списка **уже помечено в коде** рядом с местом, где оно принято,
-чтобы не искать их потом по документу.
+Every assumption in this list is **already flagged in the code** next to where it's taken,
+so they don't have to be hunted through the document later.
 
-### 8.4. Исправленные дефекты
+### 8.4. Fixed defects
 
-Ведётся, чтобы одни и те же ошибки не возвращались: каждая закрыта регрессионным тестом.
+Kept so the same mistakes don't come back: each is closed by a regression test.
 
-- `Blueprint` и `Brainstorm`, поставленные рядом, копировали друг друга до переполнения стека.
-- Сыгранная карта могла посчитаться ещё и оставшейся в руке — `Steel` молча завышал счёт.
-- Причина неточности попадала в отчёт дважды, в двух формулировках.
-- `Steel` и `Stone` печатались одной пометкой, хотя работают в разные моменты.
-- `advise --top 0` падал на пустой выборке.
-- Установщик падал с трассировкой, если GitHub отвечал не тем, чего ждали.
-- Запасной способ разрешения случайностей брал первый исход вместо самого вероятного.
-- Поиск файла в архиве зависел от порядка обхода и мог подцепить вложенный каталог.
-- Поиск каталога `lua` в архиве BalatroBot был неоднозначен: `tests/lua/` (Python-зеркало
-  тестов) лежит на той же глубине, что и настоящий `src/lua/`, и мог быть выбран вместо него —
-  игра падала на старте с `Error reading file 'src/lua/settings.lua'`. Найдено вживую при
-  спайке Фазы 1. Исправлено: раскладка ищет не каталог по имени, а сам `settings.lua`.
-- Издание (Edition) самой карты-джокера — Foil/Holographic/Polychrome — нигде не считалось:
-  `mod_bridge` его честно парсил, `BaseJoker.edition` даже отдавал его наружу, но ни один
-  код подсчёта это свойство не читал, так что `+50`/`+10`/`×1.5` молча пропадали, а расчёт
-  всё равно помечался точным (парсинг проходил успешно, применить эффект было некому — не
-  «неизвестное», а забытое). Найдено вживую 2026-08-21: живая рука с Foil на `8 Ball` и
-  `Seeing Double` дала `13 706`, бот предсказывал максимум `6 966`. Исправлено: `_run_once`
-  применяет `_score_joker_edition` на ходу каждого джокера (`core/scoring.py`), так же, как
-  издание уже применялось к игральным картам.
-- CLI нигде не показывал Edition и Seal карт — `format_card` умел только улучшение
-  (Enhancement), из-за чего дефект издания джокера выше было невозможно заметить глазами
-  даже глядя на вывод `doctor`. Исправлено вместе с ним: издание карты теперь в тех же
-  скобках, что улучшение (`TD(BF)`), печать — отдельным значком (`!R`/`!G`/`!U`/`!P`), а
-  список джокеров показывает их собственное издание рядом с именем.
-- `advise_discard(..., limit=0)` из-за проверки `if limit else options` в Python (`0` —
-  ложное значение) возвращал **все** варианты вместо нуля — молча противоречило поведению
-  `rank_actions`/`rank_plays`, где `top=0` трактуется как «хотя бы один». Найдено тестом
-  регрессии вывода, не вживую. Исправлено: срез списка без условия (`options[:limit]`), а
-  верхний уровень (`rank_actions`) сам поднимает `top` до 1, если попросили меньше.
-- **Отключённый игрой джокер молча считался.** `_parse_joker` читал `state.debuff` только у
-  игральных карт, не у джокеров, и `JokerCard` не имел поля `debuffed` вовсе — а движок,
-  соответственно, применял эффект джокера, который игра уже отключила. В базовой игре это
-  бывает только когда у «портящегося» (`perishable`) джокера истёк счётчик раундов
-  (`card.lua`'s `Card:calculate_perishable` → `set_debuff`; ставка `ORANGE`+) — то есть
-  ровно на том пути, который Фазы 9.6/9.7 сделали штатным. Тихо неверное число — тот же
-  худший исход, что и любое другое молчаливое завышение. Найдено ревью по итогам 9.7, не
-  вживую (мод сериализует `state.debuff` и для джокеров — `gamestate.lua`, сверено).
-  Исправлено: `JokerCard.debuffed` (парсится в `mod_bridge`), а `core/scoring.py` такой
-  джокер целиком пропускает (`ScoreContext.emit`/`ask_retriggers`, издание, `modifiers_from`)
-  — но `Joker Stencil`/`Baseball`/«+N за джокера» по-прежнему видят его в списке, карта
-  физически в слоте, как и в игре (`#G.jokers.cards`).
+- `Blueprint` and `Brainstorm` placed next to each other copied each other to a stack
+  overflow.
+- A played card could also be counted as still in hand — `Steel` silently overstated the
+  score.
+- The reason for inexactness got into the report twice, in two phrasings.
+- `Steel` and `Stone` were printed with one marker, though they work at different moments.
+- `advise --top 0` crashed on an empty sample.
+- The installer crashed with a traceback if GitHub returned something other than expected.
+- The fallback way of resolving randomness took the first outcome instead of the most
+  likely one.
+- Finding a file in an archive depended on traversal order and could pick up a nested
+  directory.
+- Finding the `lua` directory in the BalatroBot archive was ambiguous: `tests/lua/` (a
+  Python mirror of the tests) sits at the same depth as the real `src/lua/` and could be
+  chosen instead — the game crashed on startup with `Error reading file
+  'src/lua/settings.lua'`. Found live during the Phase 1 spike. Fixed: the layout looks not
+  for a directory by name but for `settings.lua` itself.
+- The edition of the joker card itself — Foil/Holographic/Polychrome — was counted nowhere:
+  `mod_bridge` parsed it honestly, `BaseJoker.edition` even exposed it, but no scoring code
+  read the property, so `+50`/`+10`/`×1.5` silently vanished while the calculation was still
+  marked exact (parsing succeeded, there was no one to apply the effect — not "unknown" but
+  forgotten). Found live 2026-08-21: a live hand with Foil on `8 Ball` and `Seeing Double`
+  gave `13,706`, the bot predicted at most `6,966`. Fixed: `_run_once` applies
+  `_score_joker_edition` on each joker's turn (`core/scoring.py`), the same way the edition
+  was already applied to playing cards.
+- The CLI showed a card's Edition and Seal nowhere — `format_card` could only do the
+  Enhancement, which made the joker edition defect above impossible to spot by eye even
+  looking at `doctor`'s output. Fixed alongside it: a card's edition is now in the same
+  brackets as the enhancement (`TD(BF)`), the seal is a separate marker (`!R`/`!G`/`!U`/`!P`),
+  and the joker list shows each joker's own edition next to the name.
+- `advise_discard(..., limit=0)` returned **all** options instead of none, because of an
+  `if limit else options` check in Python (`0` is falsy) — it silently contradicted
+  `rank_actions`/`rank_plays`, where `top=0` is treated as "at least one". Found by an
+  output regression test, not live. Fixed: an unconditional list slice (`options[:limit]`),
+  and the top level (`rank_actions`) itself bumps `top` up to 1 if less was asked for.
+- **A game-disabled joker was silently scored.** `_parse_joker` read `state.debuff` only for
+  playing cards, not jokers, and `JokerCard` had no `debuffed` field at all — so the engine
+  applied the effect of a joker the game had already disabled. In base Balatro this only
+  happens when a perishable joker's round counter expires (`card.lua`'s
+  `Card:calculate_perishable` → `set_debuff`; `ORANGE`+ stake) — i.e. exactly on the path
+  Phases 9.6/9.7 made routine. A silently wrong number is the same worst outcome as any
+  other silent overstatement. Found by a review after 9.7, not live (the mod serializes
+  `state.debuff` for jokers too — `gamestate.lua`, checked). Fixed: `JokerCard.debuffed`
+  (parsed in `mod_bridge`), and `core/scoring.py` skips such a joker entirely
+  (`ScoreContext.emit`/`ask_retriggers`, edition, `modifiers_from`) — but `Joker
+  Stencil`/`Baseball`/"+N per joker" still see it in the list, the card is physically in the
+  slot, as in the game (`#G.jokers.cards`).
 
-### Идея на потом (опционально)
+### Idea for later (optional)
 
-RNG в Balatro посеян: по сиду ран полностью предопределён — есть сторонние анализаторы сидов,
-предсказывающие содержимое магазинов и боссов наперёд. Технически это подключаемо, но это
-уже не «помощь в принятии решений», а знание будущего. Оставляю как отдельный флаг, который
-по умолчанию выключен — решать тебе, где проходит граница между помощником и читом.
+Balatro's RNG is seeded: by the seed a run is fully predetermined — there are third-party
+seed analyzers that predict shop and boss contents in advance. This is technically pluggable,
+but it's no longer "help with decisions", it's knowledge of the future. Left as a separate
+flag, off by default — it's up to you where the line between a helper and a cheat runs.
 
 ---
 
-## 9. Риски
+## 9. Risks
 
-| Риск | Что делаем |
+| Risk | What we do |
 |---|---|
-| Steamodded отключает достижения Steam | Знать заранее, включить тумблер в конфиге модов (Фаза 1), либо играть под отдельным профилем |
-| Патч Balatro ломает моды | Ядро от мода не зависит; ручной ввод продолжает работать — но советы по сбросу деградируют до приблизительных (раздел 6) |
-| Ошибка в симуляторе скоринга незаметно портит советы | Golden-тесты плюс сквозной механизм пометки неточного расчёта с Фазы 3 |
-| С Фазы 5 игра отдаёт джокеров, которых движок не знает | Тот же механизм: расчёт помечается неточным. Полное покрытие закрывается только в Фазе 7 — до тех пор это штатная ситуация, а не сбой |
-| 150+ джокеров — большой объём | Данные генерируем из исходников игры, руками пишем только логику; покрываем по частоте использования |
-| `balatrobot` окажется несовместим/заброшен | Спайк в Фазе 1 до вложений в Фазу 5; запасной путь — свой минимальный мод-дампер (он несложный) |
-| Golden-кейсы некому собрать | Вынесено в отдельную задачу 3a с явным исполнителем — иначе Фаза 3 не закрывается |
-| Автопилот честным действием портит реальный ран/сохранение (Фаза 9) | Управляемый запуск, не демон (раздел 2) — человек рядом на время обкатки; только методы из белого списка (раздел 2, «Только честные действия»), `set`/`add`/`load` вне тестов не используются вовсе; отдельный игровой профиль, как и для тумблера достижений |
-| Правило-модифицирующий босс не в каталоге (Фаза 9, п. 9.5) → автопилот пробует нелегальный ход | **Снято**: каталог из 28 боссов выписан из исходника, не по памяти (`core/bosses.py`, тот же принцип, что `core/tags.py`), фильтр нелегальных ходов — в `solver/play.py`, допущение №10 закрыто полностью |
-| Эвристическая оценка (ваучеры группы 3, п. 9.3) окажется плохой политикой | Не подаётся как факт — отдельная, явно помеченная категория (раздел 2, «Третья категория»); ран-раннер (п. 9.7) даёт измеримый винрейт, по которому эвристики можно и нужно пересматривать |
+| Steamodded disables Steam achievements | Know it in advance, turn on the toggle in the mods config (Phase 1), or play under a separate profile |
+| A Balatro patch breaks the mods | The core doesn't depend on the mod; manual input keeps working — but discard advice degrades to approximate (section 6) |
+| A bug in the scoring simulator silently spoils the advice | Golden tests plus the cross-cutting inexact-calculation marking mechanism from Phase 3 |
+| From Phase 5 the game exposes jokers the engine doesn't know | The same mechanism: the calculation is marked inexact. Full coverage is only closed in Phase 7 — until then this is normal, not a failure |
+| 150+ jokers is a lot of scope | Data is generated from the game's sources, only the logic is written by hand; covered by usage frequency |
+| `balatrobot` turns out incompatible/abandoned | The spike in Phase 1 before investing in Phase 5; the fallback is our own minimal mod-dumper (it's not hard) |
+| No one to collect golden cases | Carried into a separate task 3a with an explicit owner — otherwise Phase 3 doesn't close |
+| The autopilot spoils a real run/save with an honest action (Phase 9) | Managed launch, not a daemon (section 2) — a human nearby during the shakedown; only whitelisted methods (section 2, "Honest actions only"), `set`/`add`/`load` aren't used outside tests at all; a separate game profile, as for the achievements toggle |
+| A rule-modifying boss isn't in the catalogue (Phase 9, item 9.5) → the autopilot tries an illegal move | **Removed**: the 28-boss catalogue is written out from source, not from memory (`core/bosses.py`, the same principle as `core/tags.py`), the illegal-move filter is in `solver/play.py`, assumption #10 is fully closed |
+| The heuristic estimate (tier-3 vouchers, item 9.3) turns out to be a bad policy | Not presented as fact — a separate, explicitly flagged category (section 2, "Third category"); the run-runner (item 9.7) gives a measurable win-rate against which the heuristics can and should be revised |
 
-## 9.1. Принятые решения
+## 9.1. Decisions made
 
-Зафиксировано, дальше исходим из этого:
+Recorded; from here on we proceed from this:
 
-- **Роль бота — автопилот, не только советник (пересмотрено).** До этой редакции плана здесь
-  стояло «роль бота — советник, автоигру не делаем» — решение развёрнуто намеренно (раздел 2).
-  Советник никуда не делся: `advise`/`doctor`/`watch` остаются рабочим режимом и источником
-  решений для автопилота, а не заменяются им.
-- **Переключение между советником и автопилотом обязательно** (раздел 2, раздел 6 п. 9.1) —
-  не «оба режима существуют по отдельности», а можно перехватить управление у автопилота
-  посреди рана и вернуть его обратно, не теряя состояние. Оба читают один и тот же мост,
-  различаются только тем, кто дёргает действия.
-- **Вывод советника — по-прежнему ранжированный список с разбивкой счёта**, а не единственная
-  команда, там, где решение остаётся за человеком (ручной режим). Автопилот берёт из этого же
-  списка верхний вариант там, где он уже точный, и достраивает недостающие вердикты (раздел 6,
-  «Автопилот», п. 9.2) там, где список раньше не сводился к одному выбору.
-- **Интеграция — мод-мост, ручной ввод как база.** Ставим Lovely + Steamodded + `balatrobot`,
-  состояние приходит автоматически. Ручной ввод реализуем в любом случае и оставляем навсегда
-  как режим отладки и как страховку на случай, когда патч игры ломает моды. Автопилот работает
-  только через мод-мост — ручной ввод не умеет исполнять действия, только принимать состояние.
-- **Компьютерное зрение не планируется** — только как аварийный путь, если Фаза 1 провалилась.
-- Следствие: тумблер достижений в конфиге модов включаем осознанно при установке (Фаза 1).
-- **Только честные RPC-методы мода** (раздел 2) — `set`/`add`/`load` не используются в игровом
-  цикле автопилота ни при каких обстоятельствах, только в тестовой инфраструктуре.
+- **The bot's role is autopilot, not only advisor (revised).** Before this revision it said
+  here "the bot's role is advisor, we don't do autoplay" — the decision was reversed on
+  purpose (section 2). The advisor didn't go anywhere: `advise`/`doctor`/`watch` remain a
+  working mode and a source of decisions for the autopilot, not replaced by it.
+- **Switching between advisor and autopilot is mandatory** (section 2, section 6 item 9.1) —
+  not "both modes exist separately", but you can take control from the autopilot mid-run and
+  hand it back without losing state. Both read the same bridge, differing only in who pulls
+  the actions.
+- **The advisor's output is still a ranked list with a score breakdown**, not a single
+  command, where the decision stays with the human (manual mode). The autopilot takes the
+  top option from that same list where it's already exact, and fills in the missing verdicts
+  (section 6, "Autopilot", item 9.2) where the list didn't reduce to a single choice.
+- **Integration — the mod bridge, manual input as the base.** We install Lovely + Steamodded
+  + `balatrobot`, state arrives automatically. Manual input is implemented in any case and
+  kept forever as a debug mode and as insurance for when a game patch breaks the mods. The
+  autopilot works only through the mod bridge — manual input can't execute actions, only
+  accept state.
+- **Computer vision is not planned** — only as an emergency path if Phase 1 failed.
+- Consequence: the achievements toggle in the mods config is turned on deliberately at
+  install time (Phase 1).
+- **Only the mod's honest RPC methods** (section 2) — `set`/`add`/`load` are not used in the
+  autopilot's game loop under any circumstances, only in test infrastructure.
 
 ---
 
-## 10. Практическая сторона
+## 10. The practical side
 
-Balatro — однопользовательская офлайн-игра без анти-чита и без соревновательного мультиплеера.
-Внешний помощник никому не портит игру и ничего не нарушает. Единственный реальный побочный
-эффект — поведение достижений Steam при установке модов (см. выше).
+Balatro is a single-player offline game with no anti-cheat and no competitive multiplayer.
+An external helper spoils no one's game and breaks nothing. The only real side effect is the
+behaviour of Steam achievements when mods are installed (see above).
