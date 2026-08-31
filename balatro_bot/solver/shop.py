@@ -485,8 +485,7 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
     reroll_affordable = state.reroll_cost is not None and state.money >= state.reroll_cost
     random_joker_uplifts: list[float] | None = None
     if len(deck_source) >= _HAND_SIZE and (
-        reroll_affordable
-        or any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs)
+        reroll_affordable or any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs)
     ):
         rng = random.Random(_SAMPLE_SEED)
         keys = sorted(implemented_keys())
@@ -595,8 +594,10 @@ def _evaluate_reroll(
     if not random_joker_uplifts:
         # Выборка не считалась: либо реролл не по карману (тогда оценка ролла
         # всё равно ни на что не влияет), либо колода для выборки мала.
-        note = "не по карману — оценка ролла не считалась" if not affordable else (
-            "колода для выборки неизвестна"
+        note = (
+            "не по карману — оценка ролла не считалась"
+            if not affordable
+            else ("колода для выборки неизвестна")
         )
         return RerollOutlook(
             cost=cost,

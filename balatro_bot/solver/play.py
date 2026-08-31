@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from itertools import combinations, permutations
 
@@ -45,9 +46,23 @@ _THE_PSYCHIC = "The Psychic"
 #: `The Psychic` не даёт играть меньше этого числа карт.
 _PSYCHIC_MIN_CARDS = 5
 
-#: 6! = 720 перестановок — секунды на честный перебор. Больше — не гадать
-#: эвристикой, а прямо сказать, что перебор порядка пропущен.
+#: 6! = 720 перестановок. Больше — не гадать эвристикой, а прямо сказать,
+#: что перебор порядка пропущен.
 MAX_JOKERS_FOR_ORDER_SEARCH = 6
+
+#: Копирующие джокеры (`Blueprint`/`Brainstorm`) берут эффект соседа справа/
+#: слева, поэтому реверс стека НЕ доказывает независимость от порядка — при
+#: них суррогатный перебор запускается всегда, без дешёвого вентиля.
+_COPY_JOKER_KEYS = frozenset({"j_blueprint", "j_brainstorm"})
+
+#: Сколько верхних подмножеств базового порядка прогонять через `score_play`
+#: под каждой перестановкой в суррогатном переборе (см. `rank_joker_orders`).
+#: Полный `advise()` на перестановку — это перебор всех 218 подмножеств; но
+#: какой *набор карт* лучший, от порядка джокеров почти никогда не зависит
+#: (зависит его *счёт*), поэтому хватает верхушки. Компромисс скорость/охват:
+#: с джокером-разбросом (Misprint) каждый `score_play` разворачивает дерево
+#: до 4096 веток, так что цена — `перестановки × это_число × дерево`.
+_ORDER_SURROGATE_SUBSETS = 5
 
 
 @dataclass(frozen=True, slots=True)
@@ -187,7 +202,7 @@ def advise(state: GameState, limit: int | None = None) -> Advice:
 
 
 def rank_joker_orders(
-    state: GameState, limit: int | None = None
+    state: GameState, limit: int | None = None, *, base_advice: Advice | None = None
 ) -> tuple[tuple[JokerCard, ...], Advice] | None:
     """Перебрать порядки джокеров и вернуть тот, что даёт больший счёт.
 
@@ -198,18 +213,64 @@ def rank_joker_orders(
     Возвращает `None`, если джокеров больше `MAX_JOKERS_FOR_ORDER_SEARCH`:
     перебор всех перестановок стал бы слишком долгим, а угадывать эвристикой
     в этом проекте не заведено.
+
+    Наивный перебор — полный `advise()` на каждую из `N!` перестановок —
+    взрывается на 5–6 джокерах с джокером-разбросом (перебор 218 подмножеств
+    × дерево вероятностей до 4096 веток × `N!`): в живом прогоне 15–40 с на
+    ход (PLAN.md, улучшение F1). Здесь два ускорителя, оба сохраняют
+    точность там, где она есть:
+
+    1. **Дешёвый вентиль.** Если в стеке нет копирующего джокера и реверс
+       стека даёт тот же верхний счёт, что исходный порядок, — порядок
+       (практически наверняка) ни на что не влияет: возвращаем исходный без
+       перебора. Для стека из одних прибавок (`AddChips`/`AddMult`) это
+       строго так — сложение коммутативно; для порядко-зависимых стеков
+       реверс почти всегда уже отличается.
+    2. **Суррогатный перебор.** Когда порядок влиять может, на каждую
+       перестановку считаем не весь `advise()`, а только `score_play` по
+       `_ORDER_SURROGATE_SUBSETS` лучшим подмножествам исходного порядка
+       (лучший *набор карт* от порядка джокеров почти не зависит). Полный
+       `advise()` — только один раз, для победившей перестановки, чтобы
+       вернуть точный ранжированный список для неё.
+
+    `base_advice` — уже посчитанный `advise(state)` исходного порядка (тот
+    же `limit`), чтобы не считать дважды; если он с более широким `limit`,
+    это только на пользу суррогату (больше подмножеств на выбор).
     """
     if len(state.jokers) > MAX_JOKERS_FOR_ORDER_SEARCH:
         return None
 
-    best_order = state.jokers
-    best_advice = advise(state, limit)
+    current_advice = base_advice if base_advice is not None else advise(state, limit)
+    if len(state.jokers) < 2:
+        return state.jokers, current_advice
 
+    has_copy = any(joker.key in _COPY_JOKER_KEYS for joker in state.jokers)
+    if not has_copy:
+        reversed_jokers = tuple(reversed(state.jokers))
+        reversed_score = advise(replace(state, jokers=reversed_jokers), limit=1).best.score
+        # `isclose`, а не `==`: у стека из одних прибавок счёт от порядка не
+        # зависит математически, но сложение float не ассоциативно — прямой и
+        # обратный порядок могут разойтись на последний бит. Реальный
+        # порядковый эффект всегда крупнее этого допуска (и всё равно ниже
+        # порога `_MIN_REORDER_GAIN_FRAC` в автопилоте, если так мал).
+        if math.isclose(reversed_score, current_advice.best.score, rel_tol=1e-9):
+            return state.jokers, current_advice
+
+    subsets = [c.cards for c in current_advice.candidates[:_ORDER_SURROGATE_SUBSETS]]
+    modifiers = modifiers_from(build_jokers(state))  # порядко-независимы
+    best_order = state.jokers
+    best_score = current_advice.best.score
     for order in permutations(state.jokers):
         if order == state.jokers:
             continue
-        variant_advice = advise(replace(state, jokers=order), limit)
-        if variant_advice.best.score > best_advice.best.score:
-            best_order, best_advice = order, variant_advice
+        variant = replace(state, jokers=order)
+        variant_jokers = build_jokers(variant)
+        score = max(
+            score_play(variant, subset, variant_jokers, modifiers).expected for subset in subsets
+        )
+        if score > best_score:
+            best_order, best_score = order, score
 
-    return best_order, best_advice
+    if best_order == state.jokers:
+        return state.jokers, current_advice
+    return best_order, advise(replace(state, jokers=best_order), limit)

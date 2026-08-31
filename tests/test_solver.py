@@ -187,6 +187,37 @@ class TestПорядокДжокеров:
         state = состояние("AH", *["j_joker"] * 7)
         assert rank_joker_orders(state) is None
 
+    def test_вентиль_чисто_аддитивный_стек_не_перебирается(self) -> None:
+        # j_joker/j_abstract/j_banner — только прибавки, порядок не влияет:
+        # дешёвый вентиль (реверс == исходный) возвращает исходный порядок
+        # без суррогатного перебора (улучшение F1).
+        state = состояние("AH KH QH JH 9H", "j_joker", "j_abstract", "j_banner")
+        order, _ = rank_joker_orders(state)  # type: ignore[misc]
+        assert order == state.jokers
+
+    def test_base_advice_переиспользуется_и_возвращается(self) -> None:
+        state = состояние("AH KH QH JH 9H", "j_joker", "j_abstract", "j_banner")
+        предрасчёт = advise(state)
+        order, совет = rank_joker_orders(state, base_advice=предрасчёт)  # type: ignore[misc]
+        assert order == state.jokers
+        assert совет is предрасчёт  # тот же объект, не пересчитан
+
+    def test_суррогат_совпадает_с_честным_перебором(self) -> None:
+        # Стек с копирующим и xmult — порядок влияет, вентиль пропускается,
+        # идёт суррогатный перебор. Достигнутый им счёт равен честному.
+        from dataclasses import replace
+        from itertools import permutations
+
+        state = состояние(
+            "KS KH KD QC QH 9S 4D 2C", "j_blueprint", "j_baseball", "j_bull", "j_joker"
+        )
+        order, _ = rank_joker_orders(state, limit=1)  # type: ignore[misc]
+        суррогат = advise(replace(state, jokers=order), limit=1).best.score
+        честный = max(
+            advise(replace(state, jokers=p), limit=1).best.score for p in permutations(state.jokers)
+        )
+        assert суррогат == pytest.approx(честный, rel=1e-6)
+
 
 class TestЧестность:
     def test_нереализованный_джокер_делает_совет_неточным(self) -> None:

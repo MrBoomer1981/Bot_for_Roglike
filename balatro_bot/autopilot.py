@@ -592,25 +592,30 @@ def _decide_consumable_action(state: GameState) -> Action | None:
     return Action(kind="use", item_index=_item_index_of(state.consumables, item), label=item.label)
 
 
-def _decide_rearrange_action(state: GameState) -> Action | None:
+def _decide_rearrange_action(state: GameState, plays: Advice) -> Action | None:
     """Переставить джокеров, если для текущей руки есть заметно лучший
     порядок (улучшение D1). `rank_joker_orders` перебирает перестановки
-    (кап `MAX_JOKERS_FOR_ORDER_SEARCH`, выше — `None`, не гадаем). Меняем
-    только при относительном приросте счёта >= `_MIN_REORDER_GAIN_FRAC` —
-    иначе ход тратится впустую на шум перебора. Перестановка — отдельное
-    действие: розыгрыш решит следующий вызов на уже верном порядке (тот же
-    паттерн «одно действие за вызов», что в магазине). Проверяется на каждой
-    руке заново — лучший порядок для разных рук может отличаться, порог не
-    даёт этому вылиться в дёрганье туда-сюда."""
+    (кап `MAX_JOKERS_FOR_ORDER_SEARCH`, выше — `None`, не гадаем; внутри —
+    дешёвый вентиль + суррогатный перебор, улучшение F1). Меняем только при
+    относительном приросте счёта >= `_MIN_REORDER_GAIN_FRAC` — иначе ход
+    тратится впустую на шум перебора. Перестановка — отдельное действие:
+    розыгрыш решит следующий вызов на уже верном порядке (тот же паттерн
+    «одно действие за вызов», что в магазине). Проверяется на каждой руке
+    заново — лучший порядок для разных рук может отличаться, порог не даёт
+    этому вылиться в дёрганье туда-сюда.
+
+    `plays` — уже посчитанный `advise(state)` (исходный порядок): отдаётся
+    в `rank_joker_orders` как `base_advice`, чтобы не гонять `advise` дважды,
+    и служит базой сравнения `current_score`."""
     if len(state.jokers) < 2:
         return None
-    result = rank_joker_orders(state, limit=1)
+    result = rank_joker_orders(state, limit=1, base_advice=plays)
     if result is None:
         return None
     best_order, best_advice = result
     if best_order == state.jokers:
         return None
-    current_score = advise(state, limit=1).best.score
+    current_score = plays.best.score
     gain = best_advice.best.score - current_score
     if gain <= 0 or gain < _MIN_REORDER_GAIN_FRAC * current_score:
         return None
@@ -672,7 +677,13 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         if consumable_action is not None:
             return consumable_action
 
-        rearrange_action = _decide_rearrange_action(state)
+        # `advise(state)` для исходного порядка джокеров считается один раз и
+        # переиспользуется: перестановкой (`base_advice`), гарантированным
+        # ходом и гардами B1 ниже (улучшение F1 — раньше это было 2–3
+        # отдельных `advise()` на один вызов).
+        plays = advise(state)
+
+        rearrange_action = _decide_rearrange_action(state, plays)
         if rearrange_action is not None:
             return rearrange_action
 
@@ -683,7 +694,6 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         # эту двойную пару», даже когда пара уже закрывает блайнд. Если есть
         # ход, чей нижний предел (`Candidate.beats`) уже перекрывает
         # оставшееся требование, играем его — не гадаем.
-        plays = advise(state)
         sure = plays.cheapest_sufficient
         if sure is not None:
             return Action(
