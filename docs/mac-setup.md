@@ -1,116 +1,116 @@
-# Запуск на Mac: пошагово
+# Running on Mac: step by step
 
-Игру скачивать и распаковывать не нужно — она у тебя уже есть в Steam.
-Устанавливаются три вещи поверх неё: инжектор, загрузчик модов и сам мод.
+You don't need to download or unpack the game — you already have it on Steam.
+Three things get installed on top of it: an injector, a mod loader, and the mod itself.
 
-## Быстрый путь
+## The fast path
 
 ```bash
-uv run balatro-bot install     # поставить всё
-uvx balatrobot serve           # запустить игру (не через Steam!)
-uv run balatro-bot doctor      # проверить связь, уже в раунде
+uv run balatro-bot install     # install everything
+uvx balatrobot serve           # launch the game (not through Steam!)
+uv run balatro-bot doctor      # check the connection, already in a round
 ```
 
-Установщик сам определит процессор, найдёт каталог игры (в том числе на
-внешнем диске), скачает последние релизы всех трёх компонентов и разложит
-их по нужным каталогам. Перед закачкой он покажет, что именно и откуда
-качает, и спросит подтверждения.
+The installer detects the CPU, finds the game directory (including one on an
+external drive), downloads the latest releases of all three components, and
+places them in the right directories. Before downloading it shows exactly what
+it will fetch and from where, and asks for confirmation.
 
-Полезные ключи:
+Useful flags:
 
-| Ключ | Зачем |
+| Flag | Purpose |
 | --- | --- |
-| `--dry-run` | показать план и выйти, ничего не трогая |
-| `--check` | только проверить, что уже стоит |
-| `--yes` | не спрашивать подтверждения |
-| `--game-dir ПУТЬ` | если Steam стоит в нестандартном месте |
+| `--dry-run` | show the plan and exit, touching nothing |
+| `--check` | only verify what is already installed |
+| `--yes` | don't ask for confirmation |
+| `--game-dir PATH` | if Steam is in a non-standard location |
 
-Установщик ничего не запускает из скачанного — только распаковывает,
-и проверяет имена файлов в архивах, чтобы никто не записал мимо каталога.
+The installer runs nothing from what it downloads — it only unpacks, and it
+checks file names inside the archives so nothing gets written outside the target
+directory.
 
-Если всё прошло, дальше сразу [шаг 4](#шаг-4-запуск-игры).
-Если нет — ниже те же действия руками.
+If it all went through, jump straight to [step 4](#step-4-launching-the-game).
+If not — below are the same actions done by hand.
 
 ---
 
-# Установка вручную
+# Manual installation
 
-Понадобится, если установщик не смог достучаться до GitHub или что-то
-пошло не так.
+You'll need this if the installer couldn't reach GitHub or something went wrong.
 
-## Сразу о главном: две разные папки
+## First, the key point: two different folders
 
-Их постоянно путают, потому что обе называются `Balatro` и обе лежат
-в `Application Support`.
+People confuse them constantly, because both are called `Balatro` and both live
+in `Application Support`.
 
-| Что | Где | Что туда кладём |
+| What | Where | What goes there |
 | --- | --- | --- |
-| **Папка игры** (Steam) | `~/Library/Application Support/Steam/steamapps/common/Balatro/` | `liblovely.dylib` |
-| **Папка сохранений** | `~/Library/Application Support/Balatro/Mods/` | `smods/`, `balatrobot/` |
+| **Game folder** (Steam) | `~/Library/Application Support/Steam/steamapps/common/Balatro/` | `liblovely.dylib` |
+| **Save folder** | `~/Library/Application Support/Balatro/Mods/` | `smods/`, `balatrobot/` |
 
-Обе скрыты в Finder. Показать: `Shift-Cmd-.`
+Both are hidden in Finder. To show them: `Shift-Cmd-.`
 
-Удобно один раз задать переменные и дальше копировать команды как есть:
+It's convenient to set the variables once and then copy the commands as-is:
 
 ```bash
 GAME=~/"Library/Application Support/Steam/steamapps/common/Balatro"
 MODS=~/"Library/Application Support/Balatro/Mods"
 mkdir -p "$MODS"
-ls "$GAME"      # должен быть виден Balatro.app
+ls "$GAME"      # Balatro.app should be visible
 ```
 
-## Шаг 0. Подготовка
+## Step 0. Preparation
 
 ```bash
 uname -m                                        # arm64 = Apple Silicon, x86_64 = Intel
 uv --version || curl -LsSf https://astral.sh/uv/install.sh | sh
 ```
 
-Обнови Balatro в Steam. Steamodded поддерживает только актуальную версию —
-на старой моды просто не загрузятся.
+Update Balatro on Steam. Steamodded supports only the current version — on an
+older one the mods simply won't load.
 
-## Шаг 1. Lovely Injector
+## Step 1. Lovely Injector
 
-Инжектор Lua, без него моды не подключаются. Нужна версия 0.8.0+,
-[страница релизов](https://github.com/ethangreen-dev/lovely-injector/releases).
+A Lua injector; without it the mods don't get hooked in. You need version 0.8.0+,
+[releases page](https://github.com/ethangreen-dev/lovely-injector/releases).
 
-Качай архив под свой процессор:
+Download the archive for your CPU:
 
 - Apple Silicon → `lovely-aarch64-apple-darwin.tar.gz`
 - Intel → `lovely-x86_64-apple-darwin.tar.gz`
 
 ```bash
 cd ~/Downloads
-tar -xzf lovely-aarch64-apple-darwin.tar.gz     # подставь своё имя файла
+tar -xzf lovely-aarch64-apple-darwin.tar.gz     # substitute your own file name
 cp liblovely.dylib "$GAME/"
-ls "$GAME/liblovely.dylib"                      # проверка: файл на месте
+ls "$GAME/liblovely.dylib"                      # check: the file is in place
 ```
 
-Второй файл из архива, `run_lovely_macos.sh`, **не нужен**: запускать игру
-будет CLI мода, и внедрение он делает сам.
+The second file in the archive, `run_lovely_macos.sh`, is **not needed**: the
+mod's CLI will launch the game, and it does the injection itself.
 
-## Шаг 2. Steamodded
+## Step 2. Steamodded
 
-Загрузчик модов, нужна версия 1.0.0-beta-1221a+.
-На [странице релизов](https://github.com/Steamodded/smods/releases) бери
-**Source code (zip)**, распакуй и положи содержимое в `$MODS/smods`:
+The mod loader; you need version 1.0.0-beta-1221a+.
+On the [releases page](https://github.com/Steamodded/smods/releases) take
+**Source code (zip)**, unpack it, and put the contents into `$MODS/smods`:
 
 ```bash
-ls "$MODS/smods"        # внутри должны быть .lua файлы загрузчика
+ls "$MODS/smods"        # should contain the loader's .lua files
 ```
 
-Итоговая раскладка:
+The resulting layout:
 
 ```
 ~/Library/Application Support/Balatro/Mods/
 ├── smods/
-└── balatrobot/          # следующий шаг
+└── balatrobot/          # next step
 ```
 
-## Шаг 3. Мод BalatroBot
+## Step 3. The BalatroBot mod
 
-Скачай релиз с [releases](https://github.com/coder/balatrobot/releases)
-и положи так, чтобы получилось:
+Download a release from [releases](https://github.com/coder/balatrobot/releases)
+and place it so that you get:
 
 ```
 $MODS/balatrobot/
@@ -120,29 +120,29 @@ $MODS/balatrobot/
 ```
 
 ```bash
-ls "$MODS/balatrobot/balatrobot.lua"    # проверка
+ls "$MODS/balatrobot/balatrobot.lua"    # check
 ```
 
-<a id="шаг-4-запуск-игры"></a>
+<a id="step-4-launching-the-game"></a>
 
-## Шаг 4. Запуск игры
+## Step 4. Launching the game
 
-**Не через Steam.** На macOS в клиенте Steam есть баг, из-за которого
-внедрение не срабатывает — это написано прямо в документации Lovely.
-Игру запускает CLI мода:
+**Not through Steam.** On macOS the Steam client has a bug that keeps the
+injection from taking effect — this is stated directly in the Lovely docs.
+The mod's CLI launches the game:
 
 ```bash
 uvx balatrobot serve
 ```
 
-Он найдёт `Balatro.app/Contents/MacOS/love` и `liblovely.dylib` в папке игры,
-подставит `DYLD_INSERT_LIBRARIES` и стартует игру с JSON-RPC сервером
-на `127.0.0.1:12346`.
+It finds `Balatro.app/Contents/MacOS/love` and `liblovely.dylib` in the game
+folder, sets `DYLD_INSERT_LIBRARIES`, and starts the game with a JSON-RPC server
+on `127.0.0.1:12346`.
 
-Если пути нестандартные, их можно задать явно:
+If the paths are non-standard, you can set them explicitly:
 `uvx balatrobot serve --love-path ... --lovely-path ...`
 
-Проверка, что сервер жив (игра при этом запущена):
+To check the server is alive (with the game running):
 
 ```bash
 curl -X POST http://127.0.0.1:12346 \
@@ -150,18 +150,18 @@ curl -X POST http://127.0.0.1:12346 \
   -d '{"jsonrpc": "2.0", "method": "health", "id": 1}'
 ```
 
-Ожидаемо: `{"jsonrpc":"2.0","result":{"status":"ok"},"id":1}`
+Expected: `{"jsonrpc":"2.0","result":{"status":"ok"},"id":1}`
 
-## Шаг 5. Проверка нашим ботом
+## Step 5. Checking with our bot
 
-Начни ран и дойди до выбора карт (не главное меню). Затем из каталога
-этого репозитория:
+Start a run and get to the card-selection screen (not the main menu). Then, from
+this repository's directory:
 
 ```bash
 uv run balatro-bot doctor
 ```
 
-Пример вывода:
+Example output:
 
 ```
 связь есть
@@ -180,71 +180,73 @@ uv run balatro-bot doctor
 расчёт по этому состоянию будет точным
 ```
 
-Скобки в записи руки — пометки улучшений (`B` Bonus, `M` Mult, `W` Wild, `G` Glass,
-`T` Steel, `S` Stone, `$` Gold, `L` Lucky) и изданий (`F` Foil, `H` Holographic,
-`P` Polychrome, `N` Negative) в одних скобках, например `TD(BF)` — Bonus и Foil сразу;
-`x` в тех же скобках — карта отключена боссом. Печать (Seal) показывается отдельным
-значком после скобок: `!R` красная, `!G` золотая, `!U` синяя, `!P` фиолетовая — например
-`TD(B)!R`. То же издание видно и у самих джокеров в списке `джокеры:` — `(F)` рядом с именем.
+The brackets in the hand notation are enhancement markers (`B` Bonus, `M` Mult, `W` Wild,
+`G` Glass, `T` Steel, `S` Stone, `$` Gold, `L` Lucky) and edition markers (`F` Foil,
+`H` Holographic, `P` Polychrome, `N` Negative) in the same brackets, e.g. `TD(BF)` — Bonus
+and Foil at once; an `x` in the same brackets means the card is disabled by the boss. The
+seal is shown as a separate marker after the brackets: `!R` red, `!G` gold, `!U` blue,
+`!P` purple — for example `TD(B)!R`. The same edition is also shown on the jokers themselves
+in the `джокеры:` list — `(F)` next to the name.
 
-## Шаг 6. Живой советник (`watch`)
+## Step 6. The live advisor (`watch`)
 
-`doctor` показывает состояние один раз. `watch` — то же самое, но сам
-обновляется по ходу игры: не нужно перезапускать команду после каждого хода.
+`doctor` shows the state once. `watch` is the same thing, but it refreshes itself
+as the game goes: you don't need to re-run the command after every move.
 
 ```bash
 uv run balatro-bot watch
 ```
 
-Держи это в отдельном окне терминала рядом с игрой. Экран очищается и
-перерисовывается заново, только когда состояние реально изменилось (разыграл
-руку, сбросил, зашёл в магазин) — пока ничего не поменялось, ничего не мигает.
+Keep this in a separate terminal window next to the game. The screen clears and
+redraws only when the state actually changed (you played a hand, discarded,
+entered the shop) — as long as nothing changed, nothing flickers.
 
-Полезные ключи:
+Useful flags:
 
-| Ключ | Зачем |
+| Flag | Purpose |
 | --- | --- |
-| `--interval СЕК` | как часто опрашивать мод (по умолчанию 1 секунда) |
-| `--explain` | показывать разбор счёта лучшего варианта |
-| `--top N` | сколько вариантов показывать (по умолчанию 5) |
-| `--no-joker-order` | не проверять порядок джокеров — по умолчанию включено (перебор до 720 перестановок при 2+ джокерах на каждый опрос; в `advise` наоборот, включается ключом `--joker-order`) |
-| `--no-discard` | не рассматривать сбросы в общем списке действий — по умолчанию они там есть всегда, вместе с розыгрышами, одним списком по убыванию счёта |
+| `--interval SEC` | how often to poll the mod (default 1 second) |
+| `--explain` | show the score breakdown for the best option |
+| `--top N` | how many options to show (default 5) |
+| `--no-joker-order` | don't search joker orders — on by default (up to 720 permutations with 2+ jokers per poll; in `advise` it's the other way round, turned on with `--joker-order`) |
+| `--no-discard` | don't consider discards in the merged action list — by default they are always there, together with plays, in one list sorted by descending score |
 
-Останови в любой момент — `Ctrl+C`. `watch` только читает состояние и ничего
-не нажимает за тебя: играешь сам, он держит совет на экране.
+Stop at any moment with `Ctrl+C`. `watch` only reads state and presses nothing
+for you: you play, it keeps the advice on screen.
 
-## Шаг 7. Эталонные случаи
+## Step 7. Golden cases
 
-Играй как обычно. Перед тем как разыграть интересную руку:
+Play as usual. Just before you play an interesting hand:
 
 ```bash
 uv run balatro-bot record flush-with-blueprint
 ```
 
-Состояние ляжет в `tests/golden/`. **Разыграй руку и допиши рядом счёт,
-который показала игра** — без него случай бесполезен.
+The state lands in `tests/golden/`. **Play the hand and write the score the game
+showed next to it** — without that, the case is useless.
 
-Ценнее всего руки с джокерами, меняющими правила: `Blueprint`, `Mime`,
-`Four Fingers`, `Shortcut`, `Smeared Joker`, и карты с улучшениями и изданиями.
+The most valuable hands are ones with rule-changing jokers: `Blueprint`, `Mime`,
+`Four Fingers`, `Shortcut`, `Smeared Joker`, and cards with enhancements and editions.
 
-## Про достижения
+## About achievements
 
-Steamodded по умолчанию гасит достижения Steam — защита от случайной
-накрутки. Вернуть: в игре `Mods → config`. Учти, что тумблер снимает
-защиту и для сид-ранов. Если достижения важны — заведи отдельный профиль.
+Steamodded disables Steam achievements by default — protection against accidental
+farming. To restore them: in-game, `Mods → config`. Note that the toggle also
+removes the protection for seeded runs. If achievements matter to you — set up a
+separate profile.
 
-## Если не работает
+## If it doesn't work
 
-| Симптом | Что делать |
+| Symptom | What to do |
 | --- | --- |
-| `Connection refused` | Игра не запущена, либо запущена через Steam вместо `uvx balatrobot serve` |
-| `liblovely.dylib not found` | Файл лёг не в папку игры, а в папку сохранений — это разные места, см. таблицу вверху |
-| `LOVE executable not found` | Нестандартный путь установки Steam, задай `--love-path` |
-| Моды не грузятся | Balatro не обновлён, либо `smods` распакован уровнем глубже (внутри лежит ещё одна папка) |
-| macOS ругается на неподписанную библиотеку | Не описано в документации Lovely, но встречается: `xattr -d com.apple.quarantine "$GAME/liblovely.dylib"` |
-| Порт занят | `uvx balatrobot serve --port 12347`, затем `uv run balatro-bot doctor --port 12347` |
-| Установщик не нашёл игру | `uv run balatro-bot install --game-dir ПУТЬ` |
-| Установщик не достучался до GitHub | Ставь вручную по шагам выше, план виден через `--dry-run` |
-| `doctor`: «расчёт будет НЕТОЧНЫМ» | Штатно: эффекты джокеров ещё не реализованы, это Фаза 3 |
+| `Connection refused` | The game isn't running, or it's running through Steam instead of `uvx balatrobot serve` |
+| `liblovely.dylib not found` | The file went into the save folder, not the game folder — these are different places, see the table at the top |
+| `LOVE executable not found` | Non-standard Steam install path, set `--love-path` |
+| Mods don't load | Balatro isn't updated, or `smods` was unpacked one level too deep (another folder inside it) |
+| macOS complains about an unsigned library | Not in the Lovely docs, but it happens: `xattr -d com.apple.quarantine "$GAME/liblovely.dylib"` |
+| Port is taken | `uvx balatrobot serve --port 12347`, then `uv run balatro-bot doctor --port 12347` |
+| The installer didn't find the game | `uv run balatro-bot install --game-dir PATH` |
+| The installer couldn't reach GitHub | Install by hand using the steps above; the plan is visible via `--dry-run` |
+| `doctor`: "расчёт будет НЕТОЧНЫМ" | Normal: joker effects aren't implemented yet, that's Phase 3 |
 
-Застрял — пришли вывод команды, разберёмся.
+Stuck — send the command's output and we'll sort it out.

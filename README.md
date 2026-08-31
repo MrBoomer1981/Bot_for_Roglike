@@ -1,14 +1,15 @@
-# Bot for Roguelike — помощник по Balatro
+# Bot for Roguelike — a Balatro helper
 
-Бот-советник для [Balatro](https://www.playbalatro.com/): читает состояние текущего рана и
-показывает ранжированный список ходов с точной разбивкой счёта — какие карты играть,
-что сбрасывать, что покупать в магазине.
+An advisory bot for [Balatro](https://www.playbalatro.com/): it reads the state of the
+current run and shows a ranked list of moves with an exact score breakdown — which cards to
+play, what to discard, what to buy in the shop.
 
-Игрок играет сам и выбирает. Бот считает и объясняет, из чего сложилось число.
+The player plays and decides. The bot computes and explains where the number came from.
 
-## Статус
+## Status
 
-Работает подсчёт очков и выбор хода. Считать можно прямо сейчас, без игры:
+Score computation and move selection work. You can run the numbers right now, without the
+game:
 
 ```bash
 uv run balatro-bot advise --hand "AH KH QH JH 9H 7C 7D 2S" --jokers "joker,droll" --blind 450
@@ -19,39 +20,40 @@ uv run balatro-bot advise --hand "AH KH QH JH 9H 7C 7D 2S" --jokers "joker,droll
   2. 7C 7D           pair                     144
 ```
 
-Флаг `--explain` показывает, из чего сложился счёт по шагам.
+The `--explain` flag shows how the score was assembled, step by step.
 
-Подключение к запущенной игре готово, но ни разу не проверялось на живом
-Mac — это ближайший шаг. Установка мод-стека сведена к одной команде:
+The connection to a running game is ready but has never been tested on a live Mac — that is
+the next step. Installing the mod stack is reduced to a single command:
 
 ```bash
-uv run balatro-bot install     # покажет, что скачает, и спросит подтверждения
-uvx balatrobot serve           # запустить игру
-uv run balatro-bot doctor      # проверить связь
-uv run balatro-bot watch       # советы обновляются сами, пока играешь
+uv run balatro-bot install     # shows what it will download and asks for confirmation
+uvx balatrobot serve           # launch the game
+uv run balatro-bot doctor      # check the connection
+uv run balatro-bot watch       # advice refreshes itself while you play
 ```
 
-Подробности и ручной путь — [docs/mac-setup.md](docs/mac-setup.md).
-Числа до этой проверки помечаются неточными: базовые значения рук
-выписаны по памяти и подлежат сверке с игрой.
+Details and the manual path — [docs/mac-setup.md](docs/mac-setup.md).
+Numbers produced before that check are marked inexact: the base hand values were
+written from memory and still need to be verified against the game.
 
-Дорожная карта — в **[PLAN.md](PLAN.md)**.
+The roadmap is in **[PLAN.md](PLAN.md)**.
 
-## Коротко о подходе
+## The approach in brief
 
-- **Ядро** — симулятор подсчёта очков как конвейер событий: подсчёт объявляет каждый
-  шаг, а джокеры подписаны на события и возвращают эффекты. Поэтому ретриггеры и
-  копирующие джокеры получаются сами, без спецслучаев.
-- **Солвер** — полный перебор 218 подмножеств руки, примерно 20 мс. Случайные эффекты
-  разрешаются точным перебором исходов, наружу идёт матожидание с границами.
-- **Честность** — незнакомый или нереализованный джокер не игнорируется, а помечает
-  расчёт неточным. Молча выдать правдоподобное неверное число хуже, чем промолчать.
-- **Источник состояния** — сменные адаптеры: ручной ввод (работает всегда) и мост
-  к JSON-RPC API мода.
+- **Core** — a score-computation simulator built as an event pipeline: the scorer announces
+  each step, and jokers subscribe to events and return effects. That way retriggers and
+  copy jokers fall out for free, with no special cases.
+- **Solver** — an exhaustive search over the 218 hand subsets, about 20 ms. Random effects
+  are resolved by exact enumeration of outcomes; what comes out is the expected value with
+  bounds.
+- **Honesty** — an unknown or unimplemented joker is not ignored; it marks the calculation
+  inexact. Silently returning a plausible wrong number is worse than staying silent.
+- **State source** — swappable adapters: manual input (always works) and a bridge to the
+  mod's JSON-RPC API.
 
-Платформа: macOS, Steam-версия игры.
+Platform: macOS, the Steam version of the game.
 
-## Дальше
+## Further reading
 
-Разбор выбора игры, архитектуры, порядка вычисления очков и дорожная карта по фазам —
-в [PLAN.md](PLAN.md).
+The rationale for the game choice, the architecture, the score-computation order, and the
+phased roadmap — in [PLAN.md](PLAN.md).

@@ -1,234 +1,234 @@
-# Спецификация: выбор сброса без перебора всех вариантов
+# Spec: choosing a discard without enumerating every option
 
-Документ самодостаточен: по нему можно реализовать задачу, не читая переписку.
-Это **Фаза 6** проекта (см. `PLAN.md`).
+This document is self-contained: you can implement the task from it without reading the
+conversation. This is **Phase 6** of the project (see `PLAN.md`).
 
-## 1. Что уже есть
+## 1. What already exists
 
-Питон 3.12, зависимостей в ядре нет. Всё работает и покрыто 249 тестами.
+Python 3.12, no core dependencies. Everything works and is covered by 249 tests.
 
-| Модуль | Что даёт |
+| Module | What it provides |
 |---|---|
 | `core/cards.py` | `Card`, `Rank`, `Suit`, `Enhancement`, `parse_cards`, `effective_suits` |
 | `core/hands.py` | `HandType`, `HandModifiers`, `evaluate(cards, mods) -> HandResult` |
 | `core/scoring.py` | `score_play(state, played, jokers, mods) -> ScoreOutcome` |
-| `core/state.py` | `GameState`: рука, джокеры, уровни рук, блайнд, ресурсы раунда |
+| `core/state.py` | `GameState`: hand, jokers, hand levels, blind, round resources |
 | `core/jokers/` | `build_jokers(state)`, `modifiers_from(jokers)` |
-| `solver/play.py` | `rank_plays(state, limit)` — все 218 розыгрышей, отсортированы по счёту |
+| `solver/play.py` | `rank_plays(state, limit)` — all 218 plays, sorted by score |
 
-Ключевое ограничение производительности: **`rank_plays` стоит ~13 мс.** Это полный
-перебор 218 подмножеств. Именно он, а не арифметика вероятностей, определяет цену
-всего решения.
+The key performance constraint: **`rank_plays` costs ~13 ms.** That's a full search over
+the 218 subsets. It, not the probability arithmetic, sets the price of the whole decision.
 
-## 2. Задача
+## 2. The task
 
-В руке 8 карт. Можно сбросить от 1 до 5, добрать столько же и потом сыграть.
-Нужно посоветовать, **что сбрасывать**.
+The hand has 8 cards. You can discard 1 to 5, draw the same number, and then play.
+We need to advise **what to discard**.
 
-Наивный путь — перебрать 218 подмножеств сброса, для каждого прогнать Монте-Карло
-по добору, внутри каждой выборки вызвать `rank_plays`. Это 218 × 1000 × 13 мс —
-порядка часа. Неприемлемо.
+The naive path — enumerate the 218 discard subsets, run a Monte-Carlo over the draw for
+each, and call `rank_plays` inside every sample. That's 218 × 1000 × 13 ms — on the order
+of an hour. Unacceptable.
 
-## 3. Идея: перебирать цели, а не сбросы
+## 3. The idea: enumerate targets, not discards
 
-**Сброс — следствие цели.** Решил собирать флеш червей — значит держишь червы, а
-сбрасываешь всё остальное. Выбор сброса не нужно искать: он определяется целью
-однозначно.
+**A discard is a consequence of a target.** If you decided to build a heart flush, you keep
+the hearts and discard everything else. The discard doesn't need to be searched for: the
+target determines it uniquely.
 
-Целей на руке около 30–40 против 218 сбросов, и большинство сбросов бессмысленны.
+A hand has about 30–40 targets versus 218 discards, and most discards are pointless.
 
-Вероятность собрать цель считается **точно** гипергеометрическим распределением,
-без всякой выборки.
+The probability of hitting a target is computed **exactly** with the hypergeometric
+distribution, with no sampling at all.
 
-## 4. Алгоритм
+## 4. Algorithm
 
-### 4.1. Невидимая колода
+### 4.1. The unseen deck
 
-`unseen = состав колоды − карты, которые мы видим`.
+`unseen = deck composition − the cards we can see`.
 
-- **Через мод**: состав колоды известен точно, вместе со всеми улучшениями.
-- **При ручном вводе**: точного состава нет. Берём стандартные 52 карты минус
-  то, что в руке, и **помечаем результат неточным**. Это обязательное поведение,
-  а не пожелание: см. раздел 8.
+- **Via the mod**: the deck composition is known exactly, together with all enhancements.
+- **With manual input**: there's no exact composition. We take the standard 52 cards minus
+  what's in the hand, and **mark the result inexact**. This is required behaviour, not a
+  wish: see section 8.
 
-### 4.2. Перечисление целей
+### 4.2. Enumerating targets
 
-Цель — это тройка «что держим, что нам нужно, сколько штук».
+A target is a triple "what we keep, what we need, how many".
 
 ```
 Target = (name: str, keep: tuple[Card, ...], outs: tuple[Card, ...], needed: int)
 ```
 
-`outs` — карты невидимой колоды, продвигающие цель. `needed` — сколько их нужно.
+`outs` — cards of the unseen deck that advance the target. `needed` — how many of them are
+required.
 
-Перечислять:
+To enumerate:
 
-| Семейство | Как строится | Сколько целей |
+| Family | How it's built | How many targets |
 |---|---|---|
-| Флеш | по каждой масти: держим карты этой масти | 4 (или 2 при `smeared`) |
-| Стрит | по каждому окну из 5 подряд рангов, от `A-2-3-4-5` до `10-J-Q-K-A` | 10 |
-| N одинаковых | по каждому рангу в руке: до тройки, каре, пятёрки | ≤ 24 |
-| Фулл-хаус | лучшая тройка + лучшая пара | 1–2 |
-| Оставить как есть | держим карты лучшего текущего розыгрыша | 1 |
+| Flush | per suit: keep the cards of that suit | 4 (or 2 with `smeared`) |
+| Straight | per window of 5 consecutive ranks, from `A-2-3-4-5` to `10-J-Q-K-A` | 10 |
+| N of a kind | per rank in the hand: up to three, four, five | ≤ 24 |
+| Full house | best three of a kind + best pair | 1–2 |
+| Keep as is | keep the cards of the best current play | 1 |
 
-**Обязательно учесть модификаторы** (`HandModifiers` из `modifiers_from`):
+**Modifiers must be taken into account** (`HandModifiers` from `modifiers_from`):
 
-- `four_fingers` — флешу и стриту хватает 4 карт, а не 5. Меняет `needed` **и**
-  список целей: часть из них уже собрана;
-- `shortcut` — стрит допускает пропуск ранга, окна перечисляются иначе;
-- `smeared` — червы равны бубнам, трефы пикам: мастей фактически две;
-- `Wild`-карты подходят под любую масть — брать масти через `effective_suits`.
+- `four_fingers` — a flush and a straight need 4 cards, not 5. It changes `needed` **and**
+  the list of targets: some of them are already complete;
+- `shortcut` — a straight may skip a rank, the windows are enumerated differently;
+- `smeared` — hearts equal diamonds, clubs equal spades: effectively two suits;
+- `Wild` cards match any suit — take suits via `effective_suits`.
 
-Цели строятся **после** применения модификаторов, иначе список будет неверным.
+Targets are built **after** the modifiers are applied, otherwise the list will be wrong.
 
-### 4.3. Отсев
+### 4.3. Filtering
 
-Цель выбрасывается, если:
+A target is dropped if:
 
-- `needed <= 0` (уже собрана — это не цель для сброса);
-- `needed > 5` (за один сброс не добрать);
-- `needed > len(outs)` (в колоде столько не осталось);
-- сбросить пришлось бы больше 5 карт.
+- `needed <= 0` (already complete — not a target for discarding);
+- `needed > 5` (can't be drawn in a single discard);
+- `needed > len(outs)` (not that many left in the deck);
+- it would require discarding more than 5 cards.
 
-### 4.4. Схлопывание одинаковых сбросов
+### 4.4. Collapsing identical discards
 
-**Важно и легко упустить.** Разные цели часто дают один и тот же сброс: держа
-`AH KH QH 9H`, играешь и на флеш червей, и на стрит `9-10-J-Q-K`. Такой сброс
-служит обеим целям, и его ценность выше, чем у любой из них по отдельности.
+**Important and easy to miss.** Different targets often produce the same discard: holding
+`AH KH QH 9H`, you're playing both toward a heart flush and toward a `9-10-J-Q-K` straight.
+Such a discard serves both targets, and its value is higher than either one alone.
 
-Поэтому после перечисления цели **группируются по множеству оставляемых карт**.
-Дальше считается уже вариант сброса, а не цель; имена целей сохраняются для
-объяснения человеку.
+So after enumeration, targets are **grouped by the set of kept cards**. From then on it's a
+discard option that's evaluated, not a target; the target names are kept for explaining to
+the human.
 
-### 4.5. Оценка варианта
+### 4.5. Evaluating an option
 
-Для варианта «оставить `keep`, сбросить `k` карт» с множеством аутов `outs`:
+For an option "keep `keep`, discard `k` cards" with a set of outs `outs`:
 
 ```
-N = |невидимая колода|
+N = |unseen deck|
 S = |outs|
-P(пришло ровно i) = C(S,i) · C(N−S, k−i) / C(N,k)
+P(exactly i drawn) = C(S,i) · C(N−S, k−i) / C(N,k)
 
-EV = Σ_i  P(i) · E[счёт | пришло i аутов]
+EV = Σ_i  P(i) · E[score | i outs drawn]
 ```
 
-Первая часть — точная арифметика, `math.comb`, целые числа, мгновенно.
-Вторая — единственное место, где нужна выборка: собрать несколько
-представительных рук с ровно `i` аутами и усреднить по ним `rank_plays(...)[0]`.
+The first part is exact arithmetic, `math.comb`, integers, instant.
+The second is the only place where sampling is needed: assemble a few representative hands
+with exactly `i` outs and average `rank_plays(...)[0]` over them.
 
-**Не заменять сумму по `i` на «собрал / не собрал».** Проверено: двоичное деление
-даёт ошибку до 16%, потому что «не собрал» — это не ноль, а широкий разброс
-(см. раздел 7).
+**Do not replace the sum over `i` with "hit / missed".** Verified: the binary split gives an
+error of up to 16%, because "missed" isn't zero, it's a wide spread (see section 7).
 
-### 4.6. Что отдавать наружу
+### 4.6. What to return
 
 ```
 DiscardOption = (
-    discard: tuple[Card, ...],       # что сбросить
+    discard: tuple[Card, ...],       # what to discard
     keep: tuple[Card, ...],
-    expected: float,                 # матожидание счёта после добора
-    distribution: tuple[(i, p, score), ...],   # разбор по числу пришедших аутов
-    targets: tuple[str, ...],        # каким целям служит
-    exact: bool,                     # всегда False, это оценка
+    expected: float,                 # expected score after the draw
+    distribution: tuple[(i, p, score), ...],   # breakdown by number of outs drawn
+    targets: tuple[str, ...],        # which targets it serves
+    exact: bool,                     # always False, this is an estimate
 )
 ```
 
-Список вариантов сортируется по `expected` и отдаётся целиком, а не одним
-советом — как и в `solver/play.py`. `distribution` нужен, чтобы человек видел,
-из чего сложилась оценка, и мог не согласиться.
+The list of options is sorted by `expected` and returned in full, not as a single piece of
+advice — as in `solver/play.py`. `distribution` is there so the human can see what the
+estimate is made of and disagree.
 
-Сравнивать с «сыграть сейчас» надо честно: `advise(state).best.score` против
-`expected` лучшего сброса, с поправкой на то, что сброс тратит ресурс.
+Comparing with "play now" must be honest: `advise(state).best.score` against the `expected`
+of the best discard, adjusted for the fact that a discard spends a resource.
 
-## 5. Куда встраивать
+## 5. Where to plug it in
 
-Новый модуль `balatro_bot/solver/discard.py`. Существующие файлы не меняются,
-кроме `cli.py`, куда добавляется вывод совета по сбросу.
+A new module `balatro_bot/solver/discard.py`. Existing files are not changed, except
+`cli.py`, which gets the discard-advice output added.
 
-Публичная функция:
+The public function:
 
 ```python
 def advise_discard(state: GameState, limit: int = 5) -> tuple[DiscardOption, ...]
 ```
 
-Если `state.discards_left <= 0` — вернуть пустой кортеж, а не считать.
+If `state.discards_left <= 0` — return an empty tuple, don't compute.
 
-## 6. Граничные случаи
+## 6. Edge cases
 
-- сбросов не осталось → пустой результат;
-- в руке меньше 2 карт → сброс бессмыслен;
-- невидимая колода меньше размера сброса → отсечь такие варианты;
-- каменные карты не имеют ранга и масти: в цели «флеш» и «стрит» не входят,
-  но занимают место в руке;
-- дебаффнутые карты — не выбрасывать автоматически: боссовый эффект действует
-  на текущий раунд, а не на добранные карты;
-- `needed == 0` после применения `four_fingers` — цель уже собрана, это не сброс.
+- no discards left → empty result;
+- fewer than 2 cards in hand → discarding is pointless;
+- the unseen deck is smaller than the discard size → cut such options;
+- stone cards have no rank or suit: they don't count toward "flush" and "straight" targets,
+  but they take up space in the hand;
+- debuffed cards — don't discard them automatically: the boss effect applies to the current
+  round, not to the drawn cards;
+- `needed == 0` after applying `four_fingers` — the target is already complete, it's not a
+  discard.
 
-## 7. Проверка: обязательная часть, не пожелание
+## 7. Verification: a mandatory part, not a wish
 
-**Медленное Монте-Карло остаётся — но в тестах, как эталон.** Быстрая аналитика
-проверяется им, а не принимается на слово.
+**The slow Monte-Carlo stays — but in the tests, as the ground truth.** The fast analytic
+path is checked against it, not taken on faith.
 
-Эталонная реализация (только для тестов): сбросить, честно добрать из невидимой
-колоды, вызвать `rank_plays`, усреднить по 400 выборкам.
+Reference implementation (tests only): discard, honestly draw from the unseen deck, call
+`rank_plays`, average over 400 samples.
 
-### Критерии приёмки
+### Acceptance criteria
 
-1. **Порядок важнее чисел.** На корпусе из ~20 рук порядок первых трёх вариантов
-   по аналитике совпадает с порядком по эталону не реже чем в 90% случаев.
-2. **Матожидание** отклоняется от эталона не более чем на 15%.
-3. Время `advise_discard` — не больше 200 мс на руку.
+1. **Order matters more than numbers.** On a corpus of ~20 hands, the order of the top three
+   options by the analytic path matches the order by the reference at least 90% of the time.
+2. **The expected value** deviates from the reference by no more than 15%.
+3. `advise_discard` runtime — no more than 200 ms per hand.
 
-### Что уже измерено
+### What has already been measured
 
-Прототип на руке `AH KH QH 9H 2C 7D 3S 4S`, без джокеров, 200–400 выборок эталона:
+Prototype on the hand `AH KH QH 9H 2C 7D 3S 4S`, no jokers, 200–400 reference samples:
 
-| вариант | шанс | аналитика | эталон | отклонение |
+| option | chance | analytic | reference | deviation |
 |---|---|---|---|---|
-| держим `AH KH QH 9H` (флеш ♥, нужна 1) | 61.4% | 273 | 268 | +2.0% |
-| держим `AH 2C 3S 4S` (стрит A-5, нужна 1) | 32.7% | 116 | 123 | −5.4% |
-| держим `AH KH QH` (нужно 2) — двоично | 26.7% | 227 | 196 | **+16.3%** |
-| то же, по распределению из 4.5 | — | 179 | 197 | −9.2% |
+| keep `AH KH QH 9H` (flush ♥, need 1) | 61.4% | 273 | 268 | +2.0% |
+| keep `AH 2C 3S 4S` (straight A-5, need 1) | 32.7% | 116 | 123 | −5.4% |
+| keep `AH KH QH` (need 2) — binary | 26.7% | 227 | 196 | **+16.3%** |
+| same, by the distribution from 4.5 | — | 179 | 197 | −9.2% |
 
-**Порядок вариантов совпал с эталоном.** Это и есть главный результат проверки.
+**The order of the options matched the reference.** That is the main result of the check.
 
-Остаточные 9% — не от вероятностей, они точные, а от разброса счёта **внутри**
-корзины: усреднялось всего по 6 представительным рукам. Увеличение выборки
-уменьшает ошибку, но упирается в цену `rank_plays`.
+The residual 9% is not from the probabilities — those are exact — but from the score spread
+**within** a bucket: only 6 representative hands were averaged. A larger sample reduces the
+error, but runs into the cost of `rank_plays`.
 
-## 8. Требование честности
+## 8. The honesty requirement
 
-В проекте действует сквозное правило: расчёт, которому нельзя верить до единицы,
-обязан быть помечен. Здесь оно означает:
+The project has a project-wide rule: a calculation that can't be trusted to the last unit
+must be marked. Here that means:
 
-- `exact` у `DiscardOption` **всегда** `False` — это оценка, а не вычисление;
-- при ручном вводе дополнительно помечать, что состав колоды предположительный;
-- в выводе показывать разброс, а не одно число.
+- `exact` on `DiscardOption` is **always** `False` — it's an estimate, not a computation;
+- with manual input, additionally mark that the deck composition is assumed;
+- in the output, show the spread, not a single number.
 
-Молча выдать правдоподобную, но неверную оценку — худший исход для советника.
+Silently returning a plausible but wrong estimate is the worst outcome for an advisor.
 
-## 9. Что в объём не входит
+## 9. What's out of scope
 
-Считаем **на один ход вперёд**: сбросил → добрал → сыграл.
+We compute **one move ahead**: discard → draw → play.
 
-Сознательно не делаем:
+Deliberately not doing:
 
-- многошаговый расчёт, когда сбросов осталось несколько;
-- учёт того, сколько рук осталось до блайнда, дальше текущей;
-- влияние добора на будущие раунды и на магазин;
-- джокеров, меняющих сам добор.
+- multi-step computation when several discards remain;
+- accounting for how many hands are left before the blind, beyond the current one;
+- the effect of the draw on future rounds and on the shop;
+- jokers that change the draw itself.
 
-Одношаговая оценка **занижает** ценность наполовину собранных целей: при двух
-оставшихся сбросах игрок может достраивать цель дважды. Это известное ограничение,
-и его надо назвать в выводе, а не прятать.
+The one-step estimate **underrates** the value of half-built targets: with two discards left
+a player can build a target twice. This is a known limitation, and it must be stated in the
+output, not hidden.
 
-## 10. Главная развилка для реализующего
+## 10. The main fork for the implementer
 
-Цена решения определяется не вероятностями, а функцией «сколько даст эта рука».
-Сейчас это `rank_plays` — 13 мс, полный перебор 218 подмножеств.
+The cost of the decision is set not by the probabilities but by the function "how much does
+this hand give". Right now that's `rank_plays` — 13 ms, a full search over the 218 subsets.
 
-Для оценки сброса нужна **дешёвая версия той же функции**: достаточно максимума,
-а не всего списка. Разумный путь — отсекать заведомо слабые подмножества до
-полного подсчёта. Точный перебор при этом остаётся там, где выдаётся окончательная
-рекомендация по розыгрышу: приближение допустимо внутри оценки сброса, где мы и
-так приближаем, но не в самом совете.
+Estimating a discard needs a **cheap version of that same function**: the maximum is enough,
+not the whole list. A reasonable path is to prune obviously weak subsets before the full
+count. The exact search then stays where the final play recommendation is produced:
+approximation is acceptable inside the discard estimate, where we're approximating anyway,
+but not in the advice itself.
