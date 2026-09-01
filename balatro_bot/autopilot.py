@@ -86,7 +86,11 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 константа — не посчитанное число) — только структурные апгрейды,
 `>= _MIN_HEURISTIC_VOUCHER_VALUE`. Действовать по 3-му уровню — явное
 решение пользователя (иначе это было бы то самое «гадать вместо `None`»,
-что проект запрещает). Ваучер идёт после джокера (джокер — ядро стратегии
+что проект запрещает). Порог 3-го уровня не совсем плоский (улучшение A7):
+для структурного апгрейда самого магазина (`Overstock`, +слот витрины) он
+снижается, когда бот богат деньгами и у него простаивают слоты джокеров
+(`_heuristic_voucher_bar`) — больше слотов витрины даёт больше шансов эти
+слоты джокеров занять. Ваучер идёт после джокера (джокер — ядро стратегии
 и занимает дефицитный слот), но перед паком (пак — гэмбл). Ваучер слота
 не занимает.
 
@@ -106,7 +110,12 @@ False` — раздел 8 `docs/Discard Spec.md`: это оценка по пр�
 требования ближайшего блайнда), либо оффер кратно сильнее
 (`_REPLACE_UPLIFT_RATIO` — защита от прокрутки продажи-покупки на шуме).
 Продажа — отдельное действие: слот освободится, покупку решим на следующем
-шаге по свежим числам, как и всё остальное в магазине.
+шаге по свежим числам, как и всё остальное в магазине. Ветка раздвоена
+(улучшение A6): размен, захватывающий джокера, который сам прошёл бы порог
+покупки в слот (`_worth_buying`), решается ДО ветки паков — пак это
+низкоприоритетный хедж, а в run 6 дешёвый Celestial-пак раз за разом
+опережал размен под оффер +3576. Остальные размены — после паков, как
+раньше.
 
 Когда и менять нечего — пробуем перекатить витрину (улучшение A5,
 `_decide_reroll_action`). `ShopAdvice.reroll` (`RerollOutlook`) — Монте-Карло
@@ -238,6 +247,23 @@ _MIN_BUY_REQ_FRACTION = 0.03
 #: (`Antimatter` +слот джокера 8.0, `Glow Up` 6.0), не «чаще нужный тип в
 #: магазине» (2..4). Калибруется на живых прогонах.
 _MIN_HEURISTIC_VOUCHER_VALUE = 5.0
+
+#: Улучшение A7. Структурные апгрейды самого магазина (+1 слот витрины).
+#: Только для них `_heuristic_voucher_bar` снижает порог 3-го уровня, когда
+#: бот богат деньгами и у него простаивают слоты джокеров — прочие
+#: эвристические ваучеры остаются на базовом пороге, даже если их
+#: `heuristic_value` совпадает с `Overstock` (у `v_telescope` тоже 3.0).
+_STRUCTURAL_SHOP_VOUCHERS = frozenset({"v_overstock_norm", "v_overstock_plus"})
+
+#: Улучшение A7. На сколько `_heuristic_voucher_bar` снижает
+#: `_MIN_HEURISTIC_VOUCHER_VALUE` за каждый простаивающий слот джокера — но
+#: не ниже `_HEURISTIC_VOUCHER_FLOOR`. В run 6 бот пропустил `Overstock`
+#: ($10, +1 слот витрины, оценка 3.0) при $29 и трёх пустых слотах джокеров:
+#: 5.0 − 3×1.0 = 2.0, ограничено полом 3.0 — ваучер проходит. Снижение
+#: считается только когда после покупки остаётся запас `_REROLL_MONEY_RESERVE`.
+#: Калибруется на живых прогонах.
+_HEURISTIC_RELIEF_PER_EMPTY_SLOT = 1.0
+_HEURISTIC_VOUCHER_FLOOR = 3.0
 
 #: Улучшение A5. Сколько денег автопилот оставляет себе после рерола: реролл
 #: разрешён, только если `деньги − цена_рерола >= этого`. Мешает спустить
@@ -406,7 +432,7 @@ def _worth_buying(uplift: float, requirement: int | None) -> bool:
 
 
 def _decide_replace_action(
-    state: GameState, advice: ShopAdvice, requirement: int | None
+    state: GameState, advice: ShopAdvice, requirement: int | None, *, strong_only: bool = False
 ) -> Action | None:
     """Все слоты джокеров заняты — продать самого слабого, если в витрине
     есть заметно лучший (`JokerOffer.replaces`, посчитан в `evaluate_shop`).
@@ -414,9 +440,20 @@ def _decide_replace_action(
     мёртвый груз (вклад мал в доле требования блайнда), либо оффер кратно
     сильнее (`_REPLACE_UPLIFT_RATIO`). `None` — менять нечего.
 
+    `strong_only=True` (улучшение A6) — брать только размен, чей
+    захватываемый оффер сам прошёл бы порог покупки джокера в слот
+    (`_worth_buying`): такой размен ценнее дешёвого пака и решается ДО ветки
+    паков (в run 6 оффер +3576 висел незанятым 2–3 опроса, пока его раз за
+    разом опережал Celestial-пак на ~44). Требует известного требования
+    блайнда — иначе `_worth_buying` вырождается в «> 0» и strong-проход
+    поглотил бы любой положительный размен. `strong_only=False` — прежнее
+    поведение (любой проходящий размен, вызывается уже после паков).
+
     `advice.jokers` отсортирован по приросту убыванию, так что первый
     подходящий оффер и есть лучший доступный под размен. Покупку решит
     следующий вызов — слот к тому моменту освободится."""
+    if strong_only and requirement is None:
+        return None
     for offer in advice.jokers:
         victim = offer.replaces
         if victim is None or offer.expected_uplift is None:
@@ -425,6 +462,8 @@ def _decide_replace_action(
             continue
         if offer.expected_uplift <= victim.contribution:
             continue
+        if strong_only and not _worth_buying(offer.expected_uplift, requirement):
+            continue
         dead_weight = requirement is not None and (
             victim.contribution < _DEAD_JOKER_REQ_FRACTION * requirement
         )
@@ -432,6 +471,28 @@ def _decide_replace_action(
         if dead_weight or multiple:
             return Action(kind="sell", item_index=victim.index, label=victim.label)
     return None
+
+
+def _heuristic_voucher_bar(state: GameState, key: str, price: int) -> float:
+    """Порог экспертной оценки ваучера 3-го уровня (`heuristic_value`, шкала
+    ~2..8). База — `_MIN_HEURISTIC_VOUCHER_VALUE`. Для структурного апгрейда
+    самого магазина (`_STRUCTURAL_SHOP_VOUCHERS` — `Overstock`, +слот
+    витрины) планка снижается, когда бот богат деньгами (после покупки
+    остаётся запас `_REROLL_MONEY_RESERVE`) и у него простаивают слоты
+    джокеров: больше слотов витрины — больше шансов эти слоты джокеров занять
+    (улучшение A7, случай из run 6 — `Overstock` за $10, оценка 3.0,
+    пропущен при $29 и трёх пустых слотах джокеров). Снижение —
+    `_HEURISTIC_RELIEF_PER_EMPTY_SLOT` за пустой слот, но не ниже
+    `_HEURISTIC_VOUCHER_FLOOR`. Прочие эвристические ваучеры (частота
+    изданий, ставка мерчантов) планку не снижают — даже когда их
+    `heuristic_value` совпадает с `Overstock`."""
+    if key not in _STRUCTURAL_SHOP_VOUCHERS or state.joker_slots is None:
+        return _MIN_HEURISTIC_VOUCHER_VALUE
+    empty = max(state.joker_slots - len(state.jokers), 0)
+    if empty == 0 or state.money - price < _REROLL_MONEY_RESERVE:
+        return _MIN_HEURISTIC_VOUCHER_VALUE
+    relief = _HEURISTIC_RELIEF_PER_EMPTY_SLOT * empty
+    return max(_HEURISTIC_VOUCHER_FLOOR, _MIN_HEURISTIC_VOUCHER_VALUE - relief)
 
 
 def _decide_voucher_action(
@@ -445,7 +506,9 @@ def _decide_voucher_action(
     - `"dollars"` (2-й уровень — денежная формула с горизонтом: потолок
       процентов, скидки): чистый плюс в долларах, оценка не ниже цены;
     - `heuristic_value` (3-й уровень — экспертная константа, НЕ посчитанное
-      число): только структурные апгрейды, `>= _MIN_HEURISTIC_VOUCHER_VALUE`.
+      число): только структурные апгрейды, `>= _heuristic_voucher_bar` (по
+      умолчанию `_MIN_HEURISTIC_VOUCHER_VALUE`, но для +слота витрины планка
+      снижается при богатом кармане и простое слотов джокеров — улучшение A7).
       Действовать по этому уровню — явное решение пользователя.
 
     Ваучер слота не занимает — проверяется только `affordable`. `None`,
@@ -459,7 +522,9 @@ def _decide_voucher_action(
         elif offer.value_unit == "dollars" and offer.expected_uplift is not None:
             take = offer.expected_uplift >= offer.item.price
         elif offer.heuristic_value is not None:
-            take = offer.heuristic_value >= _MIN_HEURISTIC_VOUCHER_VALUE
+            take = offer.heuristic_value >= _heuristic_voucher_bar(
+                state, offer.item.key, offer.item.price
+            )
         if take:
             return Action(
                 kind="buy_voucher",
@@ -499,13 +564,15 @@ def _decide_reroll_action(
 def _decide_shop_action(state: GameState) -> Action:
     """В магазине решение — купить лучшего по приросту джокера (порог A2:
     прирост не ниже доли требования блайнда, не просто > 0), затем ваучер
-    (порог по уровню честности оценки, улучшение A4), затем (если джокеров
-    брать нечего) Buffoon/Celestial-пак с положительной оценкой, затем (если
-    слоты полны) продать слабейшего под лучший оффер, затем — если в витрине
-    так и нечего взять — перекатить её (улучшение A5, `_decide_reroll_action`:
-    Монте-Карло рерола обещает годного джокера и остаётся денежный запас),
-    иначе уйти (`next_round`). См. модульный докстринг про политику и её
-    границы."""
+    (порог по уровню честности оценки, улучшение A4), затем продажа-замена,
+    захватывающая явно сильного джокера (улучшение A6: оффер сам прошёл бы
+    порог покупки в слот — ценнее дешёвого пака, потому решается до него),
+    затем (если джокеров брать нечего) Buffoon/Celestial-пак с положительной
+    оценкой, затем обычная продажа-замена слабейшего под лучший оффер, затем —
+    если в витрине так и нечего взять — перекатить её (улучшение A5,
+    `_decide_reroll_action`: Монте-Карло рерола обещает годного джокера и
+    остаётся денежный запас), иначе уйти (`next_round`). См. модульный
+    докстринг про политику и её границы."""
     advice = evaluate_shop(state)
     if advice is not None:
         requirement = _next_blind_requirement(state)
@@ -525,6 +592,13 @@ def _decide_shop_action(state: GameState) -> Action:
         voucher_action = _decide_voucher_action(state, advice, requirement)
         if voucher_action is not None:
             return voucher_action
+        # Улучшение A6: размен, захватывающий явно сильного джокера (оффер сам
+        # прошёл бы порог покупки в слот), решается до паков — пак это хедж и
+        # низший приоритет, а в run 6 дешёвый Celestial-пак раз за разом
+        # опережал размен под оффер +3576, тот висел незанятым 2–3 опроса.
+        strong_replace = _decide_replace_action(state, advice, requirement, strong_only=True)
+        if strong_replace is not None:
+            return strong_replace
         for pack in advice.packs:
             if (
                 pack.affordable

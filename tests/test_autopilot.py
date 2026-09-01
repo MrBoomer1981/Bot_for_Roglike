@@ -678,6 +678,95 @@ class TestDecideActionВМагазине:
         assert action.kind == "sell"
         assert action.item_index == 1
 
+    def test_a7_богатый_бот_с_пустыми_слотами_берёт_overstock(self) -> None:
+        # Overstock (heuristic_value 3.0) ниже базового порога 5.0, но при $29
+        # и трёх пустых слотах джокеров планка опускается до пола 3.0 —
+        # берём (случай из run 6).
+        state = GameState(
+            phase="SHOP",
+            money=29,
+            joker_slots=5,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
+            shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
+        )
+        action = decide_action(state)
+        assert action == Action(kind="buy_voucher", item_index=0, label="Overstock")
+
+    def test_a7_при_нехватке_денег_порог_overstock_базовый(self) -> None:
+        # $15 − $10 = $5 < _REROLL_MONEY_RESERVE (12): запаса нет, планка 5.0,
+        # Overstock (3.0) не проходит.
+        state = GameState(
+            phase="SHOP",
+            money=15,
+            joker_slots=5,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
+            shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a7_при_полных_слотах_джокеров_порог_overstock_базовый(self) -> None:
+        # Слоты джокеров заняты — лишний слот витрины некуда девать, планка 5.0.
+        state = GameState(
+            phase="SHOP",
+            money=29,
+            joker_slots=2,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
+            shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_a7_не_трогает_неструктурный_ваучер(self) -> None:
+        # v_telescope тоже heuristic_value 3.0, но это не +слот витрины —
+        # планка остаётся 5.0 даже при богатом кармане и пустых слотах.
+        state = GameState(
+            phase="SHOP",
+            money=29,
+            joker_slots=5,
+            jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
+            shop_vouchers=(ShopItem("v_telescope", "Telescope", "VOUCHER", 10),),
+        )
+        assert decide_action(state) == Action(kind="next_round")
+
+
+class TestDecideActionРазменДоПаков:
+    """Улучшение A6: размен, захватывающий явно сильного джокера (оффер сам
+    прошёл бы порог покупки в слот), решается ДО ветки паков — пак это
+    низший приоритет, а в run 6 дешёвый Celestial-пак раз за разом опережал
+    крупный размен."""
+
+    def _state(self, requirement: int) -> GameState:
+        # Слоты полны, оба джокера отключены (вклад 0), в витрине рабочий
+        # j_joker и дешёвый Celestial-пак с положительной оценкой.
+        return GameState(
+            phase="SHOP",
+            money=20,
+            joker_slots=2,
+            jokers=(
+                JokerCard(key="j_joker", debuffed=True),
+                JokerCard(key="j_joker", debuffed=True),
+            ),
+            full_deck=_ПАРА_ТУЗОВ,
+            blinds={"small": _blind("SMALL", "UPCOMING", requirement)},
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+            shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
+        )
+
+    def test_крупный_размен_опережает_дешёвый_пак(self) -> None:
+        # Требование 300: прирост j_joker (+4 множ.) сильно выше 3% (9 очков),
+        # оффер прошёл бы порог покупки — продаём мёртвый груз до пака.
+        action = decide_action(self._state(300))
+        assert action is not None
+        assert action.kind == "sell"
+        assert action.item_index == 0
+
+    def test_мелкий_размен_не_опережает_пак(self) -> None:
+        # Требование 100000: тот же прирост — доли процента от 3%, оффер порог
+        # покупки не проходит, strong-проход пуст → покупаем пак (как раньше).
+        action = decide_action(self._state(100_000))
+        assert action is not None
+        assert action.kind == "buy_pack"
+        assert action.label == "Celestial Pack"
+
 
 class TestDecideActionРеролМагазина:
     """Улучшение A5: когда в витрине брать нечего, перекатить её — если
