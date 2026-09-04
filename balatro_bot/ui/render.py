@@ -13,7 +13,7 @@ from typing import Final
 from balatro_bot.core.cards import Card, Edition, Enhancement, Seal
 from balatro_bot.core.state import GameState
 from balatro_bot.solver.actions import ActionOption
-from balatro_bot.solver.consumables import PlanetConsumableOffer
+from balatro_bot.solver.consumables import PlanetConsumableOffer, TarotConsumableOffer
 from balatro_bot.solver.discard import MAX_DISCARD_COMPOSITIONS, DiscardOutcome
 from balatro_bot.solver.pack import PackOffer
 from balatro_bot.solver.play import (
@@ -39,6 +39,7 @@ __all__ = [
     "render_shop_advice",
     "render_skip_advice",
     "render_state",
+    "render_tarot_advice",
     "render_top_actions",
 ]
 
@@ -194,6 +195,22 @@ def render_shop_advice(advice: ShopAdvice) -> None:
                 f"~{format_number(reroll.expected_best_uplift)}{приближено} ({reroll.note})"
             )
 
+    if advice.held:
+        # Улучшение A9. Вклад показывается человеку по той же причине, по
+        # которой он появился в расчёте: в ране 8 `Hit the Road` с вкладом
+        # −722 (то есть хуже пустого слота) доехал до конца рана, и по
+        # выводу этого не было видно — цифры просто не существовало.
+        print("\nджокеры в слотах:")
+        ширина = max(len(entry.label) for entry in advice.held)
+        for entry in advice.held:
+            пометки = []
+            if entry.eternal:
+                пометки.append("вечный, продать нельзя")
+            elif entry.contribution < 0:
+                пометки.append("хуже пустого слота")
+            хвост = f"  ({', '.join(пометки)})" if пометки else ""
+            print(f"  {entry.label:<{ширина}}  вклад {format_number(entry.contribution):>9}{хвост}")
+
     if advice.jokers:
         print("\nджокеры:")
         ширина = max(len(offer.item.label) for offer in advice.jokers)
@@ -293,6 +310,32 @@ def render_consumable_advice(offers: Sequence[PlanetConsumableOffer]) -> None:
         if offer.note:
             оценка += f" ({offer.note})"
         print(f"  {offer.item.label:<{ширина}}  {offer.hand_type.value:<15} {оценка}")
+
+
+def render_tarot_advice(offers: Sequence[TarotConsumableOffer], hand: Sequence[Card]) -> None:
+    """Показать оценку Tarot-карт в инвентаре (улучшение C1). Три уровня
+    честности выводятся по-разному и намеренно не сливаются в один столбец:
+    очки, доллары и «не оценено» — величины разной природы, как у ваучеров
+    в `render_shop_advice`."""
+    if not offers:
+        return
+    print("\nконсумабли (Tarot) в инвентаре:")
+    ширина = max(len(offer.item.label) for offer in offers)
+    for offer in offers:
+        if offer.value_unit == "score" and offer.expected_uplift is not None:
+            цели = " ".join(format_card(hand[i]) for i in offer.targets)
+            оценка = (
+                f"прирост на этой руке ~{format_number(offer.expected_uplift)} на {цели}"
+                if цели
+                else "на этой руке применять незачем"
+            )
+        elif offer.value_unit == "dollars" and offer.expected_uplift is not None:
+            оценка = f"в деньгах ~${offer.expected_uplift:g}"
+        else:
+            оценка = "не оценено"
+        if offer.note:
+            оценка += f" ({offer.note})"
+        print(f"  {offer.item.label:<{ширина}}  {оценка}")
 
 
 def render_advice(advice: Advice, top: int, explain: bool) -> None:

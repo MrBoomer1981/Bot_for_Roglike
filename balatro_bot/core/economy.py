@@ -41,6 +41,7 @@ from __future__ import annotations
 from typing import Final
 
 __all__ = [
+    "BASE_REROLL_COST",
     "INTEREST_AMOUNT",
     "INTEREST_CAP_DEFAULT",
     "INTEREST_STEP",
@@ -52,6 +53,8 @@ __all__ = [
     "discount_percent",
     "interest",
     "interest_cap",
+    "reroll_base_cost",
+    "rerolls_done",
 ]
 
 INTEREST_AMOUNT: Final[int] = 1
@@ -78,6 +81,21 @@ SHOP_PLANET_RATE: Final[int] = 4
 #: константой не нужен — мод присылает уже актуальный счётчик, а не
 #: стартовые `perishable_rounds = 5`.
 RENTAL_RATE: Final[int] = 3
+
+#: Стартовая цена рерола витрины — `game.lua`'s `starting_params.reroll_cost
+#: = 5`, она же `G.GAME.round_resets.reroll_cost` на старте рана
+#: (`game.lua`'s `Game:start_run`). Цена ролла внутри одного захода в магазин
+#: считается как `база + число уже сделанных роллов`
+#: (`functions/common_events.lua`'s `calculate_reroll_cost`:
+#: `reroll_cost = round_resets.reroll_cost + current_round.reroll_cost_increase`,
+#: где `reroll_cost_increase` растёт ровно на 1 за ролл и обнуляется в начале
+#: каждого раунда — `functions/state_events.lua`). Нужна `autopilot`'у, чтобы
+#: восстановить число роллов этого захода из наблюдаемой цены (улучшение A8).
+BASE_REROLL_COST: Final[int] = 5
+
+#: На сколько каждый из двух «реролльных» ваучеров удешевляет ролл —
+#: `game.lua`: у `v_reroll_surplus` и `v_reroll_glut` обоих `config.extra = 2`.
+_REROLL_VOUCHER_DISCOUNT: Final[int] = 2
 
 #: `Green Deck` (`b_green` в `game.lua`) отключает проценты полностью
 #: (`config.no_interest = true`) — единственный отслеживаемый в `GameState`
@@ -112,6 +130,39 @@ def interest(money: int, deck_type: str | None, cap: int = INTEREST_CAP_DEFAULT)
     if deck_type == NO_INTEREST_DECK or money < INTEREST_STEP:
         return 0
     return INTEREST_AMOUNT * min(money // INTEREST_STEP, cap // INTEREST_STEP)
+
+
+def reroll_base_cost(used_vouchers: frozenset[str]) -> int:
+    """Базовая цена рерола (до надбавки за уже сделанные в этом заходе
+    роллы) с учётом выкупленных ваучеров.
+
+    В отличие от `interest_cap`/`discount_percent`, которые **задают**
+    значение, эти два ваучера **вычитают** и складываются: `card.lua`
+    (`Card:add_to_deck`, ветка `Reroll Surplus`/`Reroll Glut`) делает
+    `round_resets.reroll_cost = round_resets.reroll_cost - extra` для
+    каждого, поэтому с обоими база равна $1, а не $3."""
+    base = BASE_REROLL_COST
+    for key in ("v_reroll_surplus", "v_reroll_glut"):
+        if key in used_vouchers:
+            base -= _REROLL_VOUCHER_DISCOUNT
+    return max(base, 0)
+
+
+def rerolls_done(reroll_cost: int, used_vouchers: frozenset[str]) -> int:
+    """Сколько роллов уже сделано в этом заходе в магазин — восстановлено из
+    наблюдаемой цены: `reroll_cost - база` (см. `BASE_REROLL_COST`). Счётчик
+    самой игры (`current_round.reroll_cost_increase`) в схеме мода не
+    отдаётся, а цена — отдаётся, и растёт ровно на $1 за ролл, обнуляясь
+    каждый раунд. Нужно `autopilot._decide_reroll_action` (улучшение A8):
+    без ограничения по числу роллов политика вырождается в «рероллить, пока
+    не кончатся деньги», потому что сама оценка ролла стационарна.
+
+    Оценка честно **занижена** в двух случаях, и оба безопасны — они дают
+    право на лишний ролл, а не запрещают нужный: `Reroll` -тег
+    (`round_resets.temp_reroll_cost`) и `Chaos the Clown`
+    (`current_round.free_rerolls`, цена принудительно 0) временно опускают
+    цену, и восстановленный счётчик выходит меньше настоящего."""
+    return max(reroll_cost - reroll_base_cost(used_vouchers), 0)
 
 
 def discount_percent(used_vouchers: frozenset[str]) -> int:

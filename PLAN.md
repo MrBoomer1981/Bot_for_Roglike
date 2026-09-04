@@ -15,7 +15,7 @@ jokers), but verifying the numbers against the real game (task 3a) hasn't been d
 a Mac. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
 and joker order, blind skip and economy). Phase 9 ("Autopilot") — subtasks 9.1–9.7 are done
 (action loop, skip/shop/pack-opening, vouchers, Planet consumables, boss catalogue and score
-fix, stake stickers, run-runner) plus improvements A1–A7, B1, D1 and F1 from section 9.8 — see
+fix, stake stickers, run-runner) plus improvements A1–A9, B1, D1, F1 and F2 from section 9.8 — see
 section 6, "Autopilot" subsection. Run 7 (RED/WHITE, 2026-09-01) is the **first autopilot
 win** — beat Ante 8, 168 steps, zero mod rejections/timeouts/stalls, with A5/A6/A7/B1/D1/F1
 all exercised live; it also surfaced the reroll churn A8/F2 (the bot burned ~$75 on 21
@@ -908,8 +908,15 @@ instead of 15–40 s. The live shakedown then happened — run 7 (RED/WHITE, 202
 surfaced two new items: **A8** (the reroll policy over-rerolls: 21 rerolls in one run, two
 4-in-a-row streaks that drained a whole shop visit and bought nothing) and **F2** (each
 reroll rebuilds the slow `evaluate_shop` from scratch — the "hangs in the shop" the user
-saw). What's left before the batch win-rate run (E1) is fixing A8/F2 and re-running the
-shakedown, plus Tarot consumables (C1).
+saw). Both are now **closed** (2026-09-04): the reroll gained an opportunity-cost gate and a
+per-visit cap, and the shop's sampled work is memoised — a decision after a reroll went from
+78.5 s to 6.9 s. What's left before the batch win-rate run (E1) is re-running the shakedown to
+confirm both live, plus Tarot consumables (C1). That re-run happened the same day — **run 8**
+confirmed A8 (5 rerolls all run, longest streak 2 against run 7's 21 and streaks of 4) and F2
+(147 decisions over 39 shop visits in 9 min 49 s, where the old per-visit cost alone would
+have needed ~51 minutes), and lost at Ante 7 for an unrelated reason that became **A9**: with
+`Joker Stencil` held, the autopilot could not shed a joker worth less than an empty slot while
+a slot was free. A9 is now closed too.
 
 The planned order (letter labels are working ones, not from the general phase numbering):
 
@@ -1040,32 +1047,203 @@ The planned order (letter labels are working ones, not from the general phase nu
   `_REROLL_MONEY_RESERVE` cushion. Run-6 case: 5.0 − 3×1.0 = 2.0 → floored to 3.0 → 3.0 ≥ 3.0,
   bought. Every other tier-3 voucher keeps the flat 5.0 bar. Tests —
   `tests/test_autopilot.py` (`test_a7_*`).
-- **A8. The reroll policy over-rerolls and burns whole shop visits.** The first won live run
-  (RED/WHITE, run 7, 2026-09-01) rerolled **21 times** in one run, including two stretches of
-  4 consecutive rerolls that drained a full shop visit's money ($39 → $13, $38 → $12) and
-  bought nothing afterwards — roughly $75+ across the run spent on empty rerolls. The user,
-  watching the game, flagged the shop as visibly hung. `_decide_reroll_action`'s only limiters
-  are `_REROLL_MONEY_RESERVE = 12` and the escalating reroll price; both are too weak. Fix
-  direction: a per-shop-visit reroll cap, and/or require `RerollOutlook.expected_best_uplift`
-  to actually beat the best joker *already on the shelf* (not just clear the absolute
-  `_worth_buying` bar), and/or raise the reserve. Calibrate against a re-run.
-- **F2. `evaluate_shop` is slow and is rebuilt from scratch after every reroll.** Same run:
-  each reroll forces `decide_action` to re-run the whole `evaluate_shop` — a counterfactual
-  `advise()` twice per shop joker over ~12 sampled hands, plus Monte-Carlo estimates for
-  packs and for the reroll itself. With 5 jokers in the stack (a variance joker like
-  `Misprint` unrolls a probability tree inside each `advise()`) one shop decision is tens of
-  seconds, and a 4-reroll streak multiplies that — this is the "hangs in the shop" the user
-  saw. F1 only sped up the `SELECTING_HAND` path. Fix direction: cache the per-joker
-  contribution/uplift sample across polls (the held stack rarely changes mid-shop), and skip
-  re-evaluating shop slots that a reroll didn't change. Coupled with A8 (fewer rerolls ⇒ less
-  recompute).
-- **C1. Tarot consumables** (Phase 9.4, the second slice) — ~22 effects, some targeted.
+- **A8. The reroll policy over-rerolls and burns whole shop visits — done.** The first won
+  live run (RED/WHITE, run 7, 2026-09-01) rerolled **21 times**, including two stretches of 4
+  consecutive rerolls that drained a full shop visit ($39 → $13, $38 → $12) and bought nothing
+  afterwards — roughly $75+ across the run on empty rerolls, and the user, watching the game,
+  flagged the shop as visibly hung. **Root cause, measured:**
+  `RerollOutlook.expected_best_uplift` is computed from a fixed pool of 24 random implemented
+  jokers, so it neither sees the current shelf nor shrinks as money is spent — it is
+  **stationary**. On a 5-joker stack against a 300-requirement blind it reads ~138 whatever is
+  on the shelf, against a `_worth_buying` bar of 9. Clearing an absolute bar once therefore
+  means clearing it on every poll, and only running out of money ever ended a streak;
+  `_REROLL_MONEY_RESERVE` and the escalating price could never have been enough. **Fix** —
+  two conditions added to `autopilot._decide_reroll_action`, both staying inside the project's
+  refusal to price score points in dollars:
+  - *opportunity cost*: `expected_best_uplift` must exceed the best `JokerOffer.expected_uplift`
+    already on the shelf by `_REROLL_SHELF_MARGIN = 1.5`. The old policy would roll away a
+    strong offer that had merely failed on `affordable` or `has_slot`, instead of saving for
+    it. Points against points, no exchange rate invented.
+  - *structural bound*: `economy.rerolls_done(cost, used_vouchers) < _MAX_REROLLS_PER_SHOP = 2`.
+    Necessary precisely because the estimate is stationary — without a count, the policy is
+    "reroll until broke" by construction, whatever the threshold.
+
+  The roll count is recovered from observed state rather than tracked across calls, so
+  `decide_action` stays a pure function of `GameState`: `functions/common_events.lua`'s
+  `calculate_reroll_cost` makes `reroll_cost = round_resets.reroll_cost + reroll_cost_increase`
+  with the increase growing by exactly 1 per roll and reset each round
+  (`functions/state_events.lua`), and the base is `BASE_REROLL_COST = 5` (`game.lua`) less $2
+  per redeemed Reroll Surplus / Glut — which *subtract and stack*, unlike `interest_cap`'s
+  "sets, doesn't add" (`card.lua`, both `config.extra = 2`). New in `core/economy.py`:
+  `BASE_REROLL_COST`, `reroll_base_cost`, `rerolls_done`. Honest caveat in the docstring: a
+  Reroll tag (`temp_reroll_cost`) or Chaos the Clown (`free_rerolls`) temporarily lowers the
+  price and makes the derived count an under-estimate — it errs toward allowing a roll, never
+  toward blocking a needed one. `_REROLL_MONEY_RESERVE` was deliberately left at 12: moving
+  three knobs at once would make the re-run unattributable. Tests —
+  `tests/test_economy.py::TestЦенаРерола`,
+  `tests/test_autopilot.py::TestDecideActionРеролМагазина` (shelf gate, visit cap, cap under
+  Reroll Surplus).
+- **F2. `evaluate_shop` rebuilt from scratch after every reroll — done.** Profiled first,
+  as F1 was. One shop decision on a 5-joker stack (`Misprint` + `Blueprint` + `Baseball`, so
+  every `advise()` unrolls a probability tree) against a full shelf with a Buffoon and a
+  Celestial pack: **78.5 s**, broken down as `random_joker_uplifts` 46.5 s (59 %),
+  `_planet_uplift_pool` 11.7 s (15 %), the two shelf jokers 9.2 s (12 %),
+  `joker_contributions` 8.7 s (11 %), `evaluate_vouchers` 2.2 s (3 %). A 4-reroll streak is
+  ~6.5 minutes — the "hangs in the shop" the user watched. F1 had only touched the
+  `SELECTING_HAND` path.
+
+  The waste is provable from the game's own source: `functions/button_callbacks.lua`'s
+  `G.FUNCS.reroll_shop` removes and regenerates **only `G.shop_jokers`** — vouchers, booster
+  packs and the held jokers are untouched — so 97 % of that work is recomputed for nothing.
+  **Fix**: a one-entry `_SampleCache` in `solver/shop.py` memoising `random_joker_uplifts`,
+  `_planet_uplift_pool`, `joker_contributions` and each shelf joker's uplift (keyed by
+  `(key, edition)`, so a joker that reappears after a roll is not re-sampled). The cache key
+  (`_sample_cache_key`) is the whole `GameState` with only the shelf, `reroll_cost` and — when
+  no money-sensitive joker is held — `money` blanked, compared by `==` rather than hashed
+  (`blinds` is a `dict`). That direction matters: any field *not* blanked invalidates the
+  cache by itself, so the design is safe by construction instead of by remembering to list
+  every dependency. `money` needs an exception because exactly two jokers read it while
+  scoring — `j_bull` and `j_bootstraps` — and `_MONEY_SENSITIVE_JOKER_KEYS` is pinned by a
+  **behavioural** test that checks every implemented joker, the same discipline as
+  `solver/discard.py`'s `_SUIT_SENSITIVE_JOKER_KEYS`. Everything cheap (`affordable`,
+  `has_slot`, `interest_lost`, stake stickers, the sort) is still recomputed from live state
+  each call, so stale money cannot reach an offer.
+
+  **Result: 78.5 s → 6.9 s after a reroll (12×), → 2.2 s on a repeat poll of an unchanged
+  shelf (36×)**; a 4-reroll streak 398 s → 107 s, and with A8's cap it can no longer be four.
+  The cached and uncached paths were checked to return equal `ShopAdvice`. The cold first
+  visit is unchanged at ~78 s and stays that way by design — it is the sampling itself, not
+  redundant work, and cutting it would trade accuracy. `evaluate_vouchers` is deliberately not
+  cached: `_evaluate_shop_discount` prices Clearance Sale / Liquidation against the current
+  shelf, which a reroll does change; it is now essentially the whole of the remaining
+  repeat-poll cost, and splitting its shelf-dependent part from its sampled part is the
+  obvious follow-up if it ever matters. `clear_shop_cache()` and
+  `evaluate_shop(..., use_cache=False)` exist for tests and for a deliberately cold
+  computation. Tests — `tests/test_shop.py::TestКешВыборок`,
+  `::TestДенежноЧувствительныеДжокеры`.
+- **A9. The autopilot cannot shed dead weight while a joker slot is free — done.**
+  Run 8 (RED/WHITE, 2026-09-04, the A8/F2 shakedown) lost at Ante 7 Big Blind: needed 52,500,
+  scored 36,362, **$59 unspent**, board frozen at 4 jokers since ~Ante 5 (Banner, Hit the
+  Road, Joker Stencil, Blue Joker). A8 and F2 both held up (see their entries), so the loss
+  came from somewhere else.
+
+  **Root cause.** `Joker Stencil` is `X1 Mult per empty joker slot` (`1 + empty_slots`), so
+  filling the last slot costs a whole multiplier step and every shop joker's counterfactual
+  carries a fixed penalty. The run's last two shops, from the log: `Rough Gem -2 355`,
+  `Burnt Joker -4 710`, `Gros Michel -90`, `Egg -4 710`. Refusing those buys was
+  arithmetically correct. The defect was the *second* link: measured on the same board,
+  `Hit the Road` contributed **−722** — it was worth **less than an empty slot**, so selling
+  it would have raised the score *and* returned money. The autopilot never looked, because
+  `evaluate_shop` computed `joker_contributions` only when `slots_full`; at 4 of 5 slots the
+  number was never produced, `JokerOffer.replaces` stayed `None`, and `_decide_replace_action`
+  had nothing to act on. The bot was structurally blind to exactly the situation Stencil
+  creates — a free slot plus a joker that is worse than leaving it empty.
+
+  **Fix.** `solver/shop.py` computes contributions whenever `state.jokers` is non-empty and
+  reports them as `ShopAdvice.held: tuple[HeldJoker, ...]` (index / label / contribution /
+  sell_value / eternal, in `state.jokers` order). The module still reports facts and no
+  verdict; `ReplaceCandidate` is now derived from `held` and is still attached to offers only
+  when slots are full, so replace semantics are unchanged. `autopilot._decide_dead_weight_action`
+  sells the most-negative held joker when it is not eternal, its contribution is below
+  `-_DEAD_WEIGHT_REQ_FRACTION × requirement`, and at least `_MIN_JOKERS_KEPT = 2` jokers
+  remain. It sits after the ordinary sell-replace pass and before the reroll — where "nothing
+  here is worth buying" already lives — leaving the calibrated A1–A7 ordering untouched.
+  `render_shop_advice` now prints a "джокеры в слотах" block with each contribution: the
+  number was invisible during run 8, which is part of why the run was lost quietly.
+
+  **Constants.** `_DEAD_WEIGHT_REQ_FRACTION = 0.005` is deliberately an order of magnitude
+  below `_DEAD_JOKER_REQ_FRACTION = 0.03` because it answers a different question: the 3 %
+  bar judges *strength* ("is this joker weak enough to trade away"), this one is only a
+  noise guard ("is this number reliably below zero") — the sign already carries the meaning.
+  `_MIN_JOKERS_KEPT = 2` guards a cascade, since each sale makes the next one look better
+  while Stencil is held; measured on run 8's board the cascade in fact terminates by itself
+  after the first sale (no contribution is negative afterwards), so the floor is a safety
+  net rather than the expected path.
+
+  **Cost.** Computing contributions when slots are *not* full is new work: measured 5.0 s on
+  a 4-joker board, against a 60.6 s cold shop visit (~9 %), and nothing on warm polls or
+  after a reroll — F2's memo already caches it and a reroll does not change the held stack.
+
+  **Honest limitation**, stated in the docstring: a contribution is measured on hands sampled
+  *now*, and a sold joker does not come back. A joker that would scale later reads at its
+  current value — `Hit the Road` needs discarded Jacks and honestly measures 0 until they
+  happen. The margin and the joker floor keep that from being reckless; the horizon problem
+  itself is the same one `JokerOffer.interest_lost` and `PlanetConsumableOffer` carry and do
+  not pretend to solve. Tests — `tests/test_shop.py::TestВкладыВСлотах`,
+  `tests/test_autopilot.py::TestDecideActionПродажаБалласта`,
+  `tests/test_render.py::TestВыводВкладовВСлотах`.
+- **C1. Tarot consumables** (Phase 9.4, the second slice) — **slice 1 done.** Unlike a Planet
+  card, a Tarot needs a *target*: the search is over subsets of the hand, and cost decided the
+  shape of the work. Measured on an 8-card hand, `advise()` runs **4 ms** with no jokers and
+  **163 ms** on a 5-joker stack with `Misprint`/`Blueprint`/`Baseball`, so "up to 3 cards"
+  (92 subsets) would be ~15 s per card — against the 0.6 s F1 brought a whole `SELECTING_HAND`
+  decision down to. C1 is therefore staged (the user's call):
+
+  **Slice 1 — the eight "Enhance selected card(s)" Tarots.** `TAROT_ENHANCEMENTS` in
+  `solver/consumables.py` is a hardcoded table transcribed from `game.lua`'s `P_CENTERS` —
+  all eight share `effect = "Enhance"`, and the two numbers that matter live in
+  `config.mod_conv` and `config.max_highlighted`: `c_magician`→Lucky/2, `c_empress`→Mult/2,
+  `c_heirophant`→Bonus/2, `c_lovers`→Wild/1, `c_chariot`→Steel/1, `c_justice`→Glass/1,
+  `c_devil`→Gold/1, `c_tower`→Stone/1. `max_highlighted` is a *maximum*, so the search covers
+  sizes 1..N — at most `C(8,1)+C(8,2) = 36` subsets. Coverage test as for `PLANET_HAND_TYPES`.
+  `evaluate_tarot_consumables` scores each subset with a real `advise()` on the transformed
+  hand and keeps the best against a baseline computed once. The uplift is never negative by
+  construction: the search starts *at* the baseline, so if nothing improves the hand the
+  answer is `0.0` with empty targets — "no reason to use it", not "using it hurts", since
+  nobody forces the card to be spent (this matters for `The Tower`, which erases a card's rank
+  and suit and can genuinely ruin a flush).
+
+  **Three honesty tiers**, the same shape as `solver/vouchers.py`, with `value_unit`
+  distinguishing them because points and dollars must not share one field: *score* for the
+  eight above; *dollars* for `c_hermit` (`max(0, min(money, 20))`) and `c_temperance`
+  (`min(Σ joker sell_value, 50)`) — both formulas read off `card.lua`/`game.lua`, not memory;
+  and an honest `None` with a reason for the rest — the four suit cards plus `Strength`,
+  `Death`, `The Hanged Man` (deferred to slice 2) and `The Fool`, `The High Priestess`,
+  `The Emperor`, `Judgement`, `The Wheel of Fortune` (create cards or roll on jokers — RNG this
+  project does not model). Every one of the 22 keys gets an answer, because silence is what the
+  autopilot cannot read.
+
+  **`The Devil` is a computed zero, not a gap:** Gold pays $3 for a card *held* at end of round
+  and does nothing to a play's score, so `0.0` is the right answer — the same honest zero as
+  the economy jokers in `implementations.py`, and the note says so, or a future reader files it
+  as a bug.
+
+  **The policy is deliberately the opposite of the Planet one.** A Planet card is used on
+  sight, because a level-up cannot hurt. A Tarot permanently rewrites a *deck card* for the
+  rest of the run, so `autopilot._decide_consumable_action` uses one only on a strictly
+  positive score-tier uplift that also clears `_worth_buying` — the same
+  fraction-of-requirement bar as a joker buy (A2), for the same reason: spending a one-shot
+  resource and permanently altering the deck for a marginal gain is a bad trade. Dollar-tier
+  offers never drive an automatic use (dollars vs. points, the usual refusal); the human sees
+  them via the new `render_tarot_advice`. `Action(kind="use")` now carries target indices and
+  `dispatch_action` forwards them as `ModBridge.use(cards=…)`, which the bridge already
+  accepted but was never passed.
+
+  **Cost, measured.** Six Tarots on an empty stack: 0.19 s. Two Tarots (2- and 1-target) on the
+  5-joker `Misprint` stack: 7.9 s, making the whole `SELECTING_HAND` decision 8.1 s against
+  F1's 0.6 s. That is within "seconds, not tens of seconds" but is a real regression on that
+  path, and it is the obvious next performance item if live runs make it felt —
+  `MAX_TAROT_CANDIDATES = 64` is the budget knob, and above it the offer is an honest `None`
+  rather than a guess (the same refusal as `rank_joker_orders`).
+
+  **Honest limitation:** the uplift is measured on *this* hand while the transformation lasts
+  the whole run — the mirror of the Planet slice's limitation and more dangerous, since a
+  level-up keeps paying while a Stone card can ruin later hands. The bar plus strict positivity
+  keep it conservative; the horizon itself is not solved, as with `JokerOffer.interest_lost`.
+  Tests — `tests/test_consumables.py::TestТаблицаТаротов`, `::TestОценкаТаротов`,
+  `tests/test_autopilot.py::TestDecideActionТаро`, `tests/test_render.py::TestВыводТаротов`.
+
+  **Slice 2 still owes:** `Star`/`Moon`/`Sun`/`World` (up to 3 cards to a suit), `Strength`,
+  `Death`, `The Hanged Man` — the ones needing a reachability filter on targets, in the shape
+  of `solver/discard.py`'s `_flush_targets`.
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
   timeouts or stalls. (Run 6, the prior best, reached ante 5 and was stopped manually.) The
-  run also surfaced A8/F2 (the reroll churn above). Next: fix A8/F2, re-run the shakedown to
-  confirm, then the batch (`autoplay --all-stakes --runs N`) for the actual win-rate table.
+  run also surfaced A8/F2 (the reroll churn above), both since closed and both confirmed live
+  in run 8 (2026-09-04). Run 8 itself lost at Ante 7 to A9 (dead weight the bot could not
+  shed while a slot was free), now closed as well. Next: another live re-run, then the batch
+  (`autoplay --all-stakes --runs N`) for the actual win-rate table.
 
 ---
 
@@ -1167,7 +1345,7 @@ but state is entered by hand, and discard advice isn't given yet.
 | 6. Discard and EV | `solver.discard.discard_outcome` computes the exact EV of discarding **one given** set of cards — previously by an honest search over raw draws (which hit combinatorics already at 2 cards), now by a compressed search over **compositions of equivalence classes** (`_build_classes`/`_enumerate_compositions`): cards indistinguishable by the final score (matching rank, relevant suit, enhancement, edition, seal, debuff) are counted once and weighted by a binomial coefficient instead of enumerating each raw card — the same exact answer, orders of magnitude cheaper in `advise()` calls. A suit collapses into one bucket only when that's provably safe: either it physically can't complete a flush within this discard, or there's no joker in play that discriminates specific suits at all (`_SUIT_SENSITIVE_JOKER_KEYS`, 12 keys, checked against the `implementations.py` code, coverage — by behavioral tests, not a source scan). This raised the practical exactness ceiling from "barely 2 cards" to "usually all 5" — `balatro-bot advise --discard "cards"` compares the result against playing now. The bridge parses the mod's `cards` area into `GameState.deck` — with it the deck is exact, without it an approximation is used (52 minus the hand), and this is honestly marked. **The general case ("what to discard" without a given set) is closed twice, take your pick**: `solver.discard.advise_discard` (`docs/Discard Spec.md`, the old and cheap path) enumerates not discards but **targets** (flush/straight/N of a kind/full house/"keep as is") with a hypergeometric probability and an estimate over a representative sample (`DiscardOption.exact` always `False`) — it stays the default in `advise`/`watch` via `solver.actions.rank_actions` precisely because it's cheap. `solver.discard.rank_discards` (the new, exact path) honestly enumerates ALL up to 218 possible discard sets of size 1..5 (as `rank_plays` enumerates plays), each candidate a real `discard_outcome`, not an estimate; a candidate that doesn't fit the composition budget even after compression simply drops out of the result (an honest omission, not a guess) — on real hands with no suit joker and no nearly-built flush it fits in a few seconds, is called only explicitly (`advise --discard-search`), and isn't in the `advise`/`watch` default because of its own cost (a draw search inside each of the 218 candidates). **`solver.actions.rank_actions`** merges `advise_discard` with `rank_plays` into one "what to do now" list — this is the unconditional (not flag-gated) output of `balatro-bot advise` and `watch`, a standing user requirement | `advise_discard`'s accuracy is still an estimate by construction (except `success_probability` — that's exact); `rank_discards` doesn't guarantee finding the global exact optimum if the composition budget was honestly exhausted somewhere — only that each shown candidate is itself exact; **verified live on a Mac** 2026-08-22 (`advise_discard`/`rank_actions` — on a real deal with a Crazy Joker: the computation correctly preferred building a straight over a flush because of the joker that only hits straights; the narrow slice (`discard_outcome`) was verified earlier; composition compression and `rank_discards` are new, not verified live yet) |
 | 7. Shop and jokers | "joker order" (`solver.play.rank_joker_orders`, `advise --joker-order`), "purchasing" (`solver.shop.evaluate_shop`, `doctor`/`watch`), and the economy adjustment (`JokerOffer.interest_lost`) are done — see the "Shop and joker order" section above | `j_hiker` (see section 8.3, #3); verifying the shop live on a Mac (the game hasn't reached the `SHOP` phase yet) |
 | 8. Run strategy | blind skip (`solver.skip.evaluate_skip`, `doctor`/`watch`) and the economy (interest — Phase 7; reroll timing — `ShopAdvice.reroll_cost`, honestly with no verdict) are done — **all the individual-decision heuristics of the phase are closed**; purchase advice moved to Phase 7 (see its row above) as being about the shop specifically; the full run-simulation mechanism is ready — `balatro_bot/runner.py` (Phase 9.7), running the real autopilot, not our own rules engine (clarified 2026-08-27, see section 6) | the mass win-rate measurement itself hasn't been done — the runner has only run against `tests/fake_mod.py`, a Mac with the game is needed |
-| 9. Autopilot | subtask 9.5 ("Rule-modifying bosses") is **fully closed** — the catalogue (`core/bosses.py`), the score fix for `The Flint`, and the illegal-move filter in `solver/play.py`; subtask 9.1 (the action loop) closes play/discard (`SELECTING_HAND` → `ModBridge.play`/`.discard`) and the "pause/takeover" switch on the `p` key; **9.2 is fully closed** — blind skip (`BLIND_SELECT` → `.select`/`.skip`), reward collection (`ROUND_EVAL` → `.cash_out`), shop joker purchasing (`SHOP` → `.buy`/`.next_round`, a conservative policy on top of `evaluate_shop`), and opening a Celestial/Planet Pack (`PLANET_PACK` → `.open_pack`, `solver/pack.py`, a non-conservative policy — raising a hand level can't worsen the score) — not verified live on a Mac, only against `tests/fake_mod.py`; **9.3 — all three tiers done** (`solver/vouchers.py`): exact computation (`Grabber`/`Nacho Tong`/`Paint Brush`/`Palette`/`Wasteful`/`Recyclomancy`), a dollar formula with an explicit horizon (`Seed Money`/`Money Tree`/`Reroll Surplus`/`Reroll Glut`/`Clearance Sale`/`Liquidation`), and a heuristic constant for 12 vouchers that affect future RNG (`Antimatter`/`Hone`/`Glow Up`/`Tarot`/`Planet Merchant`/`Tycoon`/`Overstock`/`Overstock Plus`/`Crystal Ball`/`Telescope`/`Observatory`) — a new separate field `VoucherOffer.heuristic_value`, structurally distinct from `expected_uplift` (section 2, "Third category"), plus `v_blank` fixed to an exact `expected_uplift = 0.0` (a fact confirmed against `card.lua`, not an estimate). `GameState.used_vouchers` was also added (the bridge didn't parse this mod area at all before) along with `core/economy.py`, which incidentally closed the old `JokerOffer.interest_lost` assumption of a default $25 interest cap. `ShopAdvice.vouchers` carries all these estimates; the autopilot buys by them as of improvement A4 (see below); **9.4 — the Planet slice is done** (`solver/consumables.py`): using a Planet card from the inventory before a play (`SELECTING_HAND` → `.use`), the same level-up as in 9.2 but an exact computation on the real current hand instead of sampling; it was also found that `v_observatory` creates a real but uncomputed trade-off (the scoring engine doesn't implement its X1.5 mult) — honestly reflected in `PlanetConsumableOffer.note`; **9.6 — stake stickers done**: the bridge parses `eternal`/`perishable`/`rental` into `ShopItem`, `JokerOffer` carries `rental_cost_per_round` ($3/round, `core.economy.RENTAL_RATE`), `perishable_rounds`, and `eternal` as separate fields modeled on `interest_lost` (not folded into `expected_uplift`), `render_shop_advice` shows them; **9.7 — the run-runner is done** (`balatro_bot/runner.py`): `autoplay --deck X [--stake Y] [--seed S]` plays a run from `ModBridge.start` to `won`/`GAME_OVER`/a stall with a `RunReport` and a decision log; `--all-stakes`/`--runs N` — a batch run with a win-rate per each of the 8 stakes in cumulative order; `ModBridge.start`/`.menu`, `GameState.won`, `autopilot.dispatch_action`/`.describe_action` (extracted from the `ui/tui.py` loop) were added along the way; **Buffoon packs — opening and purchasing done** (`solver/pack.py` + `solver/shop.py`): a joker from an open pack is valued by the same counterfactual as a shop joker (`joker_uplift`, shared code); buying a pack from the shop — a Monte-Carlo of the pack mechanic itself (`PackPurchaseOffer`): `joker_uplift` over a sample of 24 random implemented jokers, then a cheap resample "best `choose` of `extra`" by pack size (Normal 2/1, Jumbo 4/1, Mega 4/2 — from `game.lua`). The `autopilot` takes the best joker from an open pack with a free slot (with no "strictly positive uplift" threshold — the pack is already paid for, and `joker_uplift` over 12 hands routinely reads `0.0` for conditional jokers because of the small sample, not because they're worthless) and buys a Buffoon pack if there are no jokers worth taking in the shop. The autopilot `skip_pack`s Tarot/Spectral/Standard packs rather than getting stuck. **6 live runs on a Mac** (RED/WHITE): runs 1–5 lost on antes 3–5 (run 5 — ante 4 r12), run 6 reached ante 5 and was stopped manually; each of the first five surfaced a bug invisible against `tests/fake_mod.py`: (1) a `play` timeout → `TimedOutError`/`ACTION_TIMEOUT`, the mod holds the response until the animation ends; (2) a stall on `SMODS_BOOSTER_OPENED` — Steamodded collapses the per-type pack phases into one, the type is now determined from the contents of `state.pack`; (3) trading a certain win for a discard — `decide_action` first checks `advise().cheapest_sufficient`; (4) 3 of 4 bought packs were skipped (the `> 0` threshold on a noisy estimate) + draining to $0 — the threshold on opening was removed, the purchase estimate switched from a lower bound to a Monte-Carlo of the mechanic. Run 5 revealed the ceiling — the economy engine: **A1 (joker sell-replace) and A2 (buy threshold) done** — A1: `solver.shop.joker_contributions`/`JokerOffer.replaces` + `autopilot._decide_replace_action` + `ModBridge.sell`; when slots are full, it sells the weakest non-eternal joker under a noticeably better offer (thresholds — a fraction of the blind requirement and a ratio). A2: `autopilot._worth_buying` — don't buy a joker into a slot if the uplift is below 3% of the blind requirement. A3: buying a Celestial pack from the shop — a Monte-Carlo over the 12 planets (`_planet_uplift_pool` + the shared `_monte_carlo_pack`), the autopilot takes it via the same pack branch. A4: autonomous voucher buying across all three honesty tiers (`_decide_voucher_action`, the threshold depends on `VoucherOffer.value_unit`: points → like a joker, dollars → a net gain ≥ price, `heuristic_value` → structural upgrades ≥ 5.0) — the user's verdict. D1: joker rearrange before a play (`_decide_rearrange_action` → `ModBridge.rearrange`, threshold `_MIN_REORDER_GAIN_FRAC` 2%). The rest of the improvement roadmap — item 9.8 | Arcana/Spectral/Standard packs — neither opening nor purchasing (they need the consumable/deck-card mechanics); `Hieroglyph`/`Petroglyph` (needs a per-ante blind-requirement formula that doesn't exist at all) and 6 other vouchers (`Director's Cut`/`Retcon`/`Illusion`/`Magic Trick`/`Omen Globe`) aren't valued (`heuristic_value` = `None`, the autopilot doesn't buy them either); the autopilot doesn't react to `rental`/`eternal` when auto-buying a joker (an open policy question); Tarot consumables (9.4, the second slice) aren't started; in 9.6 `JokerCard` (jokers in slots) got no new fields; an unattended 24/7 mode (watchdog, auto-restart) — a layer on top of the runner, not started; **run 6 (RED/WHITE) was the first full live run of the 9.1–9.7 loop** — it reached ante 5 (a new record) and was stopped manually, not lost, with A1–A4, D1, `decide_skip`, and `SMODS_BOOSTER_OPENED` pack opening all working live for the first time; **B1 done** — two guards in `autopilot.decide_action` on `SELECTING_HAND` (`_on_pace_without_discard`, `_discard_edge_is_noise`) stop the autopilot trading a sufficient play for a marginally-higher-EV discard (run 6 burned its last discard on a 10,000 boss to gain 0.7%); **A5 done** — `ModBridge.reroll` + `RerollOutlook` (a Monte-Carlo of the roll mechanic: `shop_slots` slots, joker w.p. 20/28 from `game.lua`, uplift from the Buffoon-pack joker sample) + `autopilot._decide_reroll_action` (reroll as the last shop branch when `expected_best_uplift` clears the joker-buy bar and `money − cost ≥ _REROLL_MONEY_RESERVE`), plus the new parsed field `GameState.shop_slots`; the economy engine (buy/sell-replace/voucher/pack/reroll) is now complete; **F1 done** — `rank_joker_orders` no longer does `N!` full `advise()` calls: a cheap gate skips the search for order-invariant stacks, and a surrogate (score the base order's top-5 subsets under each permutation, full `advise()` only for the winner) plus one shared `advise(state)` per `decide_action` bring a 5-joker+Misprint `SELECTING_HAND` decision from 15–40 s (worst case 194 s) down to ~0.6 s; **A6/A7 done** — A6: `_decide_replace_action(strong_only=True)` runs before the pack branch so a sell-replace capturing a joker that clears the buy bar isn't pre-empted by a cheap Celestial pack (run 6's +3576 offer sat untaken for 2–3 polls); A7: `_heuristic_voucher_bar` scales the tier-3 voucher threshold down for `Overstock` (+shop slot) when cash-rich with idle joker slots, floored at 3.0 (run 6 skipped `Overstock` at $29 with 3 empty slots); **the live shakedown then ran — run 7 (RED/WHITE, 2026-09-01) is the first autopilot win** (beat Ante 8, `RunReport` outcome `won`, 168 steps, no mod rejections/timeouts/stalls; A5/A6/A7/B1/D1/F1 all live), and it surfaced **A8** (reroll policy over-rerolls — 21 rerolls in one run, two 4-in-a-row streaks draining a whole shop visit to buy nothing) and **F2** (each reroll rebuilds the slow `evaluate_shop` from scratch — the visible shop hang); next is fixing A8/F2, re-running the shakedown, then the batch (`autoplay --all-stakes --runs N`) for the win-rate table — see item 9.8 |
+| 9. Autopilot | subtask 9.5 ("Rule-modifying bosses") is **fully closed** — the catalogue (`core/bosses.py`), the score fix for `The Flint`, and the illegal-move filter in `solver/play.py`; subtask 9.1 (the action loop) closes play/discard (`SELECTING_HAND` → `ModBridge.play`/`.discard`) and the "pause/takeover" switch on the `p` key; **9.2 is fully closed** — blind skip (`BLIND_SELECT` → `.select`/`.skip`), reward collection (`ROUND_EVAL` → `.cash_out`), shop joker purchasing (`SHOP` → `.buy`/`.next_round`, a conservative policy on top of `evaluate_shop`), and opening a Celestial/Planet Pack (`PLANET_PACK` → `.open_pack`, `solver/pack.py`, a non-conservative policy — raising a hand level can't worsen the score) — not verified live on a Mac, only against `tests/fake_mod.py`; **9.3 — all three tiers done** (`solver/vouchers.py`): exact computation (`Grabber`/`Nacho Tong`/`Paint Brush`/`Palette`/`Wasteful`/`Recyclomancy`), a dollar formula with an explicit horizon (`Seed Money`/`Money Tree`/`Reroll Surplus`/`Reroll Glut`/`Clearance Sale`/`Liquidation`), and a heuristic constant for 12 vouchers that affect future RNG (`Antimatter`/`Hone`/`Glow Up`/`Tarot`/`Planet Merchant`/`Tycoon`/`Overstock`/`Overstock Plus`/`Crystal Ball`/`Telescope`/`Observatory`) — a new separate field `VoucherOffer.heuristic_value`, structurally distinct from `expected_uplift` (section 2, "Third category"), plus `v_blank` fixed to an exact `expected_uplift = 0.0` (a fact confirmed against `card.lua`, not an estimate). `GameState.used_vouchers` was also added (the bridge didn't parse this mod area at all before) along with `core/economy.py`, which incidentally closed the old `JokerOffer.interest_lost` assumption of a default $25 interest cap. `ShopAdvice.vouchers` carries all these estimates; the autopilot buys by them as of improvement A4 (see below); **9.4 — the Planet slice is done** (`solver/consumables.py`): using a Planet card from the inventory before a play (`SELECTING_HAND` → `.use`), the same level-up as in 9.2 but an exact computation on the real current hand instead of sampling; it was also found that `v_observatory` creates a real but uncomputed trade-off (the scoring engine doesn't implement its X1.5 mult) — honestly reflected in `PlanetConsumableOffer.note`; **9.6 — stake stickers done**: the bridge parses `eternal`/`perishable`/`rental` into `ShopItem`, `JokerOffer` carries `rental_cost_per_round` ($3/round, `core.economy.RENTAL_RATE`), `perishable_rounds`, and `eternal` as separate fields modeled on `interest_lost` (not folded into `expected_uplift`), `render_shop_advice` shows them; **9.7 — the run-runner is done** (`balatro_bot/runner.py`): `autoplay --deck X [--stake Y] [--seed S]` plays a run from `ModBridge.start` to `won`/`GAME_OVER`/a stall with a `RunReport` and a decision log; `--all-stakes`/`--runs N` — a batch run with a win-rate per each of the 8 stakes in cumulative order; `ModBridge.start`/`.menu`, `GameState.won`, `autopilot.dispatch_action`/`.describe_action` (extracted from the `ui/tui.py` loop) were added along the way; **Buffoon packs — opening and purchasing done** (`solver/pack.py` + `solver/shop.py`): a joker from an open pack is valued by the same counterfactual as a shop joker (`joker_uplift`, shared code); buying a pack from the shop — a Monte-Carlo of the pack mechanic itself (`PackPurchaseOffer`): `joker_uplift` over a sample of 24 random implemented jokers, then a cheap resample "best `choose` of `extra`" by pack size (Normal 2/1, Jumbo 4/1, Mega 4/2 — from `game.lua`). The `autopilot` takes the best joker from an open pack with a free slot (with no "strictly positive uplift" threshold — the pack is already paid for, and `joker_uplift` over 12 hands routinely reads `0.0` for conditional jokers because of the small sample, not because they're worthless) and buys a Buffoon pack if there are no jokers worth taking in the shop. The autopilot `skip_pack`s Tarot/Spectral/Standard packs rather than getting stuck. **6 live runs on a Mac** (RED/WHITE): runs 1–5 lost on antes 3–5 (run 5 — ante 4 r12), run 6 reached ante 5 and was stopped manually; each of the first five surfaced a bug invisible against `tests/fake_mod.py`: (1) a `play` timeout → `TimedOutError`/`ACTION_TIMEOUT`, the mod holds the response until the animation ends; (2) a stall on `SMODS_BOOSTER_OPENED` — Steamodded collapses the per-type pack phases into one, the type is now determined from the contents of `state.pack`; (3) trading a certain win for a discard — `decide_action` first checks `advise().cheapest_sufficient`; (4) 3 of 4 bought packs were skipped (the `> 0` threshold on a noisy estimate) + draining to $0 — the threshold on opening was removed, the purchase estimate switched from a lower bound to a Monte-Carlo of the mechanic. Run 5 revealed the ceiling — the economy engine: **A1 (joker sell-replace) and A2 (buy threshold) done** — A1: `solver.shop.joker_contributions`/`JokerOffer.replaces` + `autopilot._decide_replace_action` + `ModBridge.sell`; when slots are full, it sells the weakest non-eternal joker under a noticeably better offer (thresholds — a fraction of the blind requirement and a ratio). A2: `autopilot._worth_buying` — don't buy a joker into a slot if the uplift is below 3% of the blind requirement. A3: buying a Celestial pack from the shop — a Monte-Carlo over the 12 planets (`_planet_uplift_pool` + the shared `_monte_carlo_pack`), the autopilot takes it via the same pack branch. A4: autonomous voucher buying across all three honesty tiers (`_decide_voucher_action`, the threshold depends on `VoucherOffer.value_unit`: points → like a joker, dollars → a net gain ≥ price, `heuristic_value` → structural upgrades ≥ 5.0) — the user's verdict. D1: joker rearrange before a play (`_decide_rearrange_action` → `ModBridge.rearrange`, threshold `_MIN_REORDER_GAIN_FRAC` 2%). The rest of the improvement roadmap — item 9.8 | Arcana/Spectral/Standard packs — neither opening nor purchasing (they need the consumable/deck-card mechanics); `Hieroglyph`/`Petroglyph` (needs a per-ante blind-requirement formula that doesn't exist at all) and 6 other vouchers (`Director's Cut`/`Retcon`/`Illusion`/`Magic Trick`/`Omen Globe`) aren't valued (`heuristic_value` = `None`, the autopilot doesn't buy them either); the autopilot doesn't react to `rental`/`eternal` when auto-buying a joker (an open policy question); Tarot consumables (9.4, the second slice) — **slice 1 done** (C1: the eight "enhance selected cards" Tarots computed exactly, `Hermit`/`Temperance` in dollars, the rest an honest `None`); slice 2 (suit conversion, `Strength`, `Death`, `The Hanged Man`) still open; in 9.6 `JokerCard` (jokers in slots) got no new fields; an unattended 24/7 mode (watchdog, auto-restart) — a layer on top of the runner, not started; **run 6 (RED/WHITE) was the first full live run of the 9.1–9.7 loop** — it reached ante 5 (a new record) and was stopped manually, not lost, with A1–A4, D1, `decide_skip`, and `SMODS_BOOSTER_OPENED` pack opening all working live for the first time; **B1 done** — two guards in `autopilot.decide_action` on `SELECTING_HAND` (`_on_pace_without_discard`, `_discard_edge_is_noise`) stop the autopilot trading a sufficient play for a marginally-higher-EV discard (run 6 burned its last discard on a 10,000 boss to gain 0.7%); **A5 done** — `ModBridge.reroll` + `RerollOutlook` (a Monte-Carlo of the roll mechanic: `shop_slots` slots, joker w.p. 20/28 from `game.lua`, uplift from the Buffoon-pack joker sample) + `autopilot._decide_reroll_action` (reroll as the last shop branch when `expected_best_uplift` clears the joker-buy bar and `money − cost ≥ _REROLL_MONEY_RESERVE`), plus the new parsed field `GameState.shop_slots`; the economy engine (buy/sell-replace/voucher/pack/reroll) is now complete; **F1 done** — `rank_joker_orders` no longer does `N!` full `advise()` calls: a cheap gate skips the search for order-invariant stacks, and a surrogate (score the base order's top-5 subsets under each permutation, full `advise()` only for the winner) plus one shared `advise(state)` per `decide_action` bring a 5-joker+Misprint `SELECTING_HAND` decision from 15–40 s (worst case 194 s) down to ~0.6 s; **A6/A7 done** — A6: `_decide_replace_action(strong_only=True)` runs before the pack branch so a sell-replace capturing a joker that clears the buy bar isn't pre-empted by a cheap Celestial pack (run 6's +3576 offer sat untaken for 2–3 polls); A7: `_heuristic_voucher_bar` scales the tier-3 voucher threshold down for `Overstock` (+shop slot) when cash-rich with idle joker slots, floored at 3.0 (run 6 skipped `Overstock` at $29 with 3 empty slots); **the live shakedown then ran — run 7 (RED/WHITE, 2026-09-01) is the first autopilot win** (beat Ante 8, `RunReport` outcome `won`, 168 steps, no mod rejections/timeouts/stalls; A5/A6/A7/B1/D1/F1 all live), and it surfaced **A8** (reroll policy over-rerolls — 21 rerolls in one run, two 4-in-a-row streaks draining a whole shop visit to buy nothing) and **F2** (each reroll rebuilds the slow `evaluate_shop` from scratch — the visible shop hang); **A8/F2 are now closed** (2026-09-04) — A8 by an opportunity-cost gate (the roll must beat the best offer already on the shelf by 1.5×) plus a per-visit roll cap recovered from the observed reroll price (`core/economy.py`'s new `rerolls_done`, derived from `calculate_reroll_cost` in the game's source), F2 by a one-entry sample memo in `evaluate_shop` keyed on "everything except the shelf, the roll price and (absent `j_bull`/`j_bootstraps`) money" — profiled 78.5 s → 6.9 s after a reroll, → 2.2 s on a repeat poll; **run 8 (RED/WHITE, 2026-09-04) confirmed both live** — 5 rerolls all run with a longest streak of 2 (A8; run 7 had 21 and streaks of 4) and 147 decisions over 39 shop visits in 9 min 49 s (F2; the old per-visit cost alone would have needed ~51 min), with no mod rejections, timeouts or stalls — but lost at Ante 7 Big Blind (needed 52,500, scored 36,362, **$59 unspent**, board frozen at 4 jokers since ~Ante 5) for an unrelated reason, now **A9, also closed**: `Joker Stencil` (X1 Mult per *empty* slot) makes filling the last slot expensive, so no shop joker was worth buying — correctly — while `Hit the Road` sat on the board at a contribution of **−722**, i.e. worth less than an empty slot, and the bot could not see it because `evaluate_shop` computed contributions only when slots were full. Now they are computed whenever jokers exist (`ShopAdvice.held`), `autopilot._decide_dead_weight_action` sells a measured-negative non-eternal joker down to a floor of 2, and `render_shop_advice` shows the per-joker contribution; next is another live re-run, then the batch (`autoplay --all-stakes --runs N`) for the win-rate table — see item 9.8 |
 
 ### 8.2. Deviations from the plan
 

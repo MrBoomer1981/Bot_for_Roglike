@@ -87,6 +87,26 @@ Arcana/Spectral/Standard-паки — по-прежнему `None` (нужен �
 денег над ценой, ожидаемый прирост против той же доли требования блайнда,
 что у покупки джокера), не здесь.
 
+Мемо дорогих выборок (улучшение F2). Один заход в магазин стоил ~78 с на
+стеке из 5 джокеров с `Misprint`, и каждый реролл пересчитывал всё заново —
+это и был «магазин подвисает» из run 7. Считаются заново, однако, только те
+величины, которые реролл действительно меняет: `button_callbacks.lua`'s
+`G.FUNCS.reroll_shop` заменяет **только карты витрины**, не трогая ни
+ваучеры, ни паки, ни джокеров в слотах. Поэтому `random_joker_uplifts`,
+`_planet_uplift_pool`, `joker_contributions` и прирост каждого конкретного
+джокера витрины (по паре «ключ, издание») кешируются в `_SampleCache` —
+одной записи на заход хватает, заходов одновременно не бывает. Ключ
+(`_sample_cache_key`) — всё состояние, кроме витрины, цены ролла и (когда в
+слотах нет `_MONEY_SENSITIVE_JOKER_KEYS`) денег; сравнивается через `==`,
+так что любое **не** обнулённое поле инвалидирует кеш само — безопасно по
+построению, а не по списку того, что вспомнили. Всё дешёвое (`affordable`,
+`has_slot`, `interest_lost`, стикеры, сортировка) считается из живого
+состояния каждый раз, поэтому устаревшие деньги в оффер не просачиваются.
+Замер: решение после реролла 78 с → 6.9 с, повторный опрос той же витрины →
+2.2 с. `evaluate_vouchers` сознательно не кешируется: `_evaluate_shop_discount`
+оценивает `Clearance Sale`/`Liquidation` по текущей витрине, а её реролл как
+раз меняет — на повторном опросе это и есть почти весь оставшийся расход.
+
 Стикеры ставок (Фаза 9.6). На ставках `BLACK`+/`ORANGE`+/`GOLD` джокеры в
 магазине приходят со стикерами `eternal`/`perishable`/`rental` — мост
 парсит их в `ShopItem` из той же области `modifier`, что и издание.
@@ -108,7 +128,7 @@ from dataclasses import dataclass, replace
 from typing import Final
 
 from balatro_bot.core import economy
-from balatro_bot.core.cards import Card, standard_deck
+from balatro_bot.core.cards import Card, Edition, standard_deck
 from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.jokers import implemented_keys
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
@@ -116,11 +136,13 @@ from balatro_bot.solver.play import advise
 from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 
 __all__ = [
+    "HeldJoker",
     "JokerOffer",
     "PackPurchaseOffer",
     "ReplaceCandidate",
     "RerollOutlook",
     "ShopAdvice",
+    "clear_shop_cache",
     "evaluate_shop",
     "joker_contributions",
     "joker_uplift",
@@ -187,6 +209,89 @@ _SHOP_TOTAL_RATE: Final[int] = (
 )
 
 
+#: Улучшение F2. Джокеры, чей вклад в счёт зависит от `GameState.money`, —
+#: единственные, из-за которых деньги нельзя выкинуть из ключа мемо
+#: (`_sample_cache_key`): реролл уменьшает деньги, и с одним из этих джокеров
+#: в слотах выборки пришлось бы считать заново. Список выверен по
+#: `core/jokers/implementations.py` (единственные два места, где `ctx.state.money`
+#: вообще читается) и закрыт поведенческим тестом, а не сканом исходника, —
+#: тот же приём, что `solver/discard.py`'s `_SUIT_SENSITIVE_JOKER_KEYS`.
+_MONEY_SENSITIVE_JOKER_KEYS: Final[frozenset[str]] = frozenset({"j_bull", "j_bootstraps"})
+
+
+def _sample_cache_key(state: GameState, samples: int) -> tuple[GameState, int]:
+    """Ключ мемо дорогих выборок (улучшение F2) — всё состояние, кроме того,
+    что заведомо не влияет на счёт сэмплированной руки. Сравнивается через
+    `==` (замороженные датаклассы дают это даром; хешировать нельзя — `blinds`
+    это `dict`), поэтому любое поле, которое мы **не** обнулили, само
+    инвалидирует кеш при изменении: безопасно по построению, а не по списку.
+
+    Обнуляем ровно четыре вещи, каждую с обоснованием:
+
+    * `shop`/`shop_packs`/`shop_vouchers` — данные экрана магазина, движок
+      подсчёта их не читает вовсе;
+    * `reroll_cost` — то же самое (в `core/` не читается нигде, кроме
+      собственного определения в `core/state.py`);
+    * `money` — читают ровно два джокера (`_MONEY_SENSITIVE_JOKER_KEYS`),
+      поэтому обнуляем только когда ни одного из них нет в слотах.
+
+    Именно это делает кеш полезным: реролл (`button_callbacks.lua`'s
+    `G.FUNCS.reroll_shop`) заменяет только карты витрины, а деньги и цену
+    ролла — единственное, что он трогает помимо неё."""
+    money_matters = any(joker.key in _MONEY_SENSITIVE_JOKER_KEYS for joker in state.jokers)
+    stripped = replace(
+        state,
+        shop=(),
+        shop_packs=(),
+        shop_vouchers=(),
+        reroll_cost=None,
+        money=state.money if money_matters else 0,
+    )
+    return stripped, samples
+
+
+class _SampleCache:
+    """Мемо на один заход в магазин (улучшение F2). Хранит ровно одну запись:
+    заходов в магазин одновременно не бывает, а смена ключа означает, что
+    старая запись больше не нужна.
+
+    Кешируются только **выборочные** величины — те, что стоят сотни вызовов
+    `advise()` и не зависят от витрины. Всё дешёвое (`affordable`,
+    `has_slot`, `interest_lost`, стикеры ставок, сортировка) пересчитывается
+    из живого состояния каждый раз, поэтому устаревшие деньги не могут
+    просочиться в оффер."""
+
+    def __init__(self) -> None:
+        self._key: tuple[GameState, int] | None = None
+        self.random_joker_uplifts: list[float] | None = None
+        self.planet_uplifts: list[float] | None = None
+        self.contributions: tuple[float, ...] | None = None
+        self.joker_uplifts: dict[tuple[str, Edition], float] = {}
+
+    def sync(self, key: tuple[GameState, int]) -> None:
+        """Сбросить всё, если состояние изменилось не только витриной."""
+        if self._key != key:
+            self._key = key
+            self.clear()
+
+    def clear(self) -> None:
+        self.random_joker_uplifts = None
+        self.planet_uplifts = None
+        self.contributions = None
+        self.joker_uplifts = {}
+
+
+_CACHE: Final[_SampleCache] = _SampleCache()
+
+
+def clear_shop_cache() -> None:
+    """Забыть мемо выборок (улучшение F2). Нужно тестам и всякому, кто хочет
+    заведомо холодный расчёт; в обычной работе кеш инвалидируется сам, по
+    смене ключа."""
+    _CACHE._key = None
+    _CACHE.clear()
+
+
 def _interest_lost(state: GameState, price: int) -> int:
     """Упущенные проценты в конце ближайшего раунда, если потратить `price`
     прямо сейчас — потолок процентов берётся точно, по уже выкупленным
@@ -245,6 +350,38 @@ def joker_contributions(
             drop += base - reduced
         contributions.append(drop / samples)
     return tuple(contributions)
+
+
+@dataclass(frozen=True, slots=True)
+class HeldJoker:
+    """Джокер, уже стоящий в слоте, с измеренным вкладом в счёт (улучшение
+    A9). Раньше вклады считались только при полных слотах — ради выбора
+    жертвы под размен (`ReplaceCandidate`), — и это делало бота слепым к
+    ситуации, которую создаёт `Joker Stencil` (X1 множ. за каждый **пустой**
+    слот): слот свободен, а держать джокера хуже, чем не держать никого. В
+    ране 8 так и вышло — `Hit the Road` с вкладом −722 доехал до конца рана,
+    хотя продать его значило поднять счёт и вернуть денег.
+
+    Модуль по-прежнему сообщает только факты; вердикт «продавать ли» —
+    в `autopilot._decide_dead_weight_action`."""
+
+    index: int
+    """Индекс в `GameState.jokers`."""
+
+    label: str
+
+    contribution: float
+    """Насколько упадёт лучший счёт, если этого джокера убрать
+    (`joker_contributions`). Отрицательное значение означает, что он стоит
+    **меньше пустого слота**: убрать его — поднять счёт."""
+
+    sell_value: int
+    """Сколько вернёт продажа (`JokerCard.sell_value`, 0 если не прислано)."""
+
+    eternal: bool
+    """Вечного джокера продать нельзя — мод на такую попытку ответит
+    ошибкой, поэтому он никогда не попадает ни в кандидаты на вылет, ни в
+    продажу балласта."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -418,23 +555,40 @@ class ShopAdvice:
 
     money: int
 
-    reroll: RerollOutlook | None
+    held: tuple[HeldJoker, ...] = ()
+    """Джокеры в слотах с измеренным вкладом (улучшение A9), в порядке
+    `GameState.jokers`. Пустой кортеж — джокеров нет либо колода для
+    сэмплирования мала. Считается независимо от того, полны ли слоты: именно
+    на этом строится решение «продать балласт», см. `HeldJoker`."""
+
+    reroll: RerollOutlook | None = None
     """Оценка рерола витрины (улучшение A5) — Монте-Карло самого механизма
     ролла, см. `RerollOutlook`. `None` — не в фазе `SHOP` либо источник не
     прислал `reroll_cost` (ручной ввод)."""
 
 
-def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice | None:
+def evaluate_shop(
+    state: GameState, samples: int = SAMPLE_HANDS, *, use_cache: bool = True
+) -> ShopAdvice | None:
     """Собрать совет по всему, что предлагает магазин — или `None`, если
-    магазин сейчас пуст (не в фазе `SHOP`, либо мод ничего не прислал)."""
+    магазин сейчас пуст (не в фазе `SHOP`, либо мод ничего не прислал).
+
+    `use_cache=False` заставляет посчитать все выборки заново, не трогая
+    мемо (улучшение F2) — нужно тестам и всякому, кому важен заведомо
+    холодный расчёт."""
     if not state.shop and not state.shop_vouchers and not state.shop_packs:
         return None
 
     deck_source = state.full_deck if state.full_deck else standard_deck()
     exact_deck = state.full_deck is not None
 
+    cache: _SampleCache | None = None
+    if use_cache:
+        _CACHE.sync(_sample_cache_key(state, samples))
+        cache = _CACHE
+
     offers = [
-        _evaluate_joker_offer(state, item, deck_source, exact_deck, samples)
+        _evaluate_joker_offer(state, item, deck_source, exact_deck, samples, cache)
         for item in state.shop
         if item.kind == "JOKER"
     ]
@@ -450,30 +604,55 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
         reverse=True,
     )
 
-    # Все слоты заняты — купить джокера можно только через продажу-замену.
-    # Вклад каждого джокера в слоте считаем один раз на заход (как выборку
-    # для Buffoon-паков ниже) и цепляем самого слабого невечного кандидата
-    # на вылет к каждому оценённому офферу — сам вердикт «менять или нет»
-    # принимает `autopilot`.
-    slots_full = state.joker_slots is not None and len(state.jokers) >= state.joker_slots
-    contributions = joker_contributions(state, deck_source, samples) if slots_full else ()
-    if contributions:
-        sellable = [i for i, joker in enumerate(state.jokers) if not joker.eternal]
-        if sellable:
-            weakest = min(sellable, key=lambda i: contributions[i])
-            victim = state.jokers[weakest]
-            candidate = ReplaceCandidate(
-                index=weakest,
-                label=victim.label or victim.key,
-                contribution=contributions[weakest],
-                sell_value=victim.sell_value or 0,
+    # Вклад каждого джокера в слоте — один раз на заход (как выборку для
+    # Buffoon-паков ниже). Считается всегда, когда джокеры есть, а не только
+    # при полных слотах (улучшение A9): вклад нужен не только чтобы выбрать
+    # жертву под размен, но и чтобы вообще заметить балласт — джокера, чей
+    # вклад отрицателен, то есть который хуже пустого слота. Со свободным
+    # слотом старый код этого числа не считал, и бот доезжал до конца рана с
+    # мёртвым грузом (ран 8, `Hit the Road` −722).
+    contributions: tuple[float, ...] = ()
+    if state.jokers:
+        if cache is not None and cache.contributions is not None:
+            contributions = cache.contributions
+        else:
+            contributions = joker_contributions(state, deck_source, samples)
+            if cache is not None:
+                cache.contributions = contributions
+
+    held = (
+        tuple(
+            HeldJoker(
+                index=i,
+                label=joker.label or joker.key,
+                contribution=contributions[i],
+                sell_value=joker.sell_value or 0,
+                eternal=joker.eternal,
             )
-            offers = [
-                replace(offer, replaces=candidate)
-                if offer.known and offer.expected_uplift is not None
-                else offer
-                for offer in offers
-            ]
+            for i, joker in enumerate(state.jokers)
+        )
+        if contributions
+        else ()
+    )
+
+    # Кандидат на вылет под размен — по-прежнему только при полных слотах:
+    # со свободным слотом менять не на что, покупают просто так.
+    slots_full = state.joker_slots is not None and len(state.jokers) >= state.joker_slots
+    sellable = [entry for entry in held if not entry.eternal]
+    if slots_full and sellable:
+        weakest = min(sellable, key=lambda entry: entry.contribution)
+        candidate = ReplaceCandidate(
+            index=weakest.index,
+            label=weakest.label,
+            contribution=weakest.contribution,
+            sell_value=weakest.sell_value,
+        )
+        offers = [
+            replace(offer, replaces=candidate)
+            if offer.known and offer.expected_uplift is not None
+            else offer
+            for offer in offers
+        ]
 
     # Выборка «прирост случайного реализованного джокера» — общая для оценки
     # Buffoon-пака и оценки рерола (A5, реролл — тот же механизм «свежие
@@ -487,21 +666,32 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
     if len(deck_source) >= _HAND_SIZE and (
         reroll_affordable or any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs)
     ):
-        rng = random.Random(_SAMPLE_SEED)
-        keys = sorted(implemented_keys())
-        pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
-        random_joker_uplifts = [
-            joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS) for key in pool
-        ]
+        if cache is not None and cache.random_joker_uplifts is not None:
+            random_joker_uplifts = cache.random_joker_uplifts
+        else:
+            rng = random.Random(_SAMPLE_SEED)
+            keys = sorted(implemented_keys())
+            pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
+            random_joker_uplifts = [
+                joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS)
+                for key in pool
+            ]
+            if cache is not None:
+                cache.random_joker_uplifts = random_joker_uplifts
 
     # То же самое для Celestial-паков — прирост от подъёма уровня каждого из
     # 12 типов руки на общей выборке рук (один baseline, 12 «прокачанных»).
-    planet_uplifts = (
-        _planet_uplift_pool(state, deck_source)
-        if any(p.key.startswith(_CELESTIAL_PACK_PREFIX) for p in state.shop_packs)
+    planet_uplifts: list[float] | None = None
+    if (
+        any(p.key.startswith(_CELESTIAL_PACK_PREFIX) for p in state.shop_packs)
         and len(deck_source) >= _HAND_SIZE
-        else None
-    )
+    ):
+        if cache is not None and cache.planet_uplifts is not None:
+            planet_uplifts = cache.planet_uplifts
+        else:
+            planet_uplifts = _planet_uplift_pool(state, deck_source)
+            if cache is not None:
+                cache.planet_uplifts = planet_uplifts
 
     return ShopAdvice(
         jokers=tuple(offers),
@@ -511,6 +701,7 @@ def evaluate_shop(state: GameState, samples: int = SAMPLE_HANDS) -> ShopAdvice |
             for item in state.shop_packs
         ),
         money=state.money,
+        held=held,
         reroll=_evaluate_reroll(state, random_joker_uplifts, exact_deck),
     )
 
@@ -681,6 +872,7 @@ def _evaluate_joker_offer(
     deck_source: tuple[Card, ...],
     exact_deck: bool,
     samples: int,
+    cache: _SampleCache | None = None,
 ) -> JokerOffer:
     affordable = state.money >= item.price
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
@@ -705,5 +897,13 @@ def _evaluate_joker_offer(
     if not known or len(deck_source) < _HAND_SIZE:
         return _offer(None, 0)
 
+    # Мемо по (ключ, издание) — только эти два поля влияют на счёт, `label`
+    # нет. Переживает реролл: выпавший снова джокер не пересэмплируется.
+    memo_id = (item.key, item.edition)
+    if cache is not None and memo_id in cache.joker_uplifts:
+        return _offer(cache.joker_uplifts[memo_id], samples)
     candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
-    return _offer(joker_uplift(state, candidate, deck_source, samples), samples)
+    uplift = joker_uplift(state, candidate, deck_source, samples)
+    if cache is not None:
+        cache.joker_uplifts[memo_id] = uplift
+    return _offer(uplift, samples)

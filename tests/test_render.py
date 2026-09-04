@@ -9,9 +9,16 @@ from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit,
 from balatro_bot.core.state import ShopItem
 from balatro_bot.core.tags import TAGS
 from balatro_bot.solver.actions import ActionOption
+from balatro_bot.solver.consumables import TarotConsumableOffer
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
-from balatro_bot.solver.shop import JokerOffer, PackPurchaseOffer, RerollOutlook, ShopAdvice
+from balatro_bot.solver.shop import (
+    HeldJoker,
+    JokerOffer,
+    PackPurchaseOffer,
+    RerollOutlook,
+    ShopAdvice,
+)
 from balatro_bot.solver.skip import SkipAdvice
 from balatro_bot.solver.vouchers import VoucherOffer
 from balatro_bot.ui.render import (
@@ -19,6 +26,7 @@ from balatro_bot.ui.render import (
     render_discard_ranking,
     render_shop_advice,
     render_skip_advice,
+    render_tarot_advice,
     render_top_actions,
 )
 
@@ -463,3 +471,98 @@ class TestРендерСоветаПоМагазину:
         assert "экспертно ~8" in out
         assert "лишний слот джокера" in out
         assert "прирост" not in out
+
+
+class TestВыводВкладовВСлотах:
+    """Улучшение A9. Вклад джокеров в слотах показывается человеку по той же
+    причине, по которой он появился в расчёте: в ране 8 `Hit the Road` с
+    отрицательным вкладом доехал до конца рана, и по выводу этого не было
+    видно — цифры просто не существовало."""
+
+    def _advice(self, *held: HeldJoker) -> ShopAdvice:
+        return ShopAdvice(jokers=(), vouchers=(), packs=(), money=10, held=held, reroll=None)
+
+    def test_вклад_виден_и_балласт_помечен(self, capsys: pytest.CaptureFixture[str]) -> None:
+        advice = self._advice(
+            HeldJoker(
+                index=0, label="Joker Stencil", contribution=722.0, sell_value=4, eternal=False
+            ),
+            HeldJoker(
+                index=1, label="Hit the Road", contribution=-722.0, sell_value=4, eternal=False
+            ),
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "джокеры в слотах" in out
+        assert "Hit the Road" in out
+        assert "-722" in out or "−722" in out
+        assert "хуже пустого слота" in out
+
+    def test_вечный_помечен_и_не_зовётся_балластом(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        advice = self._advice(
+            HeldJoker(index=0, label="Вечный", contribution=-5.0, sell_value=0, eternal=True),
+        )
+        render_shop_advice(advice)
+        out = capsys.readouterr().out
+        assert "продать нельзя" in out
+        assert "хуже пустого слота" not in out
+
+    def test_без_джокеров_блока_нет(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render_shop_advice(self._advice())
+        assert "джокеры в слотах" not in capsys.readouterr().out
+
+
+class TestВыводТаротов:
+    """Улучшение C1. Три уровня честности печатаются по-разному и не
+    сливаются в один столбец — очки, доллары и «не оценено» это величины
+    разной природы, как у ваучеров в `render_shop_advice`."""
+
+    def _hand(self) -> tuple[Card, ...]:
+        return parse_cards("AH KH QH JH 9H")
+
+    def test_очки_печатают_прирост_и_цели(self, capsys: pytest.CaptureFixture[str]) -> None:
+        offer = TarotConsumableOffer(
+            ShopItem("c_empress", "The Empress", "TAROT", 0),
+            Enhancement.MULT,
+            (0, 1),
+            680.0,
+            "score",
+        )
+        render_tarot_advice((offer,), self._hand())
+        out = capsys.readouterr().out
+        assert "The Empress" in out
+        assert "680" in out
+        assert "AH" in out and "KH" in out
+
+    def test_деньги_помечены_как_деньги(self, capsys: pytest.CaptureFixture[str]) -> None:
+        offer = TarotConsumableOffer(
+            ShopItem("c_hermit", "The Hermit", "TAROT", 0), None, (), 15.0, "dollars"
+        )
+        render_tarot_advice((offer,), self._hand())
+        out = capsys.readouterr().out
+        assert "в деньгах ~$15" in out
+        assert "прирост" not in out
+
+    def test_без_целей_говорит_что_применять_незачем(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        offer = TarotConsumableOffer(
+            ShopItem("c_tower", "The Tower", "TAROT", 0), Enhancement.STONE, (), 0.0, "score"
+        )
+        render_tarot_advice((offer,), self._hand())
+        assert "применять незачем" in capsys.readouterr().out
+
+    def test_неоценённый_помечен(self, capsys: pytest.CaptureFixture[str]) -> None:
+        offer = TarotConsumableOffer(
+            ShopItem("c_death", "Death", "TAROT", 0), None, (), None, None, "второй срез C1"
+        )
+        render_tarot_advice((offer,), self._hand())
+        out = capsys.readouterr().out
+        assert "не оценено" in out
+        assert "второй срез C1" in out
+
+    def test_пусто_ничего_не_печатает(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render_tarot_advice((), self._hand())
+        assert capsys.readouterr().out == ""

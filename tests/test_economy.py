@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from balatro_bot.core.economy import (
+    BASE_REROLL_COST,
     RENTAL_RATE,
     SHOP_JOKER_RATE,
     SHOP_PLANET_RATE,
@@ -15,6 +16,8 @@ from balatro_bot.core.economy import (
     discount_percent,
     interest,
     interest_cap,
+    reroll_base_cost,
+    rerolls_done,
 )
 
 
@@ -101,3 +104,42 @@ class TestDiscountPercent:
 
     def test_liquidation_даёт_50(self) -> None:
         assert discount_percent(frozenset({"v_clearance_sale", "v_liquidation"})) == 50
+
+
+class TestЦенаРерола:
+    """Улучшение A8. Цена ролла = база + число уже сделанных роллов
+    (`functions/common_events.lua`'s `calculate_reroll_cost`), счётчик
+    обнуляется каждый раунд — значит по наблюдаемой цене восстанавливается
+    число роллов этого захода в магазин."""
+
+    def test_база_из_исходника_игры(self) -> None:
+        # `game.lua`: `starting_params.reroll_cost = 5`.
+        assert BASE_REROLL_COST == 5
+        assert reroll_base_cost(frozenset()) == 5
+
+    def test_реролльные_ваучеры_вычитают_и_складываются(self) -> None:
+        # В отличие от `interest_cap`, эти два не «задают», а вычитают по $2
+        # каждый (`card.lua`, ветка Reroll Surplus/Reroll Glut).
+        assert reroll_base_cost(frozenset({"v_reroll_surplus"})) == 3
+        assert reroll_base_cost(frozenset({"v_reroll_glut"})) == 3
+        assert reroll_base_cost(frozenset({"v_reroll_surplus", "v_reroll_glut"})) == 1
+
+    def test_на_свежей_витрине_роллов_ноль(self) -> None:
+        assert rerolls_done(5, frozenset()) == 0
+
+    def test_каждый_ролл_поднимает_счётчик_на_один(self) -> None:
+        assert rerolls_done(6, frozenset()) == 1
+        assert rerolls_done(7, frozenset()) == 2
+        assert rerolls_done(9, frozenset()) == 4
+
+    def test_счётчик_учитывает_удешевляющие_ваучеры(self) -> None:
+        # С Reroll Surplus база $3, значит цена $5 — это уже два ролла,
+        # а не ноль, как было бы при базе $5.
+        assert rerolls_done(5, frozenset({"v_reroll_surplus"})) == 2
+
+    def test_цена_ниже_базы_не_даёт_отрицательный_счётчик(self) -> None:
+        # Reroll-тег и Chaos the Clown временно опускают цену; оценка
+        # занижается, но не уходит в минус — ограничение честно ослабляется,
+        # а не ломается.
+        assert rerolls_done(0, frozenset()) == 0
+        assert rerolls_done(2, frozenset()) == 0

@@ -811,6 +811,169 @@ class TestDecideActionРеролМагазина:
         assert action is not None
         assert action.kind == "buy"
 
+    # --- улучшение A8: две границы поверх прежней политики ---
+
+    def test_не_скатывает_витрину_с_сильным_но_недоступным_оффером(self) -> None:
+        # j_joker даёт ~193 прироста, но стоит $100 при $25 на руках. Прежняя
+        # политика сравнивала оценку ролла (~138) только с абсолютной планкой
+        # (3% от 300 = 9) и скатывала витрину; копить на уже лежащий оффер
+        # выгоднее, чем платить за ролл.
+        state = self._junk_shop(shop=(ShopItem("j_joker", "Joker", "JOKER", 100, "+4 Mult"),))
+        assert decide_action(state) == Action(kind="next_round")
+
+    def test_не_рероллит_при_исчерпанном_лимите_роллов(self) -> None:
+        # Цена $7 при базе $5 — два ролла в этом заходе уже сделаны.
+        assert decide_action(self._junk_shop(reroll_cost=7)) == Action(kind="next_round")
+
+    def test_рероллит_пока_лимит_не_исчерпан(self) -> None:
+        # Цена $6 — сделан один ролл, лимит (2) ещё не выбран.
+        assert decide_action(self._junk_shop(reroll_cost=6)) == Action(kind="reroll")
+
+    def test_лимит_роллов_учитывает_удешевляющий_ваучер(self) -> None:
+        # С Reroll Surplus база $3, поэтому цена $5 означает уже два ролла —
+        # лимит выбран, хотя без ваучера та же цена означала бы ноль роллов.
+        state = self._junk_shop(used_vouchers=frozenset({"v_reroll_surplus"}))
+        assert decide_action(state) == Action(kind="next_round")
+
+
+class TestDecideActionПродажаБалласта:
+    """Улучшение A9: джокер с отрицательным вкладом стоит меньше пустого
+    слота, и продать его выгодно даже когда в витрине брать нечего. До A9
+    вклады считались только при полных слотах, и со свободным слотом бот
+    такого джокера не видел вовсе — ран 8 довёз `Hit the Road` до анте 7."""
+
+    def _board(self, **overrides: object) -> GameState:
+        # `Joker Stencil` даёт множитель за каждый пустой слот, `Rough Gem`
+        # на счёт розыгрыша не влияет вовсе — значит держать его хуже, чем
+        # оставить слот пустым.
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": 5,  # слоты НЕ полны: размен не сработает
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "discards_left": 4,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "jokers": (
+                JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+                JokerCard(key="j_joker", label="Joker", sell_value=2),
+                JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
+            ),
+            "shop": (ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_продаёт_джокера_хуже_пустого_слота(self) -> None:
+        action = decide_action(self._board())
+        assert action == Action(kind="sell", item_index=2, label="Rough Gem")
+
+    def test_не_продаёт_когда_все_вклады_положительны(self) -> None:
+        state = self._board(
+            jokers=(
+                JokerCard(key="j_joker", label="Joker", sell_value=2),
+                JokerCard(key="j_droll", label="Droll Joker", sell_value=2),
+                JokerCard(key="j_banner", label="Banner", sell_value=2),
+            )
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind != "sell"
+
+    def test_вечный_балласт_не_продаётся(self) -> None:
+        # Мод откажет в продаже вечного джокера, поэтому он не кандидат.
+        state = self._board(
+            jokers=(
+                JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+                JokerCard(key="j_joker", label="Joker", sell_value=2),
+                JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3, eternal=True),
+            )
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind != "sell"
+
+    def test_не_опускается_ниже_нижней_границы_джокеров(self) -> None:
+        # Продажа оставила бы одного джокера — страховка от каскада.
+        state = self._board(
+            jokers=(
+                JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+                JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
+            )
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind != "sell"
+
+    def test_покупка_приоритетнее_продажи_балласта(self) -> None:
+        # Оффер должен быть достаточно сильным, чтобы перебить штраф за
+        # занятый слот, который накладывает `Joker Stencil`: слабый джокер
+        # тут честно уходит в минус и покупкой не становится.
+        state = self._board(shop=(ShopItem("j_cavendish", "Cavendish", "JOKER", 3),))
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "buy"
+
+    def test_продажа_балласта_приоритетнее_рерола(self) -> None:
+        # Денег хватает и на ролл, но сначала избавляемся от балласта.
+        action = decide_action(self._board(money=40))
+        assert action == Action(kind="sell", item_index=2, label="Rough Gem")
+
+
+class TestDecideActionТаро:
+    """Улучшение C1. Политика Таротов намеренно строже, чем у планет:
+    планета применяется сразу (level-up не портит ничего), а Тарот
+    необратимо переписывает карту колоды на весь ран, поэтому требует
+    строго положительного прироста, прошедшего порог покупки джокера."""
+
+    def _рука(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SELECTING_HAND",
+            "hands_left": 4,
+            "discards_left": 0,
+            "consumables": (ShopItem("c_empress", "The Empress", "TAROT", 0),),
+        }
+        state = build_state("AH KH QH JH 9H 7C 7D 2S")
+        return replace(state, **{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_применяет_тарот_прошедший_порог(self) -> None:
+        action = decide_action(self._рука())
+        assert action is not None
+        assert action.kind == "use"
+        assert action.label == "The Empress"
+        # Цели обязаны быть — мод ждёт индексы карт руки.
+        assert len(action.indices) == 2
+
+    def test_не_применяет_тарот_ниже_порога(self) -> None:
+        # 3% от 1 000 000 = 30 000 — прирост Empress столько не набирает.
+        state = self._рука(blinds={"small": _blind("SMALL", "UPCOMING", 1_000_000)})
+        action = decide_action(state)
+        assert action is None or action.kind != "use"
+
+    def test_денежный_тарот_автопилот_не_трогает(self) -> None:
+        # Доллары против очков без курса обмена не сравнить — показываем
+        # человеку, но сами не применяем.
+        state = self._рука(consumables=(ShopItem("c_hermit", "The Hermit", "TAROT", 0),), money=20)
+        action = decide_action(state)
+        assert action is None or action.kind != "use"
+
+    def test_неоценённый_тарот_автопилот_не_трогает(self) -> None:
+        state = self._рука(consumables=(ShopItem("c_judgement", "Judgement", "TAROT", 0),))
+        action = decide_action(state)
+        assert action is None or action.kind != "use"
+
+    def test_планета_приоритетнее_тарота(self) -> None:
+        state = self._рука(
+            consumables=(
+                ShopItem("c_empress", "The Empress", "TAROT", 0),
+                ShopItem("c_mercury", "Mercury", "PLANET", 0),
+            )
+        )
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "use"
+        assert action.label == "Mercury"
+        assert action.indices == ()  # планете цели не нужны
+
 
 class TestDecideActionНаВскрытииПака:
     """Тип пака — по содержимому `state.pack`, не по имени фазы (Steamodded
@@ -930,9 +1093,17 @@ class TestDispatchAction:
         assert FakeMod.calls[-1]["params"] == {"skip": True}
 
     def test_use_зовёт_use_с_индексом(self, bridge: ModBridge) -> None:
+        # Планете цели не нужны — `cards` в запрос не кладётся вовсе.
         dispatch_action(bridge, Action(kind="use", item_index=1, label="Mercury"))
         assert FakeMod.calls[-1]["method"] == "use"
         assert FakeMod.calls[-1]["params"] == {"consumable": 1}
+
+    def test_use_передаёт_цели_тарота(self, bridge: ModBridge) -> None:
+        # Улучшение C1: Тароту нужны карты-цели, они едут в `cards`.
+        dispatch_action(
+            bridge, Action(kind="use", item_index=0, indices=(1, 3), label="The Empress")
+        )
+        assert FakeMod.calls[-1]["params"] == {"consumable": 0, "cards": [1, 3]}
 
     def test_sell_зовёт_sell_с_индексом_джокера(self, bridge: ModBridge) -> None:
         dispatch_action(bridge, Action(kind="sell", item_index=2, label="Abstract Joker"))

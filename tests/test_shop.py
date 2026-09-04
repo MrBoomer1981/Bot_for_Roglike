@@ -9,10 +9,21 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
 from balatro_bot.adapters.manual import build_state
-from balatro_bot.core.cards import standard_deck
+from balatro_bot.core.cards import parse_cards, standard_deck
+from balatro_bot.core.jokers import implemented_keys
+from balatro_bot.core.scoring import score_play
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
-from balatro_bot.solver.shop import SAMPLE_HANDS, evaluate_shop, joker_contributions
+from balatro_bot.solver import shop as shop_module
+from balatro_bot.solver.shop import (
+    _MONEY_SENSITIVE_JOKER_KEYS,
+    SAMPLE_HANDS,
+    clear_shop_cache,
+    evaluate_shop,
+    joker_contributions,
+)
 
 
 def _shop_state(**overrides: object) -> GameState:
@@ -511,3 +522,218 @@ class TestПродажаЗамена:
         advice = evaluate_shop(state)
         assert advice is not None
         assert advice.jokers[0].replaces is None
+
+
+def _score_at_money(key: str, money: int) -> float:
+    """Счёт фиксированного розыгрыша с одним джокером при заданных деньгах."""
+    hand = parse_cards("AH KH QH JH 9H")
+    state = GameState(hand=hand, jokers=(JokerCard(key=key),), money=money)
+    return score_play(state, hand).expected
+
+
+class TestДенежноЧувствительныеДжокеры:
+    """Улучшение F2. `_MONEY_SENSITIVE_JOKER_KEYS` — единственная причина, по
+    которой деньги нельзя выкинуть из ключа мемо. Список проверяется
+    поведением (счёт реально меняется от денег), а не сканом исходника — тот
+    же приём, что у `_SUIT_SENSITIVE_JOKER_KEYS` в `solver/discard.py`."""
+
+    def test_каждый_ключ_из_списка_действительно_зависит_от_денег(self) -> None:
+        for key in _MONEY_SENSITIVE_JOKER_KEYS:
+            assert _score_at_money(key, 0) != _score_at_money(key, 40), key
+
+    def test_список_полон_прочие_джокеры_от_денег_не_зависят(self) -> None:
+        # Если кто-то добавит джокера, читающего `state.money`, и забудет
+        # внести его сюда, кеш начнёт возвращать устаревшие выборки — этот
+        # тест ловит именно такую поломку.
+        for key in sorted(implemented_keys()):
+            if key in _MONEY_SENSITIVE_JOKER_KEYS:
+                continue
+            assert _score_at_money(key, 0) == _score_at_money(key, 40), key
+
+
+class TestКешВыборок:
+    """Улучшение F2: дорогие выборки переживают реролл и повторный опрос, но
+    не переживают смену того, что реально влияет на счёт."""
+
+    def _state(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "money": 25,
+            "reroll_cost": 5,
+            "shop_slots": 2,
+            "shop": (ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),),
+        }
+        return _shop_state(**{**base, **overrides})
+
+    def _count_uplifts(self, monkeypatch: pytest.MonkeyPatch) -> list[str]:
+        """Подменить `joker_uplift` считающей обёрткой — так «пересчитали
+        или взяли из кеша» проверяется прямо, а не по времени."""
+        seen: list[str] = []
+        real = shop_module.joker_uplift
+
+        def counting(state: GameState, joker: JokerCard, deck: object, samples: int) -> float:
+            seen.append(joker.key)
+            return real(state, joker, deck, samples)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(shop_module, "joker_uplift", counting)
+        return seen
+
+    def test_кеш_не_меняет_ответ(self) -> None:
+        state = self._state()
+        clear_shop_cache()
+        cached = evaluate_shop(state)
+        clear_shop_cache()
+        fresh = evaluate_shop(state, use_cache=False)
+        assert cached == fresh
+
+    def test_реролл_переиспользует_выборку_случайных_джокеров(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)  # прогрев
+
+        seen = self._count_uplifts(monkeypatch)
+        # Реролл меняет ровно три вещи: витрину, деньги и цену ролла.
+        rerolled = replace(
+            state,
+            money=state.money - 5,
+            reroll_cost=6,
+            shop=(ShopItem("j_greedy_joker", "Greedy Joker", "JOKER", 5),),
+        )
+        evaluate_shop(rerolled)
+        # Пересчитан только новый джокер витрины; выборка из 24 случайных —
+        # нет, иначе список был бы на два десятка длиннее.
+        assert seen == ["j_greedy_joker"]
+
+    def test_повторный_опрос_той_же_витрины_ничего_не_считает(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        seen = self._count_uplifts(monkeypatch)
+        evaluate_shop(state)
+        assert seen == []
+
+    def test_тот_же_джокер_после_реролла_не_пересэмплируется(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        seen = self._count_uplifts(monkeypatch)
+        again = replace(state, money=20, reroll_cost=6)
+        evaluate_shop(again)
+        assert seen == []  # тот же `j_joker` — мемо по (ключ, издание)
+
+    def test_смена_джокеров_в_слотах_сбрасывает_кеш(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        seen = self._count_uplifts(monkeypatch)
+        evaluate_shop(replace(state, jokers=(JokerCard(key="j_droll", label="Droll Joker"),)))
+        # Контрфактум считается относительно другого набора — всё заново.
+        assert "j_joker" in seen
+
+    def test_без_денежного_джокера_смена_денег_не_сбрасывает_кеш(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        seen = self._count_uplifts(monkeypatch)
+        evaluate_shop(replace(state, money=40))
+        assert seen == []
+
+    def test_с_денежным_джокером_смена_денег_сбрасывает_кеш(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        state = self._state(jokers=(JokerCard(key="j_bull", label="Bull"),))
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        seen = self._count_uplifts(monkeypatch)
+        evaluate_shop(replace(state, money=40))
+        assert "j_joker" in seen
+
+
+class TestВкладыВСлотах:
+    """Улучшение A9: вклад джокеров в слотах меряется всегда, а не только
+    при полных слотах — иначе бот не видит балласт, пока слот свободен."""
+
+    def test_вклады_считаются_при_свободном_слоте(self) -> None:
+        state = _shop_state(
+            jokers=(JokerCard(key="j_joker", label="Joker"),),
+            joker_slots=5,  # слоты НЕ полны
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert len(advice.held) == 1
+        assert advice.held[0].label == "Joker"
+        assert advice.held[0].contribution > 0
+
+    def test_порядок_held_совпадает_с_порядком_джокеров(self) -> None:
+        state = _shop_state(
+            jokers=(
+                JokerCard(key="j_joker", label="Первый"),
+                JokerCard(key="j_droll", label="Второй"),
+            ),
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert [entry.index for entry in advice.held] == [0, 1]
+        assert [entry.label for entry in advice.held] == ["Первый", "Второй"]
+
+    def test_stencil_делает_вклад_балласта_отрицательным(self) -> None:
+        # `Joker Stencil` даёт множитель за каждый пустой слот, поэтому
+        # джокер с нулевым собственным вкладом стоит меньше пустого слота —
+        # ровно случай рана 8.
+        state = _shop_state(
+            jokers=(
+                JokerCard(key="j_stencil", label="Joker Stencil"),
+                JokerCard(key="j_rough_gem", label="Rough Gem"),  # на счёт не влияет
+            ),
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        вклады = {entry.label: entry.contribution for entry in advice.held}
+        assert вклады["Joker Stencil"] > 0
+        assert вклады["Rough Gem"] < 0
+
+    def test_вечный_джокер_помечен_в_held(self) -> None:
+        state = _shop_state(
+            jokers=(JokerCard(key="j_joker", label="Joker", eternal=True),),
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.held[0].eternal is True
+
+    def test_без_джокеров_held_пуст(self) -> None:
+        advice = evaluate_shop(_shop_state(shop=(ShopItem("j_joker", "Joker", "JOKER", 3),)))
+        assert advice is not None
+        assert advice.held == ()
+
+    def test_при_свободном_слоте_кандидата_на_вылет_нет(self) -> None:
+        # Вклады теперь есть, но размен без полных слотов по-прежнему не
+        # предлагается: менять не на что, покупают просто так.
+        state = _shop_state(
+            money=10,
+            jokers=(JokerCard(key="j_joker"),),
+            joker_slots=5,
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.held != ()
+        assert all(offer.replaces is None for offer in advice.jokers)

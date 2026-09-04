@@ -48,7 +48,10 @@ from balatro_bot.runner import (
     run_batch,
 )
 from balatro_bot.solver.actions import rank_actions
-from balatro_bot.solver.consumables import evaluate_planet_consumables
+from balatro_bot.solver.consumables import (
+    evaluate_planet_consumables,
+    evaluate_tarot_consumables,
+)
 from balatro_bot.solver.discard import discard_outcome, rank_discards
 from balatro_bot.solver.pack import evaluate_pack
 from balatro_bot.solver.play import advise
@@ -65,6 +68,7 @@ from balatro_bot.ui.render import (
     render_shop_advice,
     render_skip_advice,
     render_state,
+    render_tarot_advice,
     render_top_actions,
 )
 
@@ -340,6 +344,7 @@ def _doctor(bridge: ModBridge) -> int:
         render_shop_advice(shop_advice)
     render_pack_advice(evaluate_pack(state))
     render_consumable_advice(evaluate_planet_consumables(state))
+    render_tarot_advice(evaluate_tarot_consumables(state), state.hand)
     return 0
 
 
