@@ -20,9 +20,12 @@ from balatro_bot.solver import shop as shop_module
 from balatro_bot.solver.shop import (
     _MONEY_SENSITIVE_JOKER_KEYS,
     SAMPLE_HANDS,
+    _round_budget,
+    _round_moment,
     clear_shop_cache,
     evaluate_shop,
     joker_contributions,
+    joker_uplift,
 )
 
 
@@ -737,3 +740,87 @@ class TestВкладыВСлотах:
         assert advice is not None
         assert advice.held != ()
         assert all(offer.replaces is None for offer in advice.jokers)
+
+
+class TestМоментРаунда:
+    """Улучшение A10: контрфактум сэмплирует не только руку, но и момент
+    раунда. Раньше все выборки считались в состоянии витрины, где раунд не
+    начинался, и шесть джокеров оценивались в одной неверной точке."""
+
+    def _state(self, hands: int = 4, discards: int = 4) -> GameState:
+        return _shop_state(hands_left=hands, discards_left=discards)
+
+    def test_первый_шаг_это_начало_раунда(self) -> None:
+        moment = _round_moment(self._state(), 0, 4)
+        assert moment.hands_left == 4
+        assert moment.hands_played == 0
+        assert moment.discards_left == 4
+
+    def test_последний_шаг_это_последняя_рука_без_сбросов(self) -> None:
+        moment = _round_moment(self._state(), 3, 4)
+        assert moment.hands_left == 1
+        assert moment.hands_played == 3
+        assert moment.discards_left == 0
+
+    def test_бюджет_берётся_из_состояния_без_догадок(self) -> None:
+        assert _round_budget(self._state(hands=4)) == 4
+        assert _round_budget(self._state(hands=1)) == 1
+        # Источник не прислал — единственный моделируемый момент, не выдумка.
+        assert _round_budget(self._state(hands=0)) == 1
+
+
+class TestОценкаПоМоментуРаунда:
+    """Регрессия, ради которой A10 и делалась: в ране 9 `Acrobat` измерился
+    ровно в 0 и был продан как балласт, а `Ice Cream` куплен по оценке,
+    снятой в его максимуме."""
+
+    def _state(self, *jokers: str) -> GameState:
+        deck = standard_deck()
+        return _shop_state(
+            jokers=tuple(JokerCard(key=key) for key in jokers),
+            hands_left=4,
+            discards_left=4,
+            deck=deck,
+            full_deck=deck,
+        )
+
+    def _uplift(self, key: str) -> float:
+        state = self._state("j_joker")
+        return joker_uplift(state, JokerCard(key=key), standard_deck(), SAMPLE_HANDS)
+
+    def test_acrobat_больше_не_ноль(self) -> None:
+        # X3 множ. на последней руке раунда — раньше условие не выполнялось
+        # ни в одной выборке, потому что hands_left всегда был полным.
+        assert self._uplift("j_acrobat") > 0
+
+    def test_mystic_summit_больше_не_ноль(self) -> None:
+        # +15 множ. при нуле сбросов — нужен момент, где сбросы кончились.
+        assert self._uplift("j_mystic_summit") > 0
+
+    def test_banner_и_mystic_summit_положительны_одновременно(self) -> None:
+        # Условия у них взаимоисключающие в пределах одного момента: у одного
+        # сбросы есть, у другого их нет. Оба положительны только если график
+        # действительно охватывает разные моменты раунда — это и есть прямая
+        # проверка механизма, а не его следствий.
+        assert self._uplift("j_banner") > 0
+        assert self._uplift("j_mystic_summit") > 0
+
+    def test_card_sharp_осознанно_остаётся_нулём(self) -> None:
+        # Его условие — `played_this_round`, а какой именно тип руки был
+        # сыгран раньше в раунде, из выборки не вывести без лишнего
+        # `advise()`. Пробел задокументирован, и тест держит его на виду,
+        # чтобы он не выглядел недосмотром.
+        assert self._uplift("j_card_sharp") == 0
+
+    def test_вклад_acrobat_на_доске_рана_9(self) -> None:
+        # Та самая доска, с которой бот продал Acrobat как пустого.
+        state = self._state("j_misprint", "j_stuntman", "j_half", "j_acrobat")
+        contributions = joker_contributions(state, standard_deck(), SAMPLE_HANDS)
+        assert contributions[3] > 0
+
+    def test_раунд_в_одну_руку_считается_как_последняя(self) -> None:
+        # Если состояние говорит «осталась одна рука», то единственный
+        # честный момент — последняя рука, и Acrobat в ней работает всегда.
+        state = replace(self._state("j_joker"), hands_left=1)
+        many = joker_uplift(state, JokerCard(key="j_acrobat"), standard_deck(), SAMPLE_HANDS)
+        assert many > self._uplift("j_acrobat")

@@ -302,6 +302,38 @@ def _interest_lost(state: GameState, price: int) -> int:
     )
 
 
+def _round_moment(state: GameState, step: int, hands: int) -> GameState:
+    """Состояние на `step`-й руке раунда (улучшение A10).
+
+    Контрфактум магазина сэмплирует руку, но раньше не сэмплировал **момент
+    раунда**: все выборки считались в состоянии витрины, где раунд ещё не
+    начинался — `hands_left`/`discards_left` на максимуме, `hands_played`
+    ноль. Шесть реализованных джокеров читают ровно эти поля, поэтому все
+    шесть оценивались в одной, и неверной, точке: `j_acrobat`, `j_dusk`,
+    `j_mystic_summit`, `j_card_sharp` не срабатывали никогда и стоили ровно
+    0, а `j_banner` и `j_ice_cream` мерились в своём максимуме. В ране 9 это
+    стоило проданного `Acrobat` (вклад 0) и купленного по завышенной оценке
+    `Ice Cream`.
+
+    Сбросы моделируются равномерно расходуемыми за раунд — к последней руке
+    их не остаётся. Живая игра тратит их скорее в начале, поэтому `j_banner`
+    остаётся немного завышен, а `j_mystic_summit` немного занижен; это
+    заявленное допущение о том, **когда** тратятся сбросы, а не догадка об
+    эффекте джокера, и оно строго лучше прежнего «сбросы всегда все на
+    месте»."""
+    discards = state.discards_left
+    left = round(discards * (hands - 1 - step) / (hands - 1)) if hands > 1 else 0
+    return replace(state, hands_left=hands - step, hands_played=step, discards_left=left)
+
+
+def _round_budget(state: GameState) -> int:
+    """Сколько рук в раунде — по состоянию, без догадок. В витрине мод
+    присылает уже сброшенные к началу раунда значения; при ручном вводе
+    там может стоять 1, и тогда единственный моделируемый момент — последняя
+    рука, что для такого состояния и верно."""
+    return max(state.hands_left, 1)
+
+
 def joker_uplift(
     state: GameState, joker: JokerCard, deck_source: tuple[Card, ...], samples: int
 ) -> float:
@@ -313,11 +345,17 @@ def joker_uplift(
     with_candidate = (*state.jokers, joker)
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)
+    hands = _round_budget(state)
     total = 0.0
-    for _ in range(samples):
+    for i in range(samples):
         hand = tuple(rng.sample(pool, _HAND_SIZE))
-        baseline = advise(replace(state, hand=hand, jokers=state.jokers), limit=1).best.score
-        boosted = advise(replace(state, hand=hand, jokers=with_candidate), limit=1).best.score
+        # Улучшение A10: выборки распределены по моментам раунда, а не свалены
+        # все на его первую руку. Обе стороны разности считаются в **одном** и
+        # том же моменте, поэтому контрфактум остаётся честным — различается
+        # только джокер.
+        moment = _round_moment(state, i % hands, hands)
+        baseline = advise(replace(moment, hand=hand, jokers=state.jokers), limit=1).best.score
+        boosted = advise(replace(moment, hand=hand, jokers=with_candidate), limit=1).best.score
         total += boosted - baseline
     return total / samples
 
@@ -339,14 +377,21 @@ def joker_contributions(
         return ()
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)
-    hands = [tuple(rng.sample(pool, _HAND_SIZE)) for _ in range(samples)]
-    baselines = [advise(replace(state, hand=hand), limit=1).best.score for hand in hands]
+    budget = _round_budget(state)
+    # Тот же график моментов, что у `joker_uplift` (A10) — иначе вклад и
+    # прирост несопоставимы, а `autopilot._decide_replace_action` сравнивает
+    # их напрямую.
+    moments = [
+        replace(_round_moment(state, i % budget, budget), hand=tuple(rng.sample(pool, _HAND_SIZE)))
+        for i in range(samples)
+    ]
+    baselines = [advise(moment, limit=1).best.score for moment in moments]
     contributions: list[float] = []
     for i in range(len(state.jokers)):
         without = state.jokers[:i] + state.jokers[i + 1 :]
         drop = 0.0
-        for hand, base in zip(hands, baselines, strict=True):
-            reduced = advise(replace(state, hand=hand, jokers=without), limit=1).best.score
+        for moment, base in zip(moments, baselines, strict=True):
+            reduced = advise(replace(moment, jokers=without), limit=1).best.score
             drop += base - reduced
         contributions.append(drop / samples)
     return tuple(contributions)
