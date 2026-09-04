@@ -1343,6 +1343,19 @@ The planned order (letter labels are working ones, not from the general phase nu
   **Slice 2 still owes:** `Star`/`Moon`/`Sun`/`World` (up to 3 cards to a suit), `Strength`,
   `Death`, `The Hanged Man` — the ones needing a reachability filter on targets, in the shape
   of `solver/discard.py`'s `_flush_targets`.
+
+  **`The Fool` — reported from a live run, to fix.** The bot never uses it. Slice 1 filed
+  `c_fool` under `_RANDOM_TAROTS` ("creates cards, depends on RNG"), and that classification
+  is wrong: The Fool recreates *the last Tarot or Planet used this run*, which is not random at
+  all — it is simply history the project does not track, and `GameState` has no field for it.
+  There is a plausible route that needs checking against a real card before it is built: the
+  mod already sends every consumable's live effect text into `ShopItem.effect`
+  (`mod_bridge._parse_shop_item`), and the game renders The Fool's text with the card it would
+  copy, so the name may be readable straight off it — the same trick `JokerCard.current_value`
+  uses to recover accumulator values the schema does not expose. If the text does name the
+  card, valuing The Fool reduces to valuing that card, which slice 1 can already do for the
+  eight enhance-Tarots and every Planet. If it does not, the honest `None` stands but the
+  *reason* still has to change: it is missing history, not RNG.
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
