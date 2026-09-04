@@ -306,6 +306,7 @@ def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
                 seed=args.seed,
                 include_discards=args.consider_discards,
                 max_steps=args.max_steps,
+                adopt_first=args.adopt,
                 on_run=lambda report: render_run_report(report, verbose=args.explain),
             )
             render_batch_summary(summaries)
@@ -317,6 +318,7 @@ def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
                 seed=args.seed,
                 include_discards=args.consider_discards,
                 max_steps=args.max_steps,
+                adopt=args.adopt,
                 on_step=_print_run_step,
             )
             render_run_report(report, verbose=args.explain)
@@ -450,6 +452,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     auto.add_argument(
         "--seed", help="сид рана (по умолчанию случайный — нужен для честного замера винрейта)"
+    )
+    auto.add_argument(
+        "--adopt",
+        action="store_true",
+        help="подхватить уже идущий ран вместо того, чтобы начинать свой (только с --deck)",
     )
     auto.add_argument(
         "--runs",

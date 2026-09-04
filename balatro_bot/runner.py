@@ -147,6 +147,15 @@ class RunReport:
     """Причина не-победного исхода: сообщение моста для `error`, фаза затыка
     для `stuck`, пусто для `won`/`lost`."""
 
+    adopted: bool = False
+    """Ран не начат раннером, а подхвачен уже идущим (`play_run(adopt=True)`).
+    Важно для честности сводки: `deck` в таком ране взят из состояния игры
+    (`GameState.deck_type`), а вот **ставка в состоянии не приходит вовсе** —
+    мод её не присылает, поэтому `stake` тут не наблюдение, а то, что
+    попросили флагом. Подписать подхваченный ран «RED/WHITE» только потому,
+    что так стояло в аргументах, значило бы испортить ту самую таблицу
+    винрейта, ради которой всё и делается."""
+
     @property
     def won(self) -> bool:
         return self.outcome == "won"
@@ -202,6 +211,7 @@ def play_run(
     include_discards: bool = True,
     max_steps: int = _DEFAULT_MAX_STEPS,
     stall_limit: int = _DEFAULT_STALL_LIMIT,
+    adopt: bool = False,
     sleep: Callable[[float], None] = time.sleep,
     key_reader: Callable[[], str | None] = lambda: None,
     on_step: Callable[[GameState, DecisionEntry], None] | None = None,
@@ -214,10 +224,29 @@ def play_run(
     советник ⇄ автопилот по ходу дела). По умолчанию источника нет.
     `on_step` вызывается после каждого записанного решения — для живого
     прогресса в CLI; пакетный прогон не передаёт ничего.
+
+    `adopt=True` — подхватить уже идущий ран вместо того, чтобы начинать
+    свой. Без этого `play_run` всегда открывался парой `menu()` + `start()`,
+    то есть затирал забег, который человек только что настроил сам, — а это
+    как раз обычный случай: игру запускают руками, а автопилот подключают
+    к ней. С флагом раннер сперва смотрит состояние: если игра не в меню и
+    не на экране проигрыша, значит ран идёт, и он продолжается с этого
+    места. Если игра всё-таки в меню — поведение прежнее, начинаем свой ран.
+    См. `RunReport.adopted` про то, почему у подхваченного рана колода
+    наблюдаемая, а ставка — только заявленная.
     """
+    adopted = False
     try:
-        bridge.menu()
-        state = bridge.start(deck, stake, seed=seed)
+        if adopt:
+            current = bridge.game_state()
+            if current.phase not in (_MENU, _GAME_OVER):
+                state = current
+                adopted = True
+                # Колоду игра сообщает сама; ставку она не присылает вовсе.
+                deck = current.deck_type or deck
+        if not adopted:
+            bridge.menu()
+            state = bridge.start(deck, stake, seed=seed)
     except ModBridgeError as error:
         return RunReport(deck, stake, seed, "error", 1, 1, 0, note=str(error))
 
@@ -228,13 +257,20 @@ def play_run(
     for step in range(1, max_steps + 1):
         if key_reader() is not None:
             return _finish(
-                deck, stake, seed, "aborted", state, decisions, note="перехват управления"
+                deck,
+                stake,
+                seed,
+                "aborted",
+                state,
+                decisions,
+                note="перехват управления",
+                adopted=adopted,
             )
 
         outcome = _terminal_outcome(state)
         if outcome is not None:
             note = f"вернулись в меню на шаге {step}" if outcome == "stuck" else ""
-            return _finish(deck, stake, seed, outcome, state, decisions, note=note)
+            return _finish(deck, stake, seed, outcome, state, decisions, note=note, adopted=adopted)
 
         action = decide_action(state, include_discards=include_discards)
 
@@ -253,12 +289,22 @@ def play_run(
                     state,
                     decisions,
                     note=f"мод завис на фазе {state.phase}",
+                    adopted=adopted,
                 )
             sleep(_TRANSIENT_POLL_INTERVAL)
             try:
                 state = bridge.game_state()
             except ModBridgeError as error:
-                return _finish(deck, stake, seed, "error", state, decisions, note=str(error))
+                return _finish(
+                    deck,
+                    stake,
+                    seed,
+                    "error",
+                    state,
+                    decisions,
+                    note=str(error),
+                    adopted=adopted,
+                )
             continue
 
         transient_polls = 0
@@ -276,6 +322,7 @@ def play_run(
                 state,
                 decisions,
                 note=f"decide_action вернул None на фазе {state.phase}",
+                adopted=adopted,
             )
 
         try:
@@ -288,7 +335,14 @@ def play_run(
             stall += 1
             if stall >= stall_limit:
                 return _finish(
-                    deck, stake, seed, "stuck", state, decisions, note=f"мод отказал ×{stall}"
+                    deck,
+                    stake,
+                    seed,
+                    "stuck",
+                    state,
+                    decisions,
+                    note=f"мод отказал ×{stall}",
+                    adopted=adopted,
                 )
             continue
 
@@ -301,11 +355,25 @@ def play_run(
         state = new_state
         if stall >= stall_limit:
             return _finish(
-                deck, stake, seed, "stuck", state, decisions, note="состояние не меняется"
+                deck,
+                stake,
+                seed,
+                "stuck",
+                state,
+                decisions,
+                note="состояние не меняется",
+                adopted=adopted,
             )
 
     return _finish(
-        deck, stake, seed, "stuck", state, decisions, note=f"превышен предел шагов ({max_steps})"
+        deck,
+        stake,
+        seed,
+        "stuck",
+        state,
+        decisions,
+        note=f"превышен предел шагов ({max_steps})",
+        adopted=adopted,
     )
 
 
@@ -330,6 +398,7 @@ def _finish(
     decisions: list[DecisionEntry],
     *,
     note: str = "",
+    adopted: bool = False,
 ) -> RunReport:
     return RunReport(
         deck=deck,
@@ -341,6 +410,7 @@ def _finish(
         steps=len(decisions),
         decisions=tuple(decisions),
         note=note,
+        adopted=adopted,
     )
 
 
@@ -354,6 +424,7 @@ def run_batch(
     include_discards: bool = True,
     max_steps: int = _DEFAULT_MAX_STEPS,
     sleep: Callable[[float], None] = time.sleep,
+    adopt_first: bool = False,
     key_reader: Callable[[], str | None] = lambda: None,
     on_run: Callable[[RunReport], None] | None = None,
 ) -> tuple[StakeSummary, ...]:
@@ -363,8 +434,14 @@ def run_batch(
     Любое нажатие (`key_reader`) обрывает и текущий ран, и весь пакет: раз
     человек вмешался, следующие раны не начинаем. `KeyboardInterrupt`
     (Ctrl+C) тоже не теряет уже собранное — возвращаем сводку по тому, что
-    успели прогнать, а не всё насмарку."""
+    успели прогнать, а не всё насмарку.
+
+    `adopt_first=True` — подхватить уже идущий ран **только первым** раном
+    пакета (`play_run(adopt=...)`): к моменту второго предыдущий уже
+    закончился, подхватывать нечего, и все последующие начинаются как
+    обычно."""
     summaries: list[StakeSummary] = []
+    adopt_next = adopt_first
     for stake in stakes:
         reports: list[RunReport] = []
         for _ in range(runs_per_stake):
@@ -376,12 +453,16 @@ def run_batch(
                     seed=seed,
                     include_discards=include_discards,
                     max_steps=max_steps,
+                    adopt=adopt_next,
                     sleep=sleep,
                     key_reader=key_reader,
                 )
             except KeyboardInterrupt:
                 summaries.append(StakeSummary(stake, tuple(reports)))
                 return tuple(summaries)
+            # Подхватывать можно только первым раном: дальше подхватывать
+            # уже нечего, предыдущий закончился.
+            adopt_next = False
             reports.append(report)
             if on_run is not None:
                 on_run(report)

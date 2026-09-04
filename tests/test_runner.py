@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 
 import pytest
 
@@ -325,3 +326,82 @@ class TestРендер:
         assert "винрейт по ставкам" in out
         assert "WHITE" in out and "RED" in out
         assert "100%" in out
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestПодхватИдущегоРана:
+    """E2, первый срез. Раньше `play_run` всегда открывался парой
+    `menu()` + `start()` и затирал забег, который человек только что настроил
+    сам, — а это как раз обычный случай: игру запускают руками, автопилот
+    подключают к ней."""
+
+    def test_подхватывает_и_не_трогает_меню(self) -> None:
+        bridge = ScriptedBridge(
+            [
+                _state("SELECTING_HAND", ante=3),
+                _state("SELECTING_HAND", ante=3),
+                _state("GAME_OVER", ante=5),
+            ]
+        )
+        report = play_run(bridge, deck="RED", stake="WHITE", adopt=True, sleep=lambda _: None)
+        assert bridge.menu_calls == 0
+        assert bridge.start_calls == []
+        assert report.adopted is True
+        assert report.outcome == "lost"
+        assert report.ante == 5
+
+    def test_из_меню_начинает_свой_ран(self) -> None:
+        bridge = ScriptedBridge(
+            [_state("MENU"), _state("SELECTING_HAND"), _state("GAME_OVER", ante=2)]
+        )
+        report = play_run(bridge, deck="RED", stake="WHITE", adopt=True, sleep=lambda _: None)
+        assert bridge.menu_calls == 1
+        assert bridge.start_calls == [("RED", "WHITE", None)]
+        assert report.adopted is False
+
+    def test_с_экрана_проигрыша_тоже_начинает_свой(self) -> None:
+        bridge = ScriptedBridge(
+            [_state("GAME_OVER"), _state("SELECTING_HAND"), _state("GAME_OVER", ante=2)]
+        )
+        report = play_run(bridge, deck="RED", stake="WHITE", adopt=True, sleep=lambda _: None)
+        assert bridge.start_calls == [("RED", "WHITE", None)]
+        assert report.adopted is False
+
+    def test_без_флага_прежнее_поведение(self) -> None:
+        # Старое поведение закреплено: без `adopt` идущий ран по-прежнему
+        # затирается — чтобы это не «уехало» само собой.
+        bridge = ScriptedBridge([_state("SELECTING_HAND", ante=3), _state("GAME_OVER", ante=3)])
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+        assert bridge.menu_calls == 1
+        assert bridge.start_calls == [("RED", "WHITE", None)]
+        assert report.adopted is False
+
+    def test_колода_подхваченного_рана_берётся_из_состояния(self) -> None:
+        # Колоду игра сообщает сама, и она может не совпасть с флагом;
+        # ставку игра не присылает вовсе, поэтому она остаётся заявленной,
+        # а `adopted` предупреждает, что это не наблюдение.
+        bridge = ScriptedBridge(
+            [
+                replace(_state("SELECTING_HAND"), deck_type="GREEN"),
+                _state("GAME_OVER"),
+            ]
+        )
+        report = play_run(bridge, deck="RED", stake="GOLD", adopt=True, sleep=lambda _: None)
+        assert report.deck == "GREEN"
+        assert report.stake == "GOLD"
+        assert report.adopted is True
+
+    def test_в_пакете_подхватывает_только_первый(self) -> None:
+        bridge = ScriptedBridge([_state("SELECTING_HAND"), _state("GAME_OVER")] * 6)
+        summaries = run_batch(
+            bridge,
+            deck="RED",
+            stakes=("WHITE",),
+            runs_per_stake=3,
+            adopt_first=True,
+            sleep=lambda _: None,
+        )
+        reports = summaries[0].reports
+        assert [report.adopted for report in reports] == [True, False, False]
+        # Первый ран не звал start, остальные два — звали.
+        assert len(bridge.start_calls) == 2
