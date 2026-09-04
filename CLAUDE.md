@@ -88,7 +88,7 @@ One line per module; the deep prose for each is in [docs/architecture.md](docs/a
 | `core/state.py` | `GameState` + all boundary types (`BlindInfo`, `ShopItem`, `JokerCard`); everything external parses into it, everything internal consumes it |
 | `core/cards.py` | `Card` and its `Suit`/`Rank`/`Enhancement`/`Edition`/`Seal` enums; CLI card-string parsing; `standard_deck()` |
 | `core/hands.py` | poker-hand classification (`evaluate`); chip/mult base per hand type and level |
-| `core/scoring.py` | event-driven scoring pipeline; enumerates the probability tree for exact EV; `_apply_boss_score_modifier` (The Flint) |
+| `core/scoring.py` | event-driven scoring pipeline; exact EV over random outcomes (a wide single chance point is folded analytically, the rest enumerated); `_apply_boss_score_modifier` (The Flint) |
 | `core/economy.py` | money formulas shared by shop/vouchers (`interest`, `interest_cap`, `discount_percent`, `RENTAL_RATE`) |
 | `core/catalogue.py` | auto-generated joker/consumable/voucher/booster registry from the mod's `enums.lua` — **do not edit** |
 | `core/tags.py` | hardcoded catalogue of all 24 blind-skip tags |

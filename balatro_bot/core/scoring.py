@@ -28,10 +28,10 @@
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from itertools import product
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING, Final, Protocol
 
 from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, effective_suits
 from balatro_bot.core.hands import HandModifiers, HandResult, HandType, evaluate
@@ -602,6 +602,103 @@ def _run_once(
     return ctx
 
 
+#: С какого числа исходов одной точки случайности выгодно подгонять многочлен
+#: вместо перебора (улучшение F3). У Lucky исходов два, у Bloodstone тоже —
+#: там перебор дешевле самой подгонки; широкая точка в проекте одна, у
+#: `Misprint` (равномерный разброс +0..+23, 24 исхода).
+_FIT_MIN_OUTCOMES: Final[int] = 6
+
+#: Допуск проверки подгонки. Числа тут — суммы и произведения небольших
+#: величин, поэтому расхождение выше этого означает не потерю точности в
+#: последнем бите, а то, что зависимость не многочлен.
+_FIT_TOLERANCE: Final[float] = 1e-6
+
+
+def _lagrange_quadratic(
+    points: Sequence[tuple[float, float]],
+) -> Callable[[float], float] | None:
+    """Многочлен степени ≤ 2 через три точки (интерполяция Лагранжа) или
+    `None`, если абсциссы совпадают и многочлен не определён."""
+    (x0, y0), (x1, y1), (x2, y2) = points
+    if len({x0, x1, x2}) < 3:
+        return None
+
+    def value(x: float) -> float:
+        return (
+            y0 * (x - x1) * (x - x2) / ((x0 - x1) * (x0 - x2))
+            + y1 * (x - x0) * (x - x2) / ((x1 - x0) * (x1 - x2))
+            + y2 * (x - x0) * (x - x1) / ((x2 - x0) * (x2 - x1))
+        )
+
+    return value
+
+
+def _fold_single_chance(
+    state: GameState,
+    played: tuple[Card, ...],
+    held: tuple[Card, ...],
+    active: tuple[Joker, ...],
+    mods: HandModifiers,
+    result: HandResult,
+    outcomes: Sequence[tuple[float, float]],
+) -> ScoreOutcome | None:
+    """Свернуть одну широкую точку случайности многочленом вместо перебора
+    всех её ветвей (улучшение F3). `None` — свернуть не вышло, пусть считает
+    полный перебор.
+
+    Почему это законно и почему точно. Точка случайности разрешается в
+    **число** (`ChancePicker.pick`), и в аккумулятор оно попадает только
+    через `ScoreContext.apply` — `AddChips(v)`, `AddMult(v)` или `XMult(v)`,
+    каждый линеен по `v`. Значит `chips(v) = a + b·v`, `mult(v) = c + d·v`, а
+    итог `chips·mult` — многочлен степени не выше двух. Три прогона движка
+    задают его однозначно, после чего остальные исходы считаются
+    арифметикой, а не прогонами: матожидание как `Σ pᵢ·P(vᵢ)`, границы как
+    минимум и максимум `P` по исходам. Это ровно те же числа, что дал бы
+    перебор, а не их оценка.
+
+    Утверждение не принимается на веру: подгонка **проверяется** на
+    дополнительном исходе, и при расхождении функция возвращает `None`. Если
+    где-то появится эффект, ветвящийся по выпавшему значению, зависимость
+    перестанет быть многочленом — и поймает это проверка, а не наше
+    обещание, что таких эффектов нет."""
+    count = len(outcomes)
+    likeliest = max(range(count), key=lambda i: outcomes[i][1])
+    # Самый вероятный исход обязан быть среди прогонов: из него берётся
+    # представительный разбор (`trace`), и это поведение менять нельзя.
+    probes = sorted({0, likeliest, count // 3, 2 * count // 3, count - 1})
+    if len(probes) < 4:
+        return None
+
+    measured: list[tuple[float, float]] = []
+    ctx_by_index: dict[int, ScoreContext] = {}
+    for index in probes:
+        picker = _ScriptedPicker(choices=(index,))
+        ctx = _run_once(state, played, held, active, mods, result, picker)
+        if len(picker.seen) != 1:
+            # Состав точек случайности зависит от их же исхода — свёртка тут
+            # неприменима, пусть работает честный перебор со своей пометкой.
+            return None
+        measured.append((outcomes[index][0], ctx.chips * ctx.mult))
+        ctx_by_index[index] = ctx
+
+    polynomial = _lagrange_quadratic(measured[:3])
+    if polynomial is None:
+        return None
+    for value, total in measured[3:]:
+        if abs(polynomial(value) - total) > _FIT_TOLERANCE:
+            return None
+
+    expected = 0.0
+    lowest = float("inf")
+    highest = float("-inf")
+    for value, probability in outcomes:
+        total = polynomial(value)
+        expected += total * probability
+        lowest = min(lowest, total)
+        highest = max(highest, total)
+    return _outcome(result, ctx_by_index[likeliest], expected, lowest, highest)
+
+
 def score_play(
     state: GameState,
     played: Sequence[Card],
@@ -648,6 +745,16 @@ def score_play(
     if not chance_points:
         total = ctx.chips * ctx.mult
         return _outcome(result, ctx, total, total, total)
+
+    # Улучшение F3: одну широкую точку случайности дешевле свернуть
+    # многочленом, чем перебирать все её ветви — и результат тот же, см.
+    # `_fold_single_chance`.
+    if len(chance_points) == 1 and len(chance_points[0]) >= _FIT_MIN_OUTCOMES:
+        folded = _fold_single_chance(
+            state, played_tuple, held, active, mods, result, chance_points[0]
+        )
+        if folded is not None:
+            return folded
 
     branches = 1
     for outcomes in chance_points:

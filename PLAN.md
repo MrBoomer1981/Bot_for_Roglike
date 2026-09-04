@@ -15,7 +15,7 @@ jokers), but verifying the numbers against the real game (task 3a) hasn't been d
 a Mac. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
 and joker order, blind skip and economy). Phase 9 ("Autopilot") — subtasks 9.1–9.7 are done
 (action loop, skip/shop/pack-opening, vouchers, Planet consumables, boss catalogue and score
-fix, stake stickers, run-runner) plus improvements A1–A10, B1, C1, D1, F1 and F2 from section 9.8 — see
+fix, stake stickers, run-runner) plus improvements A1–A10, B1, C1, D1 and F1–F3 from section 9.8 — see
 section 6, "Autopilot" subsection. Run 7 (RED/WHITE, 2026-09-01) is the **first autopilot
 win** — beat Ante 8, 168 steps, zero mod rejections/timeouts/stalls, with A5/A6/A7/B1/D1/F1
 all exercised live; it also surfaced the reroll churn A8/F2 (the bot burned ~$75 on 21
@@ -1222,6 +1222,62 @@ The planned order (letter labels are working ones, not from the general phase nu
   same shop-moment snapshot, and `solver/pack.py`'s planet pool likewise. The same argument
   applies; the observed harm was in joker pricing. Tests —
   `tests/test_shop.py::TestМоментРаунда`, `::TestОценкаПоМоментуРаунда`.
+
+- **F3. The probability tree was the whole performance problem — done.** Profiled first, as
+  F1 and F2 were. The measurement was unusually clean:
+
+  ```
+  advise() без вариативных джокеров    8.7 мс
+  advise() с Misprint                164.4 мс
+  ```
+
+  All 218 subsets, the event dispatch and the copy-joker chains together cost 8.7 ms;
+  `Misprint` alone added 19× on top. `cProfile` counted 16 350 `_run_once` calls for 654
+  `score_play` calls — ~25 full pipeline passes per subset, because `score_play` re-ran
+  everything once per branch of the cartesian product, and `Misprint`'s uniform `+0..+23`
+  spread is 24 branches.
+
+  **Nothing was traded away for the fix — the user's explicit call, and the numbers stay exact
+  to the last digit.** A chance point resolves to a *number* (`ChancePicker.pick`), and that
+  number reaches the accumulator only through `AddChips(v)` / `AddMult(v)` / `XMult(v)`, each
+  linear in `v`. So `chips(v) = a + b·v`, `mult(v) = c + d·v`, and the total `chips × mult` is
+  a polynomial in `v` of degree at most two. Three engine passes determine it exactly, after
+  which every remaining outcome is evaluated by **arithmetic** rather than by re-running the
+  engine: `E = Σ pᵢ·P(vᵢ)`, and `minimum`/`maximum` as the extremes of `P` over the outcomes.
+  Four passes instead of 25, same answer.
+
+  The polynomial claim is **verified, not asserted**: a fourth evaluation checks the fit, and
+  any disagreement beyond `_FIT_TOLERANCE` abandons the fold and runs the existing full
+  enumeration. An effect that branched on the drawn value would break polynomiality, and the
+  check catches it instead of a promise that no such effect exists — `_fold_single_chance` also
+  bails out if the set of chance points turns out to depend on its own outcome, leaving that
+  case to the enumeration path that already marks it `unknown`. The fold applies only to a
+  single chance point with at least `_FIT_MIN_OUTCOMES = 6` outcomes; Lucky's two branches and
+  multi-point trees enumerate exactly as before, and `MAX_CHANCE_BRANCHES` with its
+  likeliest-outcome fallback is untouched.
+
+  **Measured, on the same stack that motivated the work:**
+
+  | | before | after |
+  |---|---|---|
+  | `advise()`, 5 jokers + `Misprint` | 164.4 ms | **36.3 ms** |
+  | cold `evaluate_shop` | 80.2 s | **17.7 s** |
+  | decision after a reroll | 6.9 s | **1.5 s** |
+  | repeat poll of an unchanged shelf | 2.23 s | **0.48 s** |
+  | `SELECTING_HAND` with two Tarots | 8.1 s | **2.0 s** |
+
+  **Where it does *not* help, stated plainly:** the play-with-discards decision went 7.02 s →
+  6.54 s, about 7 %. Its cost lives in `solver/discard.py`'s own target sampling, not in the
+  scoring tree, and it is now the slowest single decision the autopilot makes — the obvious
+  next performance item, and a separate one.
+
+  The acceptance criterion was that **no existing test moves**, since this changes the engine
+  every other module is built on; none did. The load-bearing new tests are differential —
+  `tests/test_scoring.py::TestСвёрткаТочкиСлучайности` runs the same calculation down both
+  paths (forced by monkeypatching `_FIT_MIN_OUTCOMES`) and compares expectation, bounds,
+  `exact` and `unknown` for `Misprint` alone, `Misprint` under `Blueprint`, a Glass card
+  putting an `XMult` downstream, a two-outcome Lucky point, two simultaneous chance points, and
+  a synthetic joker whose effect jumps rather than scales, which must fall back.
 
 - **C1. Tarot consumables** (Phase 9.4, the second slice) — **slice 1 done.** Unlike a Planet
   card, a Tarot needs a *target*: the search is over subsets of the hand, and cost decided the

@@ -11,10 +11,12 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
 from typing import Any
 
 import pytest
 
+from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.cards import (
     Card,
     Edition,
@@ -27,8 +29,17 @@ from balatro_bot.core.cards import (
 )
 from balatro_bot.core.catalogue import JOKERS
 from balatro_bot.core.hands import HandType
+from balatro_bot.core.jokers import BaseJoker
 from balatro_bot.core.jokers.implementations import _JOKER_RARITY
-from balatro_bot.core.scoring import ScoreOutcome, score_play
+from balatro_bot.core.scoring import (
+    AddMult,
+    Effect,
+    Event,
+    JokerTurn,
+    ScoreContext,
+    ScoreOutcome,
+    score_play,
+)
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo
 
 
@@ -1010,3 +1021,87 @@ class TestРегрессии:
         )
         # (5 + 11 + 50) × 1 — сам джокер эффекта на счёт не даёт, издание даёт.
         assert score_play(state, list(state.hand)).expected == 66
+
+
+class TestСвёрткаТочкиСлучайности:
+    """Улучшение F3. Одна широкая точка случайности сворачивается многочленом
+    вместо перебора всех ветвей. Главное требование — числа обязаны совпасть
+    с полным перебором **в точности**, поэтому тесты здесь дифференциальные:
+    один и тот же расчёт гоняется обоими путями и сравнивается."""
+
+    def _оба_пути(
+        self, monkeypatch: pytest.MonkeyPatch, state: GameState, played: Sequence[Card], **kw: Any
+    ) -> tuple[ScoreOutcome, ScoreOutcome]:
+        import balatro_bot.core.scoring as scoring
+
+        monkeypatch.setattr(scoring, "_FIT_MIN_OUTCOMES", 10**9)
+        медленно = score_play(state, played, **kw)
+        monkeypatch.setattr(scoring, "_FIT_MIN_OUTCOMES", 6)
+        быстро = score_play(state, played, **kw)
+        return медленно, быстро
+
+    def _сверить(self, медленно: ScoreOutcome, быстро: ScoreOutcome) -> None:
+        assert быстро.expected == pytest.approx(медленно.expected, abs=1e-9)
+        assert быстро.minimum == pytest.approx(медленно.minimum, abs=1e-9)
+        assert быстро.maximum == pytest.approx(медленно.maximum, abs=1e-9)
+        assert быстро.exact == медленно.exact
+        assert быстро.unknown == медленно.unknown
+        assert быстро.hand_type == медленно.hand_type
+
+    def test_misprint_свёртка_совпадает_с_перебором(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = build_state("AH KH QH JH 9H 7C 7D 2S", ("misprint",))
+        self._сверить(*self._оба_пути(monkeypatch, state, state.hand[:5]))
+
+    def test_misprint_под_blueprint(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Blueprint копирует соседа справа — точка случайности разыгрывается
+        # дважды за проход, и свёртка обязана дать тот же ответ.
+        state = build_state("AH KH QH JH 9H 7C 7D 2S", ("blueprint", "misprint"))
+        self._сверить(*self._оба_пути(monkeypatch, state, state.hand[:5]))
+
+    def test_misprint_с_xmult_после_него(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Glass даёт ×2 множителя уже после прибавки Misprint: итог остаётся
+        # многочленом по выпавшему значению, просто с другим наклоном.
+        hand = list(parse_cards("AH KH QH JH 9H 7C 7D 2S"))
+        hand[0] = Card(Rank.ACE, Suit.HEARTS, Enhancement.GLASS)
+        state = replace(build_state("AH KH QH JH 9H 7C 7D 2S", ("misprint",)), hand=tuple(hand))
+        self._сверить(*self._оба_пути(monkeypatch, state, state.hand[:5]))
+
+    def test_узкая_точка_сворачивать_нечего(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # У Lucky всего два исхода — перебор дешевле подгонки, быстрый путь
+        # не должен включаться, но ответ, разумеется, тот же.
+        hand = list(parse_cards("AH KH QH JH 9H 7C 7D 2S"))
+        hand[0] = Card(Rank.ACE, Suit.HEARTS, Enhancement.LUCKY)
+        state = replace(build_state("AH KH QH JH 9H 7C 7D 2S"), hand=tuple(hand))
+        self._сверить(*self._оба_пути(monkeypatch, state, state.hand[:5]))
+
+    def test_две_точки_случайности_идут_перебором(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Lucky-карта плюс Misprint — точек две, свёртка неприменима.
+        hand = list(parse_cards("AH KH QH JH 9H 7C 7D 2S"))
+        hand[0] = Card(Rank.ACE, Suit.HEARTS, Enhancement.LUCKY)
+        state = replace(build_state("AH KH QH JH 9H 7C 7D 2S", ("misprint",)), hand=tuple(hand))
+        self._сверить(*self._оба_пути(monkeypatch, state, state.hand[:5]))
+
+    def test_нелинейная_зависимость_откатывается_к_перебору(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Подгонка не принимается на веру: если зависимость от выпавшего
+        значения перестаёт быть многочленом, проверка это ловит и расчёт
+        уходит на честный перебор."""
+
+        class Ступенька(BaseJoker):
+            """Синтетический джокер: даёт множитель скачком, а не пропорционально."""
+
+            def react(self, event: Event, ctx: ScoreContext) -> Sequence[Effect]:
+                if isinstance(event, JokerTurn) and event.joker is self:
+                    выпало = ctx.chance(tuple((float(i), 1 / 12) for i in range(12)))
+                    return [AddMult(100.0 if выпало >= 6 else 0.0)]
+                return []
+
+        state = build_state("AH KH QH JH 9H 7C 7D 2S")
+        джокеры = (Ступенька(JokerCard(key="j_тест")),)
+        медленно, быстро = self._оба_пути(monkeypatch, state, state.hand[:5], jokers=джокеры)
+        # Шесть исходов из двенадцати дают +100 — среднее строго между
+        # границами, и совпасть оно может только если свёртка честно
+        # отказалась и посчитал перебор.
+        self._сверить(медленно, быстро)
+        assert быстро.minimum < быстро.expected < быстро.maximum
