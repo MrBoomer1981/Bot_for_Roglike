@@ -24,7 +24,7 @@ from balatro_bot import runner
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import Action
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard
-from balatro_bot.runner import StakeSummary, play_run, run_batch
+from balatro_bot.runner import DecisionEntry, RunReport, StakeSummary, play_run, run_batch
 
 
 def _state(phase: str, *, ante: int = 1, round_number: int = 1, won: bool = False) -> GameState:
@@ -468,12 +468,22 @@ class TestЖурналРана:
         assert шаг["requirement"] == 300
         assert шаг["jokers"] == ["Joker"]
 
-    def test_ставка_в_журнале_помечена_ненаблюдаемой(self, tmp_path: Path) -> None:
-        # Мод ставку не присылает вовсе (см. `RunReport.adopted`), поэтому в
-        # журнале она обязана быть отмечена как «то, что попросили флагом».
-        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+    def test_ставка_подхваченного_рана_не_наблюдаема(self, tmp_path: Path) -> None:
+        # Мод ставку не присылает вовсе (см. `RunReport.adopted`), поэтому у
+        # подхваченного рана она — то, что попросили флагом, не наблюдение.
+        play_run(self._bridge(), deck="RED", stake="WHITE", adopt=True, log_dir=tmp_path)
         (файл,) = list(tmp_path.glob("*.json"))
         assert json.loads(файл.read_text(encoding="utf-8"))["stake_observed"] is False
+
+    def test_ставка_начатого_раннером_рана_известна_точно(self, tmp_path: Path) -> None:
+        # А вот когда ран начал сам раннер, он ставку и передал в `start` —
+        # тут она известна точно, и помечать её неизвестной значило бы
+        # выбрасывать знание, которое у нас есть.
+        play_run(self._bridge(), deck="RED", stake="GOLD", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        данные = json.loads(файл.read_text(encoding="utf-8"))
+        assert данные["stake_observed"] is True
+        assert данные["stake"] == "GOLD"
 
     def test_без_каталога_ничего_не_пишется(self, tmp_path: Path) -> None:
         play_run(self._bridge(), deck="RED", stake="WHITE")
@@ -600,3 +610,66 @@ class TestПакетНеЖжётРаны:
         )
         (сводка,) = summaries
         assert сводка.runs == 3
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestСчётчикиСбросов:
+    """Ран ZODIAC проиграл, не сбросив ни разу с анте 3 и закрыв так десять
+    раундов подряд, — и заметил это человек, читая сто строк журнала руками.
+    Отчёт обязан называть такой симптом сам."""
+
+    def _report(self, *действия: tuple[str, str, int]) -> RunReport:
+        решения = tuple(
+            DecisionEntry(
+                step=i + 1,
+                phase=фаза,
+                ante=1,
+                round_number=1,
+                money=0,
+                action=действие,
+                discards_left=сбросов,
+            )
+            for i, (фаза, действие, сбросов) in enumerate(действия)
+        )
+        return RunReport("RED", "WHITE", None, "lost", 1, 1, len(решения), решения)
+
+    def test_считает_розыгрыши_и_сбросы(self) -> None:
+        отчёт = self._report(
+            ("SELECTING_HAND", "сбросил AH KH", 3),
+            ("SELECTING_HAND", "сыграл QH JH", 2),
+            ("SELECTING_HAND", "сыграл 9H", 2),
+        )
+        assert отчёт.discards_used == 1
+        assert отчёт.plays_made == 2
+
+    def test_раунд_без_единого_сброса_замечен(self) -> None:
+        отчёт = self._report(
+            ("SELECTING_HAND", "сыграл QH JH", 3),
+            ("SELECTING_HAND", "сыграл 9H", 3),
+            ("ROUND_EVAL", "забрал награду за раунд", 3),
+        )
+        assert отчёт.rounds_with_discards_unspent == 1
+
+    def test_раунд_со_сбросом_не_считается(self) -> None:
+        отчёт = self._report(
+            ("SELECTING_HAND", "сбросил AH", 3),
+            ("SELECTING_HAND", "сыграл QH JH", 2),
+            ("ROUND_EVAL", "забрал награду за раунд", 2),
+        )
+        assert отчёт.rounds_with_discards_unspent == 0
+
+    def test_раунд_без_доступных_сбросов_не_считается(self) -> None:
+        # Не сбросил, потому что было нечем, — это не симптом.
+        отчёт = self._report(
+            ("SELECTING_HAND", "сыграл QH JH", 0),
+            ("ROUND_EVAL", "забрал награду за раунд", 0),
+        )
+        assert отчёт.rounds_with_discards_unspent == 0
+
+    def test_счётчики_попадают_в_журнал(self, tmp_path: Path) -> None:
+        bridge = ScriptedBridge([_state("SELECTING_HAND"), _state("GAME_OVER")])
+        play_run(bridge, deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        данные = json.loads(файл.read_text(encoding="utf-8"))
+        assert "discards_used" in данные
+        assert "rounds_with_discards_unspent" in данные

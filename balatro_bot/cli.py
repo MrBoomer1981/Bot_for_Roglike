@@ -281,14 +281,22 @@ def _autoplay(bridge: ModBridge, args: argparse.Namespace) -> int:
     return _autoplay_managed(bridge, args)
 
 
-def _print_run_step(_state: GameState, entry: DecisionEntry) -> None:
+def _print_run_step(_state: GameState, entry: DecisionEntry, *, explain: bool = False) -> None:
     """Живой прогресс одиночного управляемого рана — по строке на решение,
-    чтобы длинный ран не выглядел зависшим."""
+    чтобы длинный ран не выглядел зависшим.
+
+    `explain` — показывать и обоснование (`DecisionEntry.reason`, улучшение
+    E1a). Без него живьём видно только «продал такого-то», а «почему» лежит
+    в отчёте и журнале до конца рана — то есть ровно тогда, когда за ходом
+    решения смотреть уже поздно. Замечено на живом ране: два размена подряд
+    были видны, а числа под ними — нет."""
     метка = " [отказ]" if entry.rejected else ""
     print(
         f"  [{entry.step:>3}] анте {entry.ante} р{entry.round_number} "
         f"${entry.money:<4} {entry.action}{метка}"
     )
+    if explain and entry.reason:
+        print(f"        └ {entry.reason}")
 
 
 def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
@@ -320,7 +328,7 @@ def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
                 include_discards=args.consider_discards,
                 max_steps=args.max_steps,
                 adopt=args.adopt,
-                on_step=_print_run_step,
+                on_step=lambda state, entry: _print_run_step(state, entry, explain=args.explain),
                 log_dir=args.log,
             )
             render_run_report(report, verbose=args.explain)

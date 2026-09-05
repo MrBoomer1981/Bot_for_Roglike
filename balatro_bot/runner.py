@@ -211,6 +211,37 @@ class RunReport:
     def won(self) -> bool:
         return self.outcome == "won"
 
+    @property
+    def discards_used(self) -> int:
+        """Сколько раз за ран автопилот сбросил карты."""
+        return sum(1 for entry in self.decisions if entry.action.startswith("сбросил"))
+
+    @property
+    def plays_made(self) -> int:
+        """Сколько раз разыграл."""
+        return sum(1 for entry in self.decisions if entry.action.startswith("сыграл"))
+
+    @property
+    def rounds_with_discards_unspent(self) -> int:
+        """Раундов, закрытых без единого сброса при доступных сбросах.
+
+        Ран ZODIAC (2026-09-05) проиграл, ни разу не сбросив с анте 3 и
+        закрыв так десять раундов подряд — а заметил это человек, вручную
+        читая сто строк журнала. Симптом такого веса отчёт обязан называть
+        сам."""
+        сколько = 0
+        предыдущая: DecisionEntry | None = None
+        for entry in self.decisions:
+            if (
+                entry.phase == "ROUND_EVAL"
+                and предыдущая is not None
+                and предыдущая.discards_left > 0
+                and not _раунд_сбрасывал(self.decisions, entry.step)
+            ):
+                сколько += 1
+            предыдущая = entry
+        return сколько
+
 
 @dataclass(frozen=True, slots=True)
 class StakeSummary:
@@ -489,6 +520,16 @@ def _play_run(
     )
 
 
+def _раунд_сбрасывал(decisions: Sequence[DecisionEntry], до_шага: int) -> bool:
+    """Был ли сброс в раунде, закончившемся на шаге `до_шага`."""
+    for entry in reversed([e for e in decisions if e.step < до_шага]):
+        if entry.phase == "ROUND_EVAL":
+            break
+        if entry.action.startswith("сбросил"):
+            return True
+    return False
+
+
 def _reconnect(
     bridge: ModBridge,
     *,
@@ -631,12 +672,18 @@ def report_to_json(report: RunReport) -> dict[str, object]:
     return {
         "deck": report.deck,
         "stake": report.stake,
-        "stake_observed": False,
+        # Ставка известна точно ровно тогда, когда ран начал раннер: он
+        # сам передал её в `start`. У подхваченного рана мод ставку не
+        # присылает вовсе, и она остаётся тем, что попросили флагом.
+        "stake_observed": not report.adopted,
         "seed": report.seed,
         "outcome": report.outcome,
         "ante": report.ante,
         "round": report.round_number,
         "steps": report.steps,
+        "plays": report.plays_made,
+        "discards_used": report.discards_used,
+        "rounds_with_discards_unspent": report.rounds_with_discards_unspent,
         "note": report.note,
         "adopted": report.adopted,
         "decisions": [
@@ -761,6 +808,9 @@ def render_run_report(report: RunReport, *, verbose: bool = False) -> None:
         f"\n{report.deck} / {report.stake}{seed}: {исход} — "
         f"анте {report.ante}, раунд {report.round_number}, шагов {report.steps}"
     )
+    нетронуто = report.rounds_with_discards_unspent
+    хвост = f", раундов без единого сброса {нетронуто}" if нетронуто else ""
+    print(f"  розыгрышей {report.plays_made}, сбросов {report.discards_used}{хвост}")
     if report.note:
         print(f"  {report.note}")
 

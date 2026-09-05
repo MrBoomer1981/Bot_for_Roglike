@@ -20,6 +20,7 @@ from balatro_bot.autopilot import (
     _discard_edge_is_noise,
     _indices_of,
     _on_pace_without_discard,
+    _pace_projection,
     _reorder_indices,
     decide_action,
     decide_skip,
@@ -79,12 +80,12 @@ class TestDecideAction:
             phase="SMODS_BOOSTER_OPENED",
             pack=(ShopItem("c_fool", "The Fool", "TAROT", 0),),
         )
-        assert decide_action(state) == Action(kind="skip_pack")
+        assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
 
     def test_пустой_пак_скипается(self) -> None:
         state = build_state("AH KH QH JH 9H")
         state = replace(state, phase="SMODS_BOOSTER_OPENED", pack=())
-        assert decide_action(state) == Action(kind="skip_pack")
+        assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
 
     def test_пустая_рука_ничего_не_решает(self) -> None:
         state = build_state("AH KH QH JH 9H")
@@ -169,8 +170,13 @@ class TestOnPaceWithoutDiscard:
             already_scored=scored,
         )
 
-    def _state(self, hands_left: int) -> GameState:
-        return replace(build_state("AH KH QH JH 9H", hands_left=hands_left), phase="SELECTING_HAND")
+    def _state(self, hands_left: int, *, hands_played: int = 0, scored: int = 0) -> GameState:
+        return replace(
+            build_state("AH KH QH JH 9H", hands_left=hands_left),
+            phase="SELECTING_HAND",
+            hands_played=hands_played,
+            chips_scored=scored,
+        )
 
     def test_без_требования_не_на_темпе(self) -> None:
         advice = self._advice(best=9999, required=None, scored=0)
@@ -185,14 +191,40 @@ class TestOnPaceWithoutDiscard:
         assert _on_pace_without_discard(self._state(2), advice) is True
 
     def test_на_темпе_когда_рук_с_запасом_хватает(self) -> None:
-        # 300 * 3 = 900 >= (600 - 0) * 1.5 = 900
-        advice = self._advice(best=300, required=600, scored=0)
+        # Прогноз без истории: 300 + 300×0.75×2 = 750 >= (500-0)×1.5 = 750.
+        advice = self._advice(best=300, required=500, scored=0)
         assert _on_pace_without_discard(self._state(3), advice) is True
 
     def test_не_на_темпе_когда_рук_не_хватает(self) -> None:
-        # 300 * 3 = 900 < (700 - 0) * 1.5 = 1050
+        # 750 < (700-0)×1.5 = 1050.
         advice = self._advice(best=300, required=700, scored=0)
         assert _on_pace_without_discard(self._state(3), advice) is False
+
+    def test_прогноз_строго_осторожнее_прежней_формулы(self) -> None:
+        # Прежде было `лучшая × рук` — 300×3 = 900, и на требовании 600
+        # (порог 900) guard срабатывал. Он завышал по построению: лучшую
+        # руку играют первой, дальше карта хуже. Теперь не срабатывает.
+        advice = self._advice(best=300, required=600, scored=0)
+        assert _pace_projection(self._state(3), advice) < 300 * 3
+        assert _on_pace_without_discard(self._state(3), advice) is False
+
+    def test_с_историей_раунда_берётся_наблюдённое_среднее(self) -> None:
+        # Раунд уже показал по 100 за руку — будущие руки считаются по
+        # этому, а не по текущей лучшей. 300 + 100×2 = 500.
+        advice = self._advice(best=300, required=600, scored=200)
+        state = self._state(3, hands_played=2, scored=200)
+        assert _pace_projection(state, advice) == 500
+
+    def test_наблюдённое_среднее_не_завышает_текущую_руку(self) -> None:
+        # Если раньше в раунде шли крупные руки, будущие всё равно не
+        # считаются выше текущей лучшей — иначе прогноз снова поедет вверх.
+        advice = self._advice(best=100, required=9999, scored=1000)
+        state = self._state(3, hands_played=1, scored=1000)
+        assert _pace_projection(state, advice) == 100 * 3
+
+    def test_последняя_рука_считается_одна(self) -> None:
+        advice = self._advice(best=250, required=9999, scored=0)
+        assert _pace_projection(self._state(1), advice) == 250
 
 
 class TestDiscardEdgeIsNoise:
@@ -265,7 +297,7 @@ class TestDecideActionИспользуетКонсумабль:
             consumables=(ShopItem("c_mercury", "Mercury", "PLANET", 0),),
         )
         action = decide_action(state)
-        assert action == Action(kind="use", item_index=0, label="Mercury")
+        assert _без_повода(action) == Action(kind="use", item_index=0, label="Mercury")
 
     def test_без_planet_консумаблей_решает_розыгрыш_как_раньше(self) -> None:
         state = build_state("AH KH QH JH 9H 7C 7D 2S")
@@ -285,7 +317,7 @@ class TestDecideActionИспользуетКонсумабль:
             ),
         )
         action = decide_action(state)
-        assert action == Action(kind="use", item_index=1, label="Mercury")
+        assert _без_повода(action) == Action(kind="use", item_index=1, label="Mercury")
 
 
 class TestReorderIndices:
@@ -430,7 +462,7 @@ class TestDecideActionНаВыбореБлайнда:
             },
         )
         action = decide_action(state)
-        assert action == Action(kind="skip")
+        assert _без_повода(action) == Action(kind="skip")
 
     def test_играть_когда_скип_не_доказан(self) -> None:
         state = GameState(
@@ -441,7 +473,7 @@ class TestDecideActionНаВыбореБлайнда:
             },
         )
         action = decide_action(state)
-        assert action == Action(kind="select")
+        assert _без_повода(action) == Action(kind="select")
 
     def test_boss_нельзя_скипнуть_решение_select(self) -> None:
         state = GameState(
@@ -449,14 +481,14 @@ class TestDecideActionНаВыбореБлайнда:
             blinds={"boss": _blind("BOSS", "SELECT", 600)},
         )
         action = decide_action(state)
-        assert action == Action(kind="select")
+        assert _без_повода(action) == Action(kind="select")
 
 
 class TestDecideActionНаRoundEval:
     def test_всегда_cash_out(self) -> None:
         # Решать нечего — без явного вызова автопилот застрял бы здесь
         # навсегда (модульный докстринг, раздел про ROUND_EVAL).
-        assert decide_action(GameState(phase="ROUND_EVAL")) == Action(kind="cash_out")
+        assert _без_повода(decide_action(GameState(phase="ROUND_EVAL"))) == Action(kind="cash_out")
 
 
 class TestDecideActionВМагазине:
@@ -488,7 +520,7 @@ class TestDecideActionВМагазине:
             blinds={"small": _blind("SMALL", "UPCOMING", 100_000)},
             shop=(ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult"),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a2_покупает_того_же_джокера_при_малом_требовании(self) -> None:
         # То же самое, но требование маленькое — 3% от 300 = 9 очков,
@@ -506,7 +538,7 @@ class TestDecideActionВМагазине:
 
     def test_пустой_магазин_уходит(self) -> None:
         state = GameState(phase="SHOP", money=10, joker_slots=5)
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_не_хватает_денег_уходит(self) -> None:
         state = GameState(
@@ -515,7 +547,7 @@ class TestDecideActionВМагазине:
             joker_slots=5,
             shop=(ShopItem("j_joker", "Joker", "JOKER", 99, "+4 Mult"),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_нет_слота_уходит(self) -> None:
         existing = tuple(JokerCard(key="j_joker") for _ in range(3))
@@ -526,7 +558,7 @@ class TestDecideActionВМагазине:
             joker_slots=3,
             shop=(ShopItem("j_greedy_joker", "Greedy Joker", "JOKER", 4),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_неизвестный_джокер_не_покупается(self) -> None:
         state = GameState(
@@ -535,7 +567,7 @@ class TestDecideActionВМагазине:
             joker_slots=5,
             shop=(ShopItem("j_совсем_новый", "???", "JOKER", 5),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_неоценённый_ваучер_и_arcana_пак_не_покупаются(self) -> None:
         # Ваучер вне всех трёх уровней (`v_omen_globe`) и Arcana-пак не
@@ -546,7 +578,7 @@ class TestDecideActionВМагазине:
             shop_vouchers=(ShopItem("v_omen_globe", "Omen Globe", "VOUCHER", 10),),
             shop_packs=(ShopItem("p_arcana_normal_1", "Arcana Pack", "BOOSTER", 4),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a4_покупает_ваучер_прямого_ресурса(self) -> None:
         # v_grabber (+1 рука) — expected_uplift в очках, порог как у джокера.
@@ -578,7 +610,7 @@ class TestDecideActionВМагазине:
             joker_slots=5,
             shop_vouchers=(ShopItem("v_telescope", "Telescope", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a4_не_покупает_ваучер_не_по_карману(self) -> None:
         state = GameState(
@@ -587,7 +619,7 @@ class TestDecideActionВМагазине:
             joker_slots=5,
             shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a4_денежный_ваучер_с_отрицательным_нетто_не_покупается(self) -> None:
         # v_seed_money: при $10 на руках прирост процентов ≈ 0 за горизонт,
@@ -603,7 +635,7 @@ class TestDecideActionВМагазине:
             },
             shop_vouchers=(ShopItem("v_seed_money", "Seed Money", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_покупает_buffoon_пак_когда_джокеров_брать_нечего(self) -> None:
         state = GameState(
@@ -638,7 +670,7 @@ class TestDecideActionВМагазине:
             full_deck=_ПАРА_ТУЗОВ,
             shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_продаёт_мёртвый_груз_под_лучший_оффер(self) -> None:
         # Слоты полны (2/2), один джокер отключён (вклад ровно 0), в витрине
@@ -665,7 +697,7 @@ class TestDecideActionВМагазине:
             joker_slots=2,
             shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_не_продаёт_если_денег_не_хватит_даже_с_продажей(self) -> None:
         state = GameState(
@@ -675,7 +707,7 @@ class TestDecideActionВМагазине:
             joker_slots=2,
             shop=(ShopItem("j_joker", "Joker", "JOKER", 9),),  # 1 + 0 возврата < 9
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_возврат_за_продажу_учитывается_в_бюджете(self) -> None:
         # Денег мало, но продажа отключённого вернёт $3 — на оффер за $3 хватит.
@@ -718,7 +750,7 @@ class TestDecideActionВМагазине:
             jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
             shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a7_при_полных_слотах_джокеров_порог_overstock_базовый(self) -> None:
         # Слоты джокеров заняты — лишний слот витрины некуда девать, планка 5.0.
@@ -729,7 +761,7 @@ class TestDecideActionВМагазине:
             jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
             shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_a7_не_трогает_неструктурный_ваучер(self) -> None:
         # v_telescope тоже heuristic_value 3.0, но это не +слот витрины —
@@ -741,7 +773,7 @@ class TestDecideActionВМагазине:
             jokers=(JokerCard(key="j_joker"), JokerCard(key="j_joker")),
             shop_vouchers=(ShopItem("v_telescope", "Telescope", "VOUCHER", 10),),
         )
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
 
 class TestDecideActionРазменДоПаков:
@@ -807,18 +839,18 @@ class TestDecideActionРеролМагазина:
 
     def test_не_рероллит_без_денежного_запаса(self) -> None:
         # $15 − $5 = $10 < _REROLL_MONEY_RESERVE (12).
-        assert decide_action(self._junk_shop(money=15)) == Action(kind="next_round")
+        assert _без_повода(decide_action(self._junk_shop(money=15))) == Action(kind="next_round")
 
     def test_не_рероллит_без_известного_требования_блайнда(self) -> None:
-        assert decide_action(self._junk_shop(blinds={})) == Action(kind="next_round")
+        assert _без_повода(decide_action(self._junk_shop(blinds={}))) == Action(kind="next_round")
 
     def test_не_рероллит_когда_нечем_платить(self) -> None:
-        assert decide_action(self._junk_shop(money=3)) == Action(kind="next_round")
+        assert _без_повода(decide_action(self._junk_shop(money=3))) == Action(kind="next_round")
 
     def test_не_рероллит_против_неподъёмного_блайнда(self) -> None:
         # 3% от 1_000_000 = 30_000 — реролл столько не наберёт.
         state = self._junk_shop(blinds={"small": _blind("SMALL", "UPCOMING", 1_000_000)})
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_покупка_джокера_приоритетнее_рерола(self) -> None:
         # j_joker "+4 Mult" проходит порог покупки — рероллить не нужно.
@@ -835,11 +867,13 @@ class TestDecideActionРеролМагазина:
         # (3% от 300 = 9) и скатывала витрину; копить на уже лежащий оффер
         # выгоднее, чем платить за ролл.
         state = self._junk_shop(shop=(ShopItem("j_joker", "Joker", "JOKER", 100, "+4 Mult"),))
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
     def test_не_рероллит_при_исчерпанном_лимите_роллов(self) -> None:
         # Цена $7 при базе $5 — два ролла в этом заходе уже сделаны.
-        assert decide_action(self._junk_shop(reroll_cost=7)) == Action(kind="next_round")
+        assert _без_повода(decide_action(self._junk_shop(reroll_cost=7))) == Action(
+            kind="next_round"
+        )
 
     def test_рероллит_пока_лимит_не_исчерпан(self) -> None:
         # Цена $6 — сделан один ролл, лимит (2) ещё не выбран.
@@ -849,7 +883,7 @@ class TestDecideActionРеролМагазина:
         # С Reroll Surplus база $3, поэтому цена $5 означает уже два ролла —
         # лимит выбран, хотя без ваучера та же цена означала бы ноль роллов.
         state = self._junk_shop(used_vouchers=frozenset({"v_reroll_surplus"}))
-        assert decide_action(state) == Action(kind="next_round")
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
 
 
 class TestDecideActionПродажаБалласта:
@@ -1009,7 +1043,7 @@ class TestDecideActionНаВскрытииПака:
             ),
         )
         action = decide_action(state)
-        assert action == Action(kind="pack", item_index=1, label="Mercury")
+        assert _без_повода(action) == Action(kind="pack", item_index=1, label="Mercury")
 
     def test_planet_неопознанные_карты_приводят_к_скипу_пака(self) -> None:
         state = GameState(
@@ -1017,7 +1051,7 @@ class TestDecideActionНаВскрытииПака:
             full_deck=_ПАРА_ТУЗОВ,
             pack=(ShopItem("c_fool", "The Fool", "TAROT", 0),),  # таро, не планета
         )
-        assert decide_action(state) == Action(kind="skip_pack")
+        assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
 
     def test_buffoon_берёт_лучшего_джокера(self) -> None:
         state = GameState(
@@ -1029,7 +1063,7 @@ class TestDecideActionНаВскрытииПака:
             ),
         )
         action = decide_action(state)
-        assert action == Action(kind="pack", item_index=1, label="Joker")
+        assert _без_повода(action) == Action(kind="pack", item_index=1, label="Joker")
 
     def test_buffoon_без_положительного_прироста_скипает(self) -> None:
         # Только нереализованный джокер → оценки нет → skip_pack.
@@ -1038,7 +1072,7 @@ class TestDecideActionНаВскрытииПака:
             full_deck=_ПАРА_ТУЗОВ,
             pack=(ShopItem("j_совсем_новый", "???", "JOKER", 0),),
         )
-        assert decide_action(state) == Action(kind="skip_pack")
+        assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
 
     def test_ванильное_имя_фазы_тоже_работает(self) -> None:
         # На случай не-Steamodded окружения — PLANET_PACK всё ещё в наборе.
@@ -1258,3 +1292,76 @@ class TestОбоснованиеРешения:
         action = decide_action(GameState(phase="ROUND_EVAL"))
         assert action is not None
         assert action.reason == ""
+
+
+class TestОбоснованиеНаИгровомПути:
+    """Доделка E1a по итогам рана ZODIAC. Вчерашняя версия заполняла
+    `Action.reason` в шести местах, и все шесть были в магазине: из 98
+    решений рана обоснование несли 19, а все 31 розыгрыш и все 7 сбросов —
+    ни одного. Из-за этого вопрос «почему не сбросил» журналом не закрылся.
+
+    Проверяется не формулировка, а что обоснование есть и в нём стоят
+    величины именно той ветки, которая решила."""
+
+    def _рука(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SELECTING_HAND",
+            "hands_left": 4,
+            "discards_left": 3,
+            "blinds": {"small": _blind("SMALL", "CURRENT", 300)},
+            "blind": _blind("SMALL", "CURRENT", 300),
+            "hand_info": _hand_info(),
+        }
+        state = replace(build_state("AH KH QH JH 9H 7C 7D 2S"), **{**base, **overrides})  # type: ignore[arg-type]
+        return state
+
+    def test_гарантированный_ход_называет_свой_предел(self) -> None:
+        # Требование низкое — флеш закрывает его с гарантией.
+        state = self._рука(blind=_blind("SMALL", "CURRENT", 50), blinds={})
+        action = decide_action(state)
+        assert action is not None and action.kind == "play"
+        assert "гарантированный ход" in action.reason
+        assert "нижний предел" in action.reason
+
+    def test_на_темпе_называет_прогноз_и_остаток_сбросов(self) -> None:
+        # Прогноз перекрывает остаток с запасом — сброс не нужен, и в
+        # журнале должно быть видно, что сбросы при этом целы.
+        state = self._рука(blind=_blind("SMALL", "CURRENT", 200), blinds={}, chips_scored=0)
+        action = decide_action(state)
+        assert action is not None
+        if "на темпе" in action.reason:
+            assert "прогноз" in action.reason
+            assert "сбросов не тронуто 3" in action.reason
+
+    def test_выбор_блайнда_объясняется(self) -> None:
+        state = replace(
+            build_state("AH KH QH JH 9H"),
+            phase="BLIND_SELECT",
+            blinds={"small": _blind("SMALL", "SELECT", 300)},
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind in ("select", "skip")
+        assert action.reason != ""
+
+    def test_уход_из_магазина_называет_лучший_оффер_и_порог(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            money=2,
+            joker_slots=5,
+            shop_slots=2,
+            blinds={"small": _blind("SMALL", "UPCOMING", 300)},
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 99),),
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind == "next_round"
+        assert action.reason != ""
+        assert "порог" in action.reason or "нет оценённых" in action.reason
+
+    def test_каждое_игровое_решение_несёт_обоснование(self) -> None:
+        # Прямая регрессия рана ZODIAC: пустых обоснований на игровом пути
+        # быть не должно вовсе.
+        for требование in (50, 200, 1000, 100000):
+            state = self._рука(blind=_blind("SMALL", "CURRENT", требование), blinds={})
+            action = decide_action(state)
+            assert action is not None, требование
+            assert action.reason != "", (требование, action.kind)

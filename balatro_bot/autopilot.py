@@ -358,6 +358,19 @@ _MIN_REORDER_GAIN_FRAC = 0.02
 #: пересоберёшь), отсюда запас в половину. Калибруется на живых прогонах.
 _DISCARD_PACE_MARGIN = 1.5
 
+#: Во сколько раз следующая рука раунда слабее текущей лучшей, когда
+#: истории раунда ещё нет. Лучшую руку разыгрывают первой, дальше карта
+#: хуже — прогноз `лучшая × рук` завышал по построению.
+#:
+#: Число **измерено**, а не взято из головы: последний раунд рана ZODIAC
+#: (2026-09-05) шёл 2754 → 2052 → 2240, то есть последующие руки дали
+#: около 0.78 от первой. Округлено вниз до 0.75. Выборка — один раунд
+#: одного рана, то есть совсем маленькая; число заявлено как допущение и
+#: подлежит перемеру батчем E1 по журналам, а не считается константой.
+#: Как только в раунде появляется история, оно не используется вовсе —
+#: `_pace_projection` берёт наблюдённое среднее.
+_PACE_DECAY = 0.75
+
 #: Улучшение B1. Во сколько раз матожидание сброса должно превосходить
 #: лучшую доступную руку, чтобы перевес считался сигналом, а не шумом самой
 #: оценки. Порог = задокументированный допуск `advise_discard` (раздел 7
@@ -486,9 +499,26 @@ def _decide_blind_action(state: GameState) -> Action:
     `evaluate_skip` возвращает `None`, когда скипать вообще нельзя (на
     очереди Boss Blind) — тогда решение единственное, тоже `select`."""
     advice = evaluate_skip(state)
-    if advice is not None and decide_skip(advice):
-        return Action(kind="skip")
-    return Action(kind="select")
+    if advice is None:
+        # Босс: скипнуть нельзя, решение единственное.
+        return Action(kind="select", reason="боссовый блайнд — скип невозможен")
+    if decide_skip(advice):
+        return Action(
+            kind="skip",
+            reason=(
+                f"тег {advice.tag_name} стоит ${advice.tag_dollars:g} против "
+                f"${advice.play_reward_min} гарантированной награды за игру"
+            ),
+        )
+    if advice.tag_dollars is None:
+        имя = advice.tag_name or "без тега"
+        повод = f"цена тега {имя} числом не известна"
+    else:
+        повод = (
+            f"тег {advice.tag_name} стоит ${advice.tag_dollars:g}, не больше "
+            f"${advice.play_reward_min} за игру"
+        )
+    return Action(kind="select", reason=повод)
 
 
 def _next_blind_requirement(state: GameState) -> int | None:
@@ -816,7 +846,29 @@ def _decide_shop_action(state: GameState) -> Action:
         reroll_action = _decide_reroll_action(state, advice, requirement)
         if reroll_action is not None:
             return reroll_action
-    return Action(kind="next_round")
+    return Action(kind="next_round", reason=_shop_nothing_reason(state, advice))
+
+
+def _shop_nothing_reason(state: GameState, advice: ShopAdvice | None) -> str:
+    """Почему из магазина ушли, ничего не взяв (улучшение E1a, доделка).
+
+    В ране ZODIAC таких решений было двенадцать, и все двенадцать в
+    журнале молчали — а «ничего не купил» это тоже решение, за которым
+    стоят числа: лучший оффер и порог, который он не взял."""
+    if advice is None:
+        return "витрина пуста или не разобрана"
+    requirement = _next_blind_requirement(state)
+    оценённые = [
+        offer.expected_uplift for offer in advice.jokers if offer.expected_uplift is not None
+    ]
+    лучший = max(оценённые, default=None)
+    порог = _describe_buy_bar(requirement)
+    if лучший is None:
+        return f"на витрине нет оценённых джокеров, денег ${state.money}"
+    return (
+        f"лучший оффер {лучший:.0f} не берёт порог {порог}, "
+        f"денег ${state.money}, слотов занято {len(state.jokers)}"
+    )
 
 
 def _decide_pack_action(state: GameState) -> Action:
@@ -849,6 +901,10 @@ def _decide_pack_action(state: GameState) -> Action:
             kind="pack",
             item_index=_item_index_of(state.pack, offer.item),
             label=offer.item.label,
+            reason=(
+                f"{offer.kind}: прирост {offer.expected_uplift:.0f}"
+                + ("" if offer.kind != "joker" else f", слотов занято {len(state.jokers)}")
+            ),
         )
     return Action(kind="skip_pack")
 
@@ -931,10 +987,41 @@ def _decide_rearrange_action(state: GameState, plays: Advice) -> Action | None:
     return Action(kind="rearrange", indices=_reorder_indices(state.jokers, best_order))
 
 
+def _pace_projection(state: GameState, plays: Advice) -> float:
+    """Сколько автопилот рассчитывает набрать оставшимися руками.
+
+    Раньше здесь стояло `лучшая рука × осталось рук`, и это завышало по
+    построению: лучшую руку разыгрывают **первой**, дальше карта хуже. В
+    ране ZODIAC последний раунд шёл 2754, затем 2052, затем 2240 — спад
+    примерно на четверть, а прогноз считал все четыре руки по 2754.
+    Ошибка всегда в одну сторону: в пользу «не сбрасывать».
+
+    Теперь текущая рука берётся по своей оценке, а будущие — по
+    **наблюдённому** в этом раунде среднему (`chips_scored / hands_played`),
+    когда история есть. Это измерение, а не допущение, и оно само
+    учитывает и силу колоды, и то, что хорошие карты уже сыграны. Пока
+    истории нет (первая рука раунда), будущие руки считаются с затуханием
+    `_PACE_DECAY` — вот это как раз допущение, и оно заявлено.
+
+    Прогноз никогда не выше старого `лучшая × рук`: обе поправки только
+    уменьшают его, поэтому guard стал строго осторожнее, а не иначе."""
+    if state.hands_left <= 0:
+        return 0.0
+    текущая = plays.best.score
+    будущих = state.hands_left - 1
+    if будущих <= 0:
+        return текущая
+    if state.hands_played > 0:
+        за_руку = min(plays.already_scored / state.hands_played, текущая)
+    else:
+        за_руку = текущая * _PACE_DECAY
+    return текущая + за_руку * будущих
+
+
 def _on_pace_without_discard(state: GameState, plays: Advice) -> bool:
     """Улучшение B1: добьёт ли автопилот блайнд одними розыгрышами, без
-    спекулятивных сбросов. `лучшая рука × осталось рук` (с запасом
-    `_DISCARD_PACE_MARGIN`) уже перекрывает остаток требования.
+    спекулятивных сбросов — прогноз `_pace_projection` с запасом
+    `_DISCARD_PACE_MARGIN` уже перекрывает остаток требования.
 
     Требует минимум двух рук в запасе: с единственной оставшейся рукой сброс —
     это выжимание последнего хода, а не спекуляция от избытка, и решать его
@@ -945,7 +1032,7 @@ def _on_pace_without_discard(state: GameState, plays: Advice) -> bool:
     remaining = plays.required - plays.already_scored
     if remaining <= 0:
         return True
-    return plays.best.score * state.hands_left >= remaining * _DISCARD_PACE_MARGIN
+    return _pace_projection(state, plays) >= remaining * _DISCARD_PACE_MARGIN
 
 
 def _discard_edge_is_noise(discard: ActionOption, best_play: Candidate) -> bool:
@@ -1005,10 +1092,15 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         # оставшееся требование, играем его — не гадаем.
         sure = plays.cheapest_sufficient
         if sure is not None:
+            остаток = (plays.required or 0) - plays.already_scored
             return Action(
                 kind="play",
                 cards=sure.cards,
                 indices=_indices_of(state.hand, sure.cards),
+                reason=(
+                    f"гарантированный ход: нижний предел {sure.outcome.minimum:.0f} "
+                    f"уже перекрывает остаток {остаток:.0f}"
+                ),
             )
 
         # Улучшение B1. `cheapest_sufficient` ловит только «закрыть блайнд
@@ -1020,13 +1112,24 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         # `advise_discard` внутри `rank_actions` (см. F1).
         if include_discards and _on_pace_without_discard(state, plays):
             best_play = plays.best
+            прогноз = _pace_projection(state, plays)
+            остаток = (plays.required or 0) - plays.already_scored
             return Action(
                 kind="play",
                 cards=best_play.cards,
                 indices=_indices_of(state.hand, best_play.cards),
+                reason=(
+                    f"на темпе без сброса: прогноз {прогноз:.0f} на {state.hands_left} "
+                    f"рук против остатка {остаток:.0f} × {_DISCARD_PACE_MARGIN} = "
+                    f"{остаток * _DISCARD_PACE_MARGIN:.0f}; сбросов не тронуто "
+                    f"{state.discards_left}"
+                ),
             )
 
-        options = rank_actions(state, top=1, include_discards=include_discards)
+        # `top=2`, а не 1: ранжирование считается целиком и режется в конце,
+        # так что второй вариант достаётся даром — а в журнале он
+        # показывает, был ли выбор близким (улучшение E1a, доделка).
+        options = rank_actions(state, top=2, include_discards=include_discards)
         if not options:
             return None
         best = options[0]
@@ -1042,9 +1145,21 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
                 kind="play",
                 cards=best_play.cards,
                 indices=_indices_of(state.hand, best_play.cards),
+                reason=(
+                    f"перевес сброса — шум: {best.score:.0f} против "
+                    f"{plays.best.score:.0f} × {_DISCARD_EDGE_MARGIN} = "
+                    f"{plays.best.score * _DISCARD_EDGE_MARGIN:.0f}"
+                ),
             )
 
-        return Action(kind=best.kind, cards=best.cards, indices=_indices_of(state.hand, best.cards))
+        второй = options[1] if len(options) > 1 else None
+        хвост = f", следом {второй.kind} {второй.score:.0f}" if второй is not None else ""
+        return Action(
+            kind=best.kind,
+            cards=best.cards,
+            indices=_indices_of(state.hand, best.cards),
+            reason=f"лучший в общем списке: {best.kind} {best.score:.0f}{хвост}",
+        )
 
     return None
 

@@ -12,6 +12,8 @@ from pathlib import Path
 import pytest
 
 from balatro_bot import cli
+from balatro_bot.core.state import GameState
+from balatro_bot.runner import DecisionEntry
 from tests.fake_mod import FakeMod, sample_state
 
 
@@ -390,3 +392,43 @@ class TestРегрессииВыводе:
     def test_нулевой_top_не_роняет(self, capsys: pytest.CaptureFixture[str]) -> None:
         assert cli.main(["advise", "--hand", "AH AD", "--top", "0"]) == 0
         assert "pair" in capsys.readouterr().out
+
+
+class TestЖивоеОбоснование:
+    """Улучшение E1a, доделка по итогам живого рана. Обоснование решения
+    печаталось только в итоговом отчёте и журнале, то есть становилось
+    видно уже после рана — а смотрят за ним по ходу. На живом ране это
+    сразу и вылезло: два размена подряд было видно, чисел под ними нет."""
+
+    def _entry(self, reason: str) -> DecisionEntry:
+        return DecisionEntry(
+            step=7,
+            phase="SHOP",
+            ante=2,
+            round_number=5,
+            money=11,
+            action="продал джокера: Wily Joker",
+            reason=reason,
+        )
+
+    def test_с_explain_обоснование_видно(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli._print_run_step(
+            GameState(),
+            self._entry("размен под Walkie Talkie: оффер 900 против вклада 40"),
+            explain=True,
+        )
+        out = capsys.readouterr().out
+        assert "Wily Joker" in out
+        assert "оффер 900 против вклада 40" in out
+
+    def test_без_explain_строка_прежняя(self, capsys: pytest.CaptureFixture[str]) -> None:
+        cli._print_run_step(GameState(), self._entry("оффер 900 против вклада 40"))
+        out = capsys.readouterr().out
+        assert "Wily Joker" in out
+        assert "оффер" not in out
+
+    def test_пустое_обоснование_не_печатает_пустую_строку(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        cli._print_run_step(GameState(), self._entry(""), explain=True)
+        assert capsys.readouterr().out.count("\n") == 1
