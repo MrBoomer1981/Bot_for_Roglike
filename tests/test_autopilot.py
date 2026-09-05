@@ -807,13 +807,15 @@ class TestDecideActionРазменДоПаков:
         assert action.kind == "sell"
         assert action.item_index == 0
 
-    def test_мелкий_размен_не_опережает_пак(self) -> None:
-        # Требование 100000: тот же прирост — доли процента от 3%, оффер порог
-        # покупки не проходит, strong-проход пуст → покупаем пак (как раньше).
+    def test_слабый_пак_больше_не_покупается(self) -> None:
+        # Требование 100000: и оффер, и пак — доли процента от порога 3%.
+        # Раньше strong-проход был пуст и бот покупал пак «как раньше»: пак
+        # судился порогом «> 0», джокер — долей требования. Улучшение A13
+        # это убрало — за одни и те же деньги нельзя требовать от джокера
+        # втрое больше, чем от пака. Теперь ход находится другой.
         action = decide_action(self._state(100_000))
         assert action is not None
-        assert action.kind == "buy_pack"
-        assert action.label == "Celestial Pack"
+        assert action.kind != "buy_pack"
 
 
 class TestDecideActionРеролМагазина:
@@ -1365,3 +1367,112 @@ class TestОбоснованиеНаИгровомПути:
             action = decide_action(state)
             assert action is not None, требование
             assert action.reason != "", (требование, action.kind)
+
+
+class TestПравдиваяПричинаУхода:
+    """Улучшение A13, дефект 1. Первая версия объявляла причиной ухода из
+    магазина порог покупки — всегда, независимо от того, брал его оффер или
+    нет. В ране 12 она напечатала «лучший оффер 8145 не берёт порог 2100»:
+    оффер порог берёт вчетверо. По этой строке уже был сделан и озвучен
+    неверный вывод, поэтому проверяется именно соответствие причины факту."""
+
+    def _shop(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 30,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 1000)},
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_слоты_полны_причина_про_слоты_а_не_про_порог(self) -> None:
+        # Сильный оффер, порог берёт с запасом, но слоты заняты.
+        state = self._shop(
+            jokers=tuple(JokerCard(key="j_joker", label="Joker") for _ in range(5)),
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind == "next_round"
+        assert "слоты полны" in action.reason
+        assert "ниже порога" not in action.reason
+
+    def test_денег_не_хватает_причина_про_деньги(self) -> None:
+        state = self._shop(
+            money=1,
+            jokers=(),
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 99),),
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind == "next_round"
+        assert "стоит $99" in action.reason
+
+    def test_слабый_оффер_честно_назван_слабым(self) -> None:
+        # Тут порог действительно виноват — и только тут так и написано.
+        state = self._shop(
+            jokers=(),
+            blinds={"small": _blind("SMALL", "UPCOMING", 10_000_000)},
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 3),),
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind == "next_round"
+        assert "ниже порога" in action.reason
+
+    def test_пустая_витрина_названа_пустой(self) -> None:
+        state = self._shop(jokers=(), shop=(ShopItem("j_неизвестный", "???", "JOKER", 3),))
+        action = decide_action(state)
+        assert action is not None and action.kind == "next_round"
+        assert "нет оценённых джокеров" in action.reason
+
+
+class TestПорогИЗапасДляПаков:
+    """Улучшение A13, дефект 2. Пак судился порогом «строго > 0», а джокер —
+    долей требования блайнда, и на анте 6–7 рана 12 бот купил четыре пака
+    ценностью 408–873 при пороге для джокера 1050–2100, дважды опустившись
+    до $2. Теперь у пака тот же порог и тот же денежный запас, что у
+    реролла."""
+
+    def _shop(self, *, money: int, requirement: int, price: int = 4) -> GameState:
+        return GameState(
+            phase="SHOP",
+            money=money,
+            joker_slots=5,
+            shop_slots=2,
+            jokers=(),
+            full_deck=_ПАРА_ТУЗОВ,
+            blinds={"small": _blind("SMALL", "UPCOMING", requirement)},
+            shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", price),),
+        )
+
+    def test_пак_выше_порога_покупается(self) -> None:
+        action = decide_action(self._shop(money=30, requirement=300))
+        assert action is not None
+        assert action.kind == "buy_pack"
+
+    def test_пак_ниже_порога_не_покупается(self) -> None:
+        # Ровно случай рана 12: на позднем анте ожидание пака — доля порога.
+        action = decide_action(self._shop(money=30, requirement=100_000))
+        assert action is not None
+        assert action.kind != "buy_pack"
+
+    def test_пак_не_съедает_последние_деньги(self) -> None:
+        # Порог берёт, но после покупки осталось бы меньше запаса — ровно то,
+        # из-за чего на анте 7 бот трижды оставался с $2–4.
+        богатый = decide_action(self._shop(money=30, requirement=300))
+        бедный = decide_action(self._shop(money=14, requirement=300))
+        assert богатый is not None and богатый.kind == "buy_pack"
+        assert бедный is not None and бедный.kind != "buy_pack"
+
+    def test_без_требования_поведение_прежнее(self) -> None:
+        # Ручной ввод: `_worth_buying` вырождается в «> 0», как было до A13.
+        state = replace(self._shop(money=30, requirement=300), blinds={})
+        action = decide_action(state)
+        assert action is not None
+        assert action.kind == "buy_pack"
+
+    def test_случай_рана_12_воспроизведён(self) -> None:
+        # Анте 7, требование 70000, пак за $6 при $8 на руках. Оба правила
+        # против: и порог (2100), и запас. Раньше покупался.
+        action = decide_action(self._shop(money=8, requirement=70_000, price=6))
+        assert action is not None
+        assert action.kind != "buy_pack"
