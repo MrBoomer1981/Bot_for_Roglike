@@ -324,8 +324,11 @@ def render_tarot_advice(offers: Sequence[TarotConsumableOffer], hand: Sequence[C
     for offer in offers:
         if offer.value_unit == "score" and offer.expected_uplift is not None:
             цели = " ".join(format_card(hand[i]) for i in offer.targets)
+            # Куда переводит мастевой Тарот — иначе «на 9C 7C» не читается:
+            # непонятно, что с этими картами вообще произойдёт.
+            куда = f" → {offer.converts_to.value}" if offer.converts_to is not None else ""
             оценка = (
-                f"прирост на этой руке ~{format_number(offer.expected_uplift)} на {цели}"
+                f"прирост на этой руке ~{format_number(offer.expected_uplift)} на {цели}{куда}"
                 if цели
                 else "на этой руке применять незачем"
             )

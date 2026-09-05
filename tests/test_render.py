@@ -556,12 +556,29 @@ class TestВыводТаротов:
 
     def test_неоценённый_помечен(self, capsys: pytest.CaptureFixture[str]) -> None:
         offer = TarotConsumableOffer(
-            ShopItem("c_death", "Death", "TAROT", 0), None, (), None, None, "второй срез C1"
+            ShopItem("c_fool", "The Fool", "TAROT", 0), None, (), None, None, "второй срез C1"
         )
         render_tarot_advice((offer,), self._hand())
         out = capsys.readouterr().out
         assert "не оценено" in out
         assert "второй срез C1" in out
+
+    def test_мастевой_тарот_показывает_куда_переводит(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Без масти строка «на 9C» не читается: непонятно, что произойдёт.
+        offer = TarotConsumableOffer(
+            ShopItem("c_sun", "The Sun", "TAROT", 0),
+            None,
+            (0,),
+            420.0,
+            "score",
+            "",
+            Suit.HEARTS,
+        )
+        render_tarot_advice((offer,), self._hand())
+        out = capsys.readouterr().out
+        assert "→ H" in out
 
     def test_пусто_ничего_не_печатает(self, capsys: pytest.CaptureFixture[str]) -> None:
         render_tarot_advice((), self._hand())

@@ -65,8 +65,9 @@ from dataclasses import dataclass, replace
 from itertools import combinations
 from typing import Final, Literal
 
-from balatro_bot.core.cards import Enhancement
+from balatro_bot.core.cards import Card, Enhancement, Rank, Suit, effective_suits
 from balatro_bot.core.hands import HandType
+from balatro_bot.core.jokers import build_jokers, modifiers_from
 from balatro_bot.core.state import GameState, ShopItem
 from balatro_bot.solver.pack import PLANET_HAND_TYPES, level_up
 from balatro_bot.solver.play import advise
@@ -162,6 +163,38 @@ TAROT_ENHANCEMENTS: Final[dict[str, tuple[Enhancement, int]]] = {
 #: `MAX_JOKERS_FOR_ORDER_SEARCH`.
 MAX_TAROT_CANDIDATES: Final[int] = 64
 
+
+#: Второй срез C1: Тароты, меняющие масть выбранных карт. Выписано из
+#: `game.lua`'s `P_CENTERS` (`config.suit_conv`), механика — из
+#: `card.lua`'s `Card:change_suit`: переписывается только `base`, то есть
+#: **ранг, улучшение, издание и печать сохраняются**, меняется одна масть.
+#: У всех четырёх `max_highlighted = 3`.
+TAROT_SUIT_CONVERSIONS: Final[dict[str, Suit]] = {
+    "c_star": Suit.DIAMONDS,
+    "c_moon": Suit.CLUBS,
+    "c_sun": Suit.HEARTS,
+    "c_world": Suit.SPADES,
+}
+
+#: Сколько карт максимум берут Тароты второго среза (`max_highlighted`
+#: из `game.lua`). У `c_death` это ещё и **минимум**: `min_highlighted = 2`,
+#: то есть ровно две цели, а не «до двух», — единственный такой Тарот.
+_SUIT_TAROT_TARGETS: Final[int] = 3
+
+#: Оговорка к оценке масти под боссом, который бьёт по мастям. В игре
+#: `change_suit` заново считает дебафф карты (`card.lua`), а в этом
+#: проекте `Card.debuffed` — статичное поле от мода, которое никто не
+#: пересчитывает. Значит под такими боссами прирост от смены масти
+#: завышен: карта может стать дебаффнутой, а мы этого не увидим.
+_SUIT_BOSS_NOTE: Final[str] = (
+    "под боссом на масти оценка завышена: дебафф карты после смены масти не пересчитывается"
+)
+
+#: Боссы, чей дебафф завязан на масть карты (`core/bosses.py`).
+_SUIT_BOSSES: Final[frozenset[str]] = frozenset({"The Club", "The Goad", "The Head", "The Window"})
+_STRENGTH_TARGETS: Final[int] = 2
+_DEATH_TARGETS: Final[int] = 2
+
 #: `The Hermit`: `ease_dollars(max(0, min(dollars, extra)))`, `extra = 20` —
 #: `card.lua` + `game.lua`, не по памяти.
 _HERMIT_CAP: Final[int] = 20
@@ -173,6 +206,11 @@ _TEMPERANCE_CAP: Final[int] = 50
 #: Тароты, отложенные во второй срез C1: цели у них есть, но перебор шире
 #: (до трёх карт — 92 подмножества) и требует отдельного отбора целей по
 #: достижимости, как в `solver/discard.py`.
+#: Второй срез C1 закрыт: все семь этих карт теперь оцениваются выше
+#: (`TAROT_SUIT_CONVERSIONS`, `c_strength`, `c_death`, `c_hanged_man`).
+#: Множество осталось затем, что `evaluate_tarot_consumables` собирает по
+#: нему список известных ключей, и затем, что тест покрытия проверяет:
+#: каждая карта отсюда получает численный ответ, а не молчание.
 _DEFERRED_TAROTS: Final[frozenset[str]] = frozenset(
     {"c_star", "c_moon", "c_sun", "c_world", "c_strength", "c_death", "c_hanged_man"}
 )
@@ -199,7 +237,8 @@ class TarotConsumableOffer:
 
     enhancement: Enhancement | None
     """Какое улучшение карта навешивает; `None` — не из таблицы
-    `TAROT_ENHANCEMENTS` (денежная карта или неоценённая)."""
+    `TAROT_ENHANCEMENTS` (денежная карта, карта второго среза или
+    неоценённая)."""
 
     targets: tuple[int, ...]
     """0-based индексы карт руки, к которым применять — ровно то, что ждёт
@@ -219,17 +258,33 @@ class TarotConsumableOffer:
 
     note: str = ""
 
+    converts_to: Suit | None = None
+    """В какую масть карта переводит цели (`TAROT_SUIT_CONVERSIONS`,
+    второй срез). `None` у всех остальных, включая `Strength`/`Death`/
+    `The Hanged Man` — у тех механика словами в `note`, отдельного поля
+    на каждую заводить незачем. Стоит последним полем, чтобы позиционное
+    построение оффера (тесты вывода) не поехало."""
+
 
 def _tarot_offer(
     item: ShopItem,
     *,
     enhancement: Enhancement | None = None,
+    converts_to: Suit | None = None,
     targets: tuple[int, ...] = (),
     uplift: float | None = None,
     unit: Literal["score", "dollars"] | None = None,
     note: str = "",
 ) -> TarotConsumableOffer:
-    return TarotConsumableOffer(item, enhancement, targets, uplift, unit, note)
+    return TarotConsumableOffer(
+        item=item,
+        enhancement=enhancement,
+        targets=targets,
+        expected_uplift=uplift,
+        value_unit=unit,
+        note=note,
+        converts_to=converts_to,
+    )
 
 
 def _best_enhancement_targets(
@@ -257,6 +312,122 @@ def _best_enhancement_targets(
                 best_score = score
                 best_targets = combo
     return best_targets, best_score - baseline
+
+
+def _боссовый_риск(state: GameState) -> bool:
+    """Идёт ли босс, для которого масть карты решает, дебаффнута ли она."""
+    blind = state.blind
+    return blind is not None and blind.name in _SUIT_BOSSES
+
+
+def _next_rank(rank: Rank) -> Rank:
+    """Ранг на единицу выше — механика `Strength`.
+
+    Туз **заворачивается в двойку**, а не упирается в потолок:
+    `card.lua` считает `card.base.id == 14 and 2 or min(id + 1, 14)`.
+    Это ровно тот случай, где догадка «ну, туз старший, значит останется» была бы
+    неверна."""
+    порядок = list(Rank)
+    if rank is Rank.ACE:
+        return Rank.TWO
+    return порядок[порядок.index(rank) + 1]
+
+
+def _suit_conversion_targets(
+    state: GameState, suit: Suit, baseline: float
+) -> tuple[tuple[int, ...], float]:
+    """Лучший набор карт для перевода в масть `suit` и прирост к `baseline`.
+
+    Сначала **отбор по достижимости**, в форме `solver/discard.py`'s
+    `_flush_targets`, и он тут не украшение, а необходимость: три цели из
+    восьми это `C(8,1)+C(8,2)+C(8,3) = 92` набора — больше бюджета
+    `MAX_TAROT_CANDIDATES`, и без отбора карта честно отказалась бы
+    оцениваться вовсе.
+
+    Смысл перевода в масть один — собрать флеш, поэтому считаем, сколько
+    карт до него не хватает (`effective_suits` уже знает про `Wild` и
+    `Smeared`), и перебираем наборы **ровно этого размера** из карт, ещё
+    не бывших этой мастью. Не хватает больше, чем карта берёт целей, или
+    флеш уже собран — перебирать нечего, и ответ честный ноль: «применять
+    незачем», как и у `_best_enhancement_targets`."""
+    hand = state.hand
+    mods = modifiers_from(build_jokers(state))
+    нужно_всего = 4 if mods.four_fingers else 5
+    свои = [i for i, card in enumerate(hand) if suit in effective_suits(card, smeared=mods.smeared)]
+    чужие = [i for i in range(len(hand)) if i not in set(свои) and not hand[i].is_stone]
+    нужно = нужно_всего - len(свои)
+    if нужно <= 0 or нужно > _SUIT_TAROT_TARGETS or нужно > len(чужие):
+        return (), 0.0
+
+    best_targets: tuple[int, ...] = ()
+    best_score = baseline
+    for combo in combinations(чужие, нужно):
+        chosen = set(combo)
+        # `change_suit` переписывает только масть: улучшение, издание и
+        # печать остаются на карте.
+        changed = tuple(
+            replace(card, suit=suit) if i in chosen else card for i, card in enumerate(hand)
+        )
+        score = advise(replace(state, hand=changed), limit=1).best.score
+        if score > best_score:
+            best_score = score
+            best_targets = combo
+    return best_targets, best_score - baseline
+
+
+def _strength_targets(state: GameState, baseline: float) -> tuple[tuple[int, ...], float]:
+    """Лучший набор карт для повышения ранга (`Strength`, до двух целей)."""
+    hand = state.hand
+    best_targets: tuple[int, ...] = ()
+    best_score = baseline
+    for size in range(1, _STRENGTH_TARGETS + 1):
+        for combo in combinations(range(len(hand)), size):
+            chosen = set(combo)
+            changed = tuple(
+                replace(card, rank=_next_rank(card.rank)) if i in chosen else card
+                for i, card in enumerate(hand)
+            )
+            score = advise(replace(state, hand=changed), limit=1).best.score
+            if score > best_score:
+                best_score = score
+                best_targets = combo
+    return best_targets, best_score - baseline
+
+
+def _clone(source: Card, onto: Card) -> Card:
+    """Копия карты `source` на месте `onto` — механика `Death`.
+
+    `functions/common_events.lua`'s `copy_card` переносит карту целиком:
+    ранг с мастью, улучшение, издание, печать. Не только ранг — вот
+    ради чего это отдельная функция с именем."""
+    return replace(
+        onto,
+        rank=source.rank,
+        suit=source.suit,
+        enhancement=source.enhancement,
+        edition=source.edition,
+        seal=source.seal,
+    )
+
+
+def _death_targets(state: GameState, baseline: float) -> tuple[tuple[int, ...], float]:
+    """Лучшая пара для `Death`: ровно две цели, правая копируется на левую.
+
+    `min_highlighted = 2` — «до двух» тут не бывает. Правой игра считает
+    карту с большей координатой (`card.lua`), то есть более позднюю по
+    порядку руки; её копия и затирает вторую."""
+    hand = state.hand
+    best: tuple[int, ...] = ()
+    best_score = baseline
+    for левая, правая in combinations(range(len(hand)), _DEATH_TARGETS):
+        changed = tuple(
+            _clone(hand[правая], card) if i == левая else card for i, card in enumerate(hand)
+        )
+        score = advise(replace(state, hand=changed), limit=1).best.score
+        if score > best_score:
+            best_score = score
+            best = (левая, правая)
+    return best, best_score - baseline
 
 
 def _evaluate_tarot(state: GameState, item: ShopItem, baseline: float) -> TarotConsumableOffer:
@@ -303,8 +474,52 @@ def _evaluate_tarot(state: GameState, item: ShopItem, baseline: float) -> TarotC
             note=f"сумма цен продажи джокеров, потолок ${_TEMPERANCE_CAP}",
         )
 
-    if item.key in _DEFERRED_TAROTS:
-        return _tarot_offer(item, note="второй срез C1: целей до трёх, нужен отбор по достижимости")
+    suit = TAROT_SUIT_CONVERSIONS.get(item.key)
+    if suit is not None:
+        targets, uplift = _suit_conversion_targets(state, suit, baseline)
+        return _tarot_offer(
+            item,
+            converts_to=suit,
+            targets=targets,
+            uplift=uplift,
+            unit="score",
+            note=_SUIT_BOSS_NOTE if _боссовый_риск(state) else "",
+        )
+
+    if item.key == "c_strength":
+        targets, uplift = _strength_targets(state, baseline)
+        return _tarot_offer(
+            item,
+            targets=targets,
+            uplift=uplift,
+            unit="score",
+            note="ранг +1, туз становится двойкой",
+        )
+
+    if item.key == "c_death":
+        targets, uplift = _death_targets(state, baseline)
+        return _tarot_offer(
+            item,
+            targets=targets,
+            uplift=uplift,
+            unit="score",
+            note="ровно две цели: правая копируется на левую целиком",
+        )
+
+    if item.key == "c_hanged_man":
+        # Посчитанный ноль, а не пробел: уничтожение карт может только
+        # сузить выбор, из которого `advise` берёт лучший розыгрыш, —
+        # счёт этой руки от него не вырастет никогда. Тот же честный
+        # ноль, что у `The Devil` в первом срезе.
+        return _tarot_offer(
+            item,
+            uplift=0.0,
+            unit="score",
+            note=(
+                "уничтожает карты — счёт этой руки не поднимет никогда; "
+                "прореживание колоды на весь ран проект не моделирует"
+            ),
+        )
     if item.key in _RANDOM_TAROTS:
         return _tarot_offer(
             item, note="создаёт карты/джокеров — зависит от RNG, который не моделируется"

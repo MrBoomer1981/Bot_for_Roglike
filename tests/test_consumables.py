@@ -7,11 +7,13 @@ from __future__ import annotations
 from dataclasses import replace
 
 from balatro_bot.adapters.manual import build_state
-from balatro_bot.core.cards import Enhancement
+from balatro_bot.core.cards import Enhancement, Rank, Suit, parse_cards
 from balatro_bot.core.hands import HandType
 from balatro_bot.core.state import GameState, JokerCard, ShopItem
 from balatro_bot.solver.consumables import (
     TAROT_ENHANCEMENTS,
+    TAROT_SUIT_CONVERSIONS,
+    _next_rank,
     evaluate_planet_consumables,
     evaluate_tarot_consumables,
 )
@@ -168,12 +170,12 @@ class TestОценкаТаротов:
         assert offer.value_unit == "dollars"
         assert offer.expected_uplift == 10.0
 
-    def test_отложенный_тарот_честно_не_оценён(self) -> None:
+    def test_карта_второго_среза_теперь_оценена(self) -> None:
+        # Раньше `c_death` честно откладывался; второй срез C1 его закрыл.
         state = _consumable_state(_ФЛЕШ, consumables=_таро("c_death"))
         (offer,) = evaluate_tarot_consumables(state)
-        assert offer.expected_uplift is None
-        assert offer.value_unit is None
-        assert "второй срез" in offer.note
+        assert offer.value_unit == "score"
+        assert offer.expected_uplift is not None
 
     def test_случайный_тарот_честно_не_оценён(self) -> None:
         state = _consumable_state(_ФЛЕШ, consumables=_таро("c_judgement"))
@@ -192,3 +194,111 @@ class TestОценкаТаротов:
         offers = evaluate_tarot_consumables(state)
         assert offers[0].item.key == "c_empress"
         assert offers[-1].expected_uplift is None
+
+
+class TestТаблицаМастевыхТаротов:
+    """Второй срез C1. Таблица выписана из `game.lua`'s `P_CENTERS`
+    (`config.suit_conv`), одна неверная строка — молча неправильный счёт."""
+
+    def test_ровно_четыре_карты(self) -> None:
+        assert len(TAROT_SUIT_CONVERSIONS) == 4
+
+    def test_масти_покрыты_все_и_без_повторов(self) -> None:
+        assert set(TAROT_SUIT_CONVERSIONS.values()) == set(Suit)
+
+    def test_соответствие_ключей_мастям(self) -> None:
+        # Star → бубны, Moon → трефы, Sun → червы, World → пики.
+        assert TAROT_SUIT_CONVERSIONS["c_star"] is Suit.DIAMONDS
+        assert TAROT_SUIT_CONVERSIONS["c_moon"] is Suit.CLUBS
+        assert TAROT_SUIT_CONVERSIONS["c_sun"] is Suit.HEARTS
+        assert TAROT_SUIT_CONVERSIONS["c_world"] is Suit.SPADES
+
+
+class TestПовышениеРанга:
+    """`Strength`: ранг +1, и туз заворачивается в двойку, а не упирается в
+    потолок (`card.lua`: `id == 14 and 2 or min(id + 1, 14)`)."""
+
+    def test_обычный_ранг_растёт_на_единицу(self) -> None:
+        assert _next_rank(Rank.TWO) is Rank.THREE
+        assert _next_rank(Rank.NINE) is Rank.TEN
+        assert _next_rank(Rank.KING) is Rank.ACE
+
+    def test_туз_становится_двойкой(self) -> None:
+        assert _next_rank(Rank.ACE) is Rank.TWO
+
+    def test_каждый_ранг_имеет_следующий(self) -> None:
+        # Покрытие: ни один ранг не должен уронить функцию.
+        assert {_next_rank(rank) for rank in Rank} == set(Rank)
+
+
+class TestОценкаВторогоСреза:
+    """Оценка семи карт, которые первый срез честно откладывал."""
+
+    def test_мастевой_тарот_добирает_флеш(self) -> None:
+        # Четыре червы и одна не-черва: `The Sun` переводит ровно её.
+        state = _consumable_state("AH KH QH JH 9C 7C 7D 2S", consumables=_таро("c_sun"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.converts_to is Suit.HEARTS
+        assert offer.value_unit == "score"
+        assert offer.expected_uplift is not None and offer.expected_uplift > 0
+        # Не хватало ровно одной карты — столько и берём, не больше.
+        assert len(offer.targets) == 1
+
+    def test_мастевой_тарот_молчит_когда_флеш_недостижим(self) -> None:
+        # Черва одна, до флеша не хватает четырёх, а карта берёт максимум
+        # три — отбор по достижимости обязан отсеять это до перебора.
+        state = _consumable_state("AH KC QC JD 9D 7S 6S 2S", consumables=_таро("c_sun"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.expected_uplift == 0.0
+        assert offer.targets == ()
+
+    def test_мастевой_тарот_молчит_когда_флеш_уже_есть(self) -> None:
+        # Пять червей уже на руках — переводить незачем.
+        state = _consumable_state(_ФЛЕШ, consumables=_таро("c_sun"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.expected_uplift == 0.0
+        assert offer.targets == ()
+
+    def test_strength_оценивается_в_очках(self) -> None:
+        state = _consumable_state(_ПАРА_ТУЗОВ, consumables=_таро("c_strength"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.value_unit == "score"
+        assert offer.expected_uplift is not None
+        assert len(offer.targets) <= 2
+
+    def test_death_берёт_ровно_две_цели(self) -> None:
+        state = _consumable_state(_ПАРА_ТУЗОВ, consumables=_таро("c_death"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.value_unit == "score"
+        assert len(offer.targets) in (0, 2)
+
+    def test_death_копирует_карту_целиком(self) -> None:
+        # Клонирование должно переносить и улучшение, а не только ранг: на
+        # руке с одной Mult-картой копия обязана дать больше, чем перенос
+        # голого ранга. Проверяем через сам счёт.
+        рука = parse_cards("AH AD 2C 3D 4S 6H 8C TD")
+        усиленная = tuple(
+            replace(card, enhancement=Enhancement.MULT) if i == 1 else card
+            for i, card in enumerate(рука)
+        )
+        state = replace(_consumable_state(consumables=_таро("c_death")), hand=усиленная)
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.expected_uplift is not None and offer.expected_uplift > 0
+
+    def test_hanged_man_посчитанный_ноль(self) -> None:
+        # Уничтожение может только сузить выбор — счёт этой руки не вырастет.
+        state = _consumable_state(_ФЛЕШ, consumables=_таро("c_hanged_man"))
+        (offer,) = evaluate_tarot_consumables(state)
+        assert offer.expected_uplift == 0.0
+        assert offer.value_unit == "score"
+        assert "не поднимет никогда" in offer.note
+
+    def test_все_семь_карт_получают_ответ(self) -> None:
+        # Молчание — то, что автопилот прочитать не может; каждая из семи
+        # карт второго среза обязана вернуть число.
+        ключи = ("c_star", "c_moon", "c_sun", "c_world", "c_strength", "c_death", "c_hanged_man")
+        state = _consumable_state(_ФЛЕШ, consumables=_таро(*ключи))
+        offers = evaluate_tarot_consumables(state)
+        assert len(offers) == len(ключи)
+        assert all(offer.expected_uplift is not None for offer in offers)
+        assert all(offer.value_unit == "score" for offer in offers)
