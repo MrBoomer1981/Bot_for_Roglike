@@ -1611,8 +1611,8 @@ The planned order (letter labels are working ones, not from the general phase nu
   **What is deliberately not claimed:** that this would have won the 8 145 offer that appeared two
   steps after the last pack. `_decide_replace_action` may have declined it legitimately — a held
   joker's contribution may genuinely have exceeded it — and **joker contributions are not in the
-  journal**. Establishing that needs the next journal extension, and asserting it now would repeat
-  the exact error defect 1 was. Tests — `tests/test_autopilot.py::TestПравдиваяПричинаУхода`,
+  journal**. Establishing that needs the next journal extension — **done as E1b below**, so the
+  next run answers it from the file; asserting it now would repeat the exact error defect 1 was. Tests — `tests/test_autopilot.py::TestПравдиваяПричинаУхода`,
   `::TestПорогИЗапасДляПаков`.
 
   **Open from the same run, unranked:** the replace bar at full slots (needs contributions in the
@@ -1706,6 +1706,28 @@ The planned order (letter labels are working ones, not from the general phase nu
   file is read a month later and its field set should change deliberately. This is also what
   will settle `_MIN_BUY_REQ_FRACTION` at high antes by measurement rather than feel. Tests —
   `tests/test_runner.py::TestЖурналРана`, `tests/test_autopilot.py::TestОбоснованиеРешения`.
+
+  **E1b — joker contributions, the number two other items were stuck on.** `evaluate_shop`
+  computes `ShopAdvice.held` — every slot's contribution — for the sell decision and then
+  discarded it, so the journal knew the board's labels and nothing about what any of them was
+  worth. That is precisely why **A13 could not say** whether run 12's declined 8 145 offer was
+  a mistake (the replace may have refused legitimately) and why the **churn question** from the
+  global review — 10 jokers bought, 5 sold, a final board sharing nothing with the ante-2 one —
+  had no evidence either way. `Action.board` now carries a `BoardEntry` per slot (label,
+  contribution, sell value) into `DecisionEntry` and the JSON.
+
+  **Attached in one place, not eight**, and that is the E1a lesson applied: the shop branch has
+  eight exits, several inside helpers, and filling a field at each `return` is exactly how E1a
+  ended up covering six of fourteen decision sites. The body became `_shop_action` and
+  `_decide_shop_action` is a wrapper that attaches the snapshot to whatever comes back — the
+  same shape, for the same reason, as `play_run` around `_play_run`. A test asserts the snapshot
+  survives every shop exit. Non-shop actions keep an empty tuple: contribution is a shop-screen
+  measurement, and inventing it elsewhere would be a guess. **No policy changed** — not one
+  threshold moved, because mixing instrumentation with the decision it exists to inform would
+  make the next run unreadable. **It cannot answer run 12 retroactively**: that journal predates
+  the field, so the two open questions wait for the next run rather than being resolved by
+  reinterpreting old data. Tests — `tests/test_autopilot.py::TestСнимкаДоски`,
+  `tests/test_runner.py::TestСнимкаДоскиВЖурнале`.
 
   **E2, second slice — a reconnecting watchdog — done (2026-09-05), with its limit stated.**
   Every `ModBridgeError` inside `play_run` used to end the run `error`, but the bridge drops
