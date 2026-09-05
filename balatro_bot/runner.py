@@ -125,6 +125,19 @@ _DEFAULT_STALL_LIMIT: Final[int] = 3
 #: Пауза перед повторным опросом на переходной фазе.
 _TRANSIENT_POLL_INTERVAL: Final[float] = 0.25
 
+#: Сколько всего секунд ждать возвращения моста, прежде чем признать ран
+#: провалившимся (вторая половина улучшения E2). Мост отваливается не
+#: только когда игра умерла: она бывает занята анимацией, свёрнута,
+#: приостановлена — а раньше **любой** такой обрыв заканчивал ран
+#: исходом `error`. Полминуты покрывают заминку, но не дают пакету
+#: молча висеть на действительно мёртвой игре.
+_RECONNECT_DEADLINE: Final[float] = 30.0
+
+#: Пауза между попытками: удваивается от первой до потолка, чтобы на
+#: короткой заминке вернуться быстро, а на долгой не молотить опросами.
+_RECONNECT_FIRST_DELAY: Final[float] = 0.5
+_RECONNECT_MAX_DELAY: Final[float] = 4.0
+
 
 @dataclass(frozen=True, slots=True)
 class DecisionEntry:
@@ -286,7 +299,32 @@ def _play_run(
             bridge.menu()
             state = bridge.start(deck, stake, seed=seed)
     except ModBridgeError as error:
-        return RunReport(deck, stake, seed, "error", 1, 1, 0, note=str(error))
+        # E2: в пакете следующий ран начинается сразу за предыдущим, и
+        # игра ещё может доигрывать экран поражения. Подождать дешевле,
+        # чем сжечь ран впустую.
+        if _reconnect(bridge, sleep=sleep) is None:
+            return RunReport(
+                deck,
+                stake,
+                seed,
+                "error",
+                1,
+                1,
+                0,
+                note=f"мост не вернулся за {_RECONNECT_DEADLINE:g} с: {error}",
+            )
+        try:
+            if adopt:
+                current = bridge.game_state()
+                if current.phase not in (_MENU, _GAME_OVER):
+                    state = current
+                    adopted = True
+                    deck = current.deck_type or deck
+            if not adopted:
+                bridge.menu()
+                state = bridge.start(deck, stake, seed=seed)
+        except ModBridgeError as повторно:
+            return RunReport(deck, stake, seed, "error", 1, 1, 0, note=str(повторно))
 
     decisions: list[DecisionEntry] = []
     stall = 0
@@ -333,16 +371,24 @@ def _play_run(
             try:
                 state = bridge.game_state()
             except ModBridgeError as error:
-                return _finish(
-                    deck,
-                    stake,
-                    seed,
-                    "error",
-                    state,
-                    decisions,
-                    note=str(error),
-                    adopted=adopted,
-                )
+                # E2: обрыв связи — не обязательно смерть игры. Ждём.
+                вернулось = _reconnect(bridge, sleep=sleep)
+                if вернулось is None:
+                    return _finish(
+                        deck,
+                        stake,
+                        seed,
+                        "error",
+                        state,
+                        decisions,
+                        note=f"мост не вернулся за {_RECONNECT_DEADLINE:g} с: {error}",
+                        adopted=adopted,
+                    )
+                entry = _entry(step, вернулось, f"связь восстановлена после обрыва: {error}")
+                decisions.append(entry)
+                if on_step is not None:
+                    on_step(вернулось, entry)
+                state = вернулось
             continue
 
         transient_polls = 0
@@ -366,6 +412,28 @@ def _play_run(
         try:
             new_state = dispatch_action(bridge, action)
         except ModBridgeError as error:
+            # E2: «мод отказал в действии» и «моста больше нет» приходят
+            # одним типом исключения, а лечатся по-разному: первое — это
+            # затык (`stall`), второе — ожидание. Различаем опросом.
+            if not _bridge_alive(bridge):
+                вернулось = _reconnect(bridge, sleep=sleep)
+                if вернулось is None:
+                    return _finish(
+                        deck,
+                        stake,
+                        seed,
+                        "error",
+                        state,
+                        decisions,
+                        note=f"мост не вернулся за {_RECONNECT_DEADLINE:g} с: {error}",
+                        adopted=adopted,
+                    )
+                entry = _entry(step, вернулось, f"связь восстановлена после обрыва: {error}")
+                decisions.append(entry)
+                if on_step is not None:
+                    on_step(вернулось, entry)
+                state = вернулось
+                continue
             entry = _entry(
                 step,
                 state,
@@ -419,6 +487,46 @@ def _play_run(
         note=f"превышен предел шагов ({max_steps})",
         adopted=adopted,
     )
+
+
+def _reconnect(
+    bridge: ModBridge,
+    *,
+    sleep: Callable[[float], None],
+    deadline: float = _RECONNECT_DEADLINE,
+) -> GameState | None:
+    """Дождаться, пока мост снова начнёт отвечать. `None` — не дождались.
+
+    Вторая половина улучшения E2. Отдельного типа исключения не заводим:
+    единственный честный признак «мост жив» — что `game_state()` ответил,
+    и он же отличает «мод отказал в действии» (состояние придёт) от
+    «мост мёртв» (не придёт). Это дешевле и надёжнее, чем разбирать текст
+    ошибки или расширять `ModBridgeError` полем, которое придётся
+    выставлять во всех местах, где он поднимается.
+
+    Возвращается **свежее** состояние, а не то, что было до обрыва: пока
+    связи не было, игра могла уйти вперёд, и продолжать со старого
+    состояния значило бы действовать по устаревшей картине."""
+    прошло = 0.0
+    пауза = _RECONNECT_FIRST_DELAY
+    while прошло < deadline:
+        sleep(пауза)
+        прошло += пауза
+        пауза = min(пауза * 2, _RECONNECT_MAX_DELAY)
+        try:
+            return bridge.game_state()
+        except ModBridgeError:
+            continue
+    return None
+
+
+def _bridge_alive(bridge: ModBridge) -> bool:
+    """Отвечает ли мост прямо сейчас — одна попытка, без ожидания."""
+    try:
+        bridge.game_state()
+    except ModBridgeError:
+        return False
+    return True
 
 
 def _entry(
@@ -623,6 +731,12 @@ def run_batch(
             if on_run is not None:
                 on_run(report)
             if report.outcome == "aborted":
+                summaries.append(StakeSummary(stake, tuple(reports)))
+                return tuple(summaries)
+            # E2: раньше пакет на мёртвом мосте не останавливался, а
+            # прогонял все оставшиеся раны за секунды, набивая отчёты
+            # исходом `error`. Двадцать таких отчётов — не данные.
+            if report.outcome == "error" and not _bridge_alive(bridge):
                 summaries.append(StakeSummary(stake, tuple(reports)))
                 return tuple(summaries)
         summaries.append(StakeSummary(stake, tuple(reports)))

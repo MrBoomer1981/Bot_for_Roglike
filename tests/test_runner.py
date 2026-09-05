@@ -485,3 +485,118 @@ class TestЖурналРана:
         play_run(monkeypatch_bridge, deck="RED", stake="WHITE", log_dir=tmp_path)
         (файл,) = list(tmp_path.glob("*.json"))
         assert json.loads(файл.read_text(encoding="utf-8"))["outcome"] == "stuck"
+
+
+class FlakyBridge(ScriptedBridge):
+    """Мост, который отваливается на первых `сбоев` опросах, а потом чинится.
+
+    `сбоев=None` — не чинится никогда (игра действительно умерла)."""
+
+    def __init__(self, timeline: Sequence[GameState], сбоев: int | None) -> None:
+        super().__init__(timeline)
+        self.осталось_сбоев = сбоев
+        self.опросов = 0
+
+    def _проверить(self) -> None:
+        """Мёртвый мост не отвечает ни на что — не только на `game_state`."""
+        if self.осталось_сбоев is None:
+            raise ModBridgeError("мост мёртв")
+
+    def game_state(self) -> GameState:
+        self.опросов += 1
+        self._проверить()
+        if self.осталось_сбоев is not None and self.осталось_сбоев > 0:
+            self.осталось_сбоев -= 1
+            raise ModBridgeError("мост временно недоступен")
+        return super().game_state()
+
+    def menu(self) -> GameState:
+        self._проверить()
+        return super().menu()
+
+    def start(self, deck: str, stake: str, *, seed: str | None = None) -> GameState:
+        self._проверить()
+        return super().start(deck, stake, seed=seed)
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestПереподключение:
+    """Вторая половина улучшения E2. Раньше **любой** обрыв моста заканчивал
+    ран исходом `error`, хотя мост отваливается и когда игра просто занята
+    анимацией или свёрнута. Перезапуском упавшей игры watchdog намеренно не
+    занимается: игру поднимает человек, и забег выбирает тоже он."""
+
+    def test_короткий_обрыв_при_старте_переживается(self) -> None:
+        bridge = FlakyBridge([_state("SELECTING_HAND"), _state("GAME_OVER")], сбоев=2)
+        report = play_run(bridge, deck="RED", stake="WHITE", adopt=True, sleep=lambda _: None)
+        assert report.outcome != "error"
+
+    def test_мёртвый_мост_всё_равно_даёт_error(self) -> None:
+        bridge = FlakyBridge([_state("SELECTING_HAND")], сбоев=None)
+        report = play_run(bridge, deck="RED", stake="WHITE", adopt=True, sleep=lambda _: None)
+        assert report.outcome == "error"
+        assert "не вернулся" in report.note
+
+    def test_обрыв_при_действии_не_считается_затыком(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Мод, отказавший в действии, и исчезнувший мост приходят одним
+        # исключением, но лечатся по-разному: первое — затык, второе — ожидание.
+        bridge = FlakyBridge([_state("SELECTING_HAND"), _state("GAME_OVER")], сбоев=0)
+        падений = {"осталось": 1}
+
+        def dispatch(_bridge: ModBridge, action: Action) -> GameState:
+            if падений["осталось"]:
+                падений["осталось"] -= 1
+                bridge.осталось_сбоев = 1  # мост в этот момент действительно лежит
+                raise ModBridgeError("соединение разорвано")
+            return bridge._advance()
+
+        monkeypatch.setattr(runner, "dispatch_action", dispatch)
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+        assert report.outcome != "error"
+        assert any("связь восстановлена" in entry.action for entry in report.decisions)
+        # Восстановление — это не отказ мода, помечать запись отказом нельзя.
+        assert not any(entry.rejected for entry in report.decisions)
+
+    def test_отказ_мода_при_живом_мосте_остаётся_затыком(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bridge = ScriptedBridge([_state("SELECTING_HAND")])
+
+        def dispatch(_bridge: ModBridge, action: Action) -> GameState:
+            raise ModBridgeError("нельзя продать вечного джокера")
+
+        monkeypatch.setattr(runner, "dispatch_action", dispatch)
+        report = play_run(bridge, deck="RED", stake="WHITE", stall_limit=2, sleep=lambda _: None)
+        assert report.outcome == "stuck"
+        assert any(entry.rejected for entry in report.decisions)
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestПакетНеЖжётРаны:
+    """Раньше `run_batch` на мёртвом мосте не останавливался: он дописывал
+    отчёт с исходом `error` и начинал следующий ран, прогоняя все оставшиеся
+    за секунды. Полсотни таких отчётов — не данные."""
+
+    def test_мёртвый_мост_обрывает_пакет(self) -> None:
+        bridge = FlakyBridge([_state("SELECTING_HAND")], сбоев=None)
+        summaries = run_batch(
+            bridge,
+            deck="RED",
+            stakes=("WHITE",),
+            runs_per_stake=5,
+            sleep=lambda _: None,
+        )
+        (сводка,) = summaries
+        assert сводка.runs == 1  # а не 5
+
+    def test_живой_мост_пакет_не_обрывает(self) -> None:
+        bridge = ScriptedBridge([_state("GAME_OVER")])
+        summaries = run_batch(
+            bridge,
+            deck="RED",
+            stakes=("WHITE",),
+            runs_per_stake=3,
+            sleep=lambda _: None,
+        )
+        (сводка,) = summaries
+        assert сводка.runs == 3
