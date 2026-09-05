@@ -19,6 +19,7 @@ from balatro_bot.autopilot import (
     _BLIND_DONE_STATUSES,
     Action,
     _discard_edge_is_noise,
+    _heuristic_tag_bar,
     _indices_of,
     _next_blind_requirement,
     _on_pace_without_discard,
@@ -1629,3 +1630,62 @@ class TestПропущенныйБлайндНеСчитается:
             },
         )
         assert _next_blind_requirement(state) is None
+
+
+class TestКалибровкаСкипа:
+    """Улучшение A16. Батч ранов на RED показал, что A14 включила скип, но
+    порог третьего уровня оказался неверен **по механизму**: смягчение за
+    пустые слоты скопировано у ваучеров, где связь есть (ваучер, дающий
+    слот, ценнее при простое), а у тегов её нет — `D6`/`Voucher`/`Coupon`
+    к слотам не относятся вовсе.
+
+    Знак вышел обратным нужному: в начале рана пусты все пять слотов, порог
+    падал на пол (6 − 5 = 1, пол 2), а ниже двойки на шкале нет ничего.
+    Проходил любой структурный тег, бот скипал каждый скипаемый блайнд и
+    играл одних боссов. Первые два рана батча умерли на анте 2, скипнув по
+    четыре блайнда."""
+
+    def _state(self, tag: str, *, слотов_занято: int = 0, small: str = "UPCOMING") -> GameState:
+        return GameState(
+            phase="BLIND_SELECT",
+            joker_slots=5,
+            jokers=tuple(JokerCard(key="j_joker") for _ in range(слотов_занято)),
+            blinds={
+                "small": _blind("SMALL", small, 300),
+                "big": _blind("BIG", "SELECT", 450, tag, "..."),
+                "boss": _blind("BOSS", "UPCOMING", 600),
+            },
+        )
+
+    def test_порог_не_зависит_от_пустых_слотов(self) -> None:
+        # Ровно та ошибка A14: порог был ниже всего там, где бот слабее всего.
+        assert _heuristic_tag_bar(self._state("", слотов_занято=0)) == _heuristic_tag_bar(
+            self._state("", слотов_занято=5)
+        )
+
+    def test_слабый_тег_на_пустой_доске_не_даёт_скип(self) -> None:
+        # `D6 Tag` (3) скипал блайнд в ранах 13 и 14 именно из-за смягчения.
+        action = decide_action(self._state("D6 Tag"))
+        assert action is not None
+        assert action.kind == "select"
+
+    def test_сильный_тег_по_прежнему_даёт_скип(self) -> None:
+        for tag in ("Negative Tag", "Rare Tag", "Polychrome Tag"):
+            action = decide_action(self._state(tag))
+            assert action is not None, tag
+            assert action.kind == "skip", tag
+
+    def test_второй_скип_в_анте_запрещён(self) -> None:
+        # Скипнуть и малый, и большой — выйти на босса без денег за раунды,
+        # без магазинов между ними и с той же доской. Даже сильный тег этого
+        # не окупает, поэтому граница структурная и стоит выше порогов.
+        action = decide_action(self._state("Negative Tag", small="SKIPPED"))
+        assert action is not None
+        assert action.kind == "select"
+        assert "уже пропущен" in action.reason
+
+    def test_побеждённый_блайнд_скипу_не_мешает(self) -> None:
+        # Сыгранный блайнд — не пропущенный: анте идёт нормально.
+        action = decide_action(self._state("Negative Tag", small="DEFEATED"))
+        assert action is not None
+        assert action.kind == "skip"

@@ -1,0 +1,3198 @@
+{
+  "deck": "ERRATIC",
+  "stake": "WHITE",
+  "stake_observed": false,
+  "seed": null,
+  "outcome": "lost",
+  "ante": 6,
+  "round": 14,
+  "steps": 108,
+  "plays": 24,
+  "discards_used": 5,
+  "rounds_with_discards_unspent": 9,
+  "note": "",
+  "adopted": true,
+  "decisions": [
+    {
+      "step": 1,
+      "phase": "BLIND_SELECT",
+      "ante": 1,
+      "round": 0,
+      "money": 4,
+      "action": "скипнул блайнд ради тега",
+      "reason": "тег Polychrome Tag: структурная оценка 6 против порога 2 (издание Polychrome бесплатно (×1.5 множителя джокеру))",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 300,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 2,
+      "phase": "BLIND_SELECT",
+      "ante": 1,
+      "round": 0,
+      "money": 4,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Skip Tag проект не оценивает: формула требует счётчик уровня рана (см. core/tags.py) — мод его не присылает",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 3,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "сыграл AC KH QC JS TS",
+      "reason": "на темпе без сброса: прогноз 1053 на 4 рук против остатка 450 × 1.5 = 675; сбросов не тронуто 3",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 4,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "сыграл 9S 9H 9C",
+      "reason": "гарантированный ход: нижний предел 171 уже перекрывает остаток 126",
+      "rejected": false,
+      "chips_scored": 324,
+      "requirement": 450,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 5,
+      "phase": "ROUND_EVAL",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 495,
+      "requirement": 600,
+      "hands_left": 2,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 6,
+      "phase": "SHOP",
+      "ante": 1,
+      "round": 1,
+      "money": 10,
+      "action": "ушёл из магазина",
+      "reason": "на витрине нет оценённых джокеров, денег $10",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 600,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 7,
+      "phase": "BLIND_SELECT",
+      "ante": 1,
+      "round": 1,
+      "money": 10,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 600,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 8,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 10,
+      "action": "сыграл QC 9C 7C 5C 2C",
+      "reason": "перевес сброса — шум: 150 против 140 × 1.15 = 161",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 600,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 9,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 10,
+      "action": "сбросил JD TD 9H 7S 6D",
+      "reason": "лучший в общем списке: discard 294, следом discard 263",
+      "rejected": false,
+      "chips_scored": 140,
+      "requirement": 600,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 10,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 10,
+      "action": "сыграл 3S 3S 3D 3D",
+      "reason": "гарантированный ход: нижний предел 504 уже перекрывает остаток 460",
+      "rejected": false,
+      "chips_scored": 140,
+      "requirement": 600,
+      "hands_left": 3,
+      "discards_left": 2,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 11,
+      "phase": "ROUND_EVAL",
+      "ante": 2,
+      "round": 2,
+      "money": 10,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 644,
+      "requirement": null,
+      "hands_left": 2,
+      "discards_left": 2,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 12,
+      "phase": "SHOP",
+      "ante": 2,
+      "round": 2,
+      "money": 16,
+      "action": "купил в магазине: Blue Joker",
+      "reason": "прирост 269 ≥ порога 24, цена $5, денег $16",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 800,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 13,
+      "phase": "SHOP",
+      "ante": 2,
+      "round": 2,
+      "money": 16,
+      "action": "ушёл из магазина",
+      "reason": "на витрине нет оценённых джокеров, денег $16",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 800,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 474.5,
+          "sell_value": 5
+        }
+      ]
+    },
+    {
+      "step": 14,
+      "phase": "BLIND_SELECT",
+      "ante": 2,
+      "round": 2,
+      "money": 16,
+      "action": "скипнул блайнд ради тега",
+      "reason": "тег D6 Tag: структурная оценка 3 против порога 2 (первый реролл следующего магазина бесплатный)",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 800,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 15,
+      "phase": "BLIND_SELECT",
+      "ante": 2,
+      "round": 2,
+      "money": 16,
+      "action": "скипнул блайнд ради тега",
+      "reason": "тег Investment Tag: $25 против $4 гарантированной награды за игру",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 1200,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 16,
+      "phase": "BLIND_SELECT",
+      "ante": 2,
+      "round": 2,
+      "money": 16,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 1600,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 17,
+      "phase": "SELECTING_HAND",
+      "ante": 2,
+      "round": 3,
+      "money": 16,
+      "action": "сбросил JD 9S 8C 3H 2S",
+      "reason": "лучший в общем списке: discard 729, следом discard 723",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 1600,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 18,
+      "phase": "SELECTING_HAND",
+      "ante": 2,
+      "round": 3,
+      "money": 16,
+      "action": "сыграл QS QC JS JS JD",
+      "reason": "на темпе без сброса: прогноз 3276 на 4 рук против остатка 1600 × 1.5 = 2400; сбросов не тронуто 2",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 1600,
+      "hands_left": 4,
+      "discards_left": 2,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 19,
+      "phase": "SELECTING_HAND",
+      "ante": 2,
+      "round": 3,
+      "money": 16,
+      "action": "сыграл KH KH KC 9H 9C",
+      "reason": "гарантированный ход: нижний предел 936 уже перекрывает остаток 592",
+      "rejected": false,
+      "chips_scored": 1008,
+      "requirement": 1600,
+      "hands_left": 3,
+      "discards_left": 2,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 20,
+      "phase": "ROUND_EVAL",
+      "ante": 3,
+      "round": 3,
+      "money": 16,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 1944,
+      "requirement": null,
+      "hands_left": 2,
+      "discards_left": 2,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 21,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 25,
+      "action": "купил в магазине: Hanging Chad",
+      "reason": "прирост 62 ≥ порога 60, цена $4, денег $25",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 474.5,
+          "sell_value": 5
+        }
+      ]
+    },
+    {
+      "step": 22,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 21,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 632 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $0",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 495.2,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 62.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 23,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 21,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 632 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $1",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 495.2,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 62.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 24,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 20,
+      "action": "купил в магазине: Scholar",
+      "reason": "прирост 2144 ≥ порога 60, цена $4, денег $20",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 495.2,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 62.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 25,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 16,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 937 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $2",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 1894.7,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1751.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2144.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 26,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 3,
+      "money": 14,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер The Order (0) ниже порога 60, денег $14",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 1894.7,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1751.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2144.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 27,
+      "phase": "BLIND_SELECT",
+      "ante": 3,
+      "round": 3,
+      "money": 14,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Charm Tag проект не оценивает: бесплатный Mega Arcana Pack — Таро из пака проект не оценивает",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": []
+    },
+    {
+      "step": 28,
+      "phase": "SELECTING_HAND",
+      "ante": 3,
+      "round": 4,
+      "money": 14,
+      "action": "сыграл AS",
+      "reason": "гарантированный ход: нижний предел 3627 уже перекрывает остаток 2000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": []
+    },
+    {
+      "step": 29,
+      "phase": "ROUND_EVAL",
+      "ante": 3,
+      "round": 4,
+      "money": 14,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 3627,
+      "requirement": 3000,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": []
+    },
+    {
+      "step": 30,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 49,
+      "action": "купил в магазине: Smeared Joker",
+      "reason": "прирост 691 ≥ порога 90, цена $9, денег $49",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 1894.7,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1751.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2144.2,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 31,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 40,
+      "action": "купил пак: Celestial Pack",
+      "reason": "ожидание от пака 167, цена $4, денег $40",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2125.0,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1741.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2413.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 691.0,
+          "sell_value": 4
+        }
+      ]
+    },
+    {
+      "step": 32,
+      "phase": "SMODS_BOOSTER_OPENED",
+      "ante": 3,
+      "round": 4,
+      "money": 36,
+      "action": "взял из пака: Pluto",
+      "reason": "planet: прирост 299",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 33,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 36,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 1217 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2276.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1913.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2681.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        }
+      ]
+    },
+    {
+      "step": 34,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 31,
+      "action": "купил в магазине: Banner",
+      "reason": "прирост 525 ≥ порога 90, цена $5, денег $31",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2276.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1913.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2681.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        }
+      ]
+    },
+    {
+      "step": 35,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 26,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 1507 против лучшего на витрине 0 (запас ×1.5), ролл 2/2 за заход, цена $6",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2451.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2131.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 3026.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        },
+        {
+          "label": "Banner",
+          "contribution": 525.0,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 36,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 4,
+      "money": 20,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Certificate (0) ниже порога 90, денег $20",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2451.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2131.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 3026.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        },
+        {
+          "label": "Banner",
+          "contribution": 525.0,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 37,
+      "phase": "BLIND_SELECT",
+      "ante": 3,
+      "round": 4,
+      "money": 20,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Coupon Tag: структурная оценка 4 против порога 6 (джокеры и паки следующего магазина бесплатны)",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": []
+    },
+    {
+      "step": 38,
+      "phase": "SELECTING_HAND",
+      "ante": 3,
+      "round": 5,
+      "money": 20,
+      "action": "сыграл AH",
+      "reason": "гарантированный ход: нижний предел 7056 уже перекрывает остаток 3000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 3000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": []
+    },
+    {
+      "step": 39,
+      "phase": "ROUND_EVAL",
+      "ante": 3,
+      "round": 5,
+      "money": 20,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 7056,
+      "requirement": 2000,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": []
+    },
+    {
+      "step": 40,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 5,
+      "money": 28,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 1507 против лучшего на витрине 554 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2451.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2131.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 3026.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        },
+        {
+          "label": "Banner",
+          "contribution": 525.0,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 41,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 5,
+      "money": 23,
+      "action": "продал джокера: Banner",
+      "reason": "размен под Lusty Joker: оффер 5374 против вклада 525, оффер кратно сильнее; требование блайнда 2000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Banner"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2451.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2131.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 3026.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        },
+        {
+          "label": "Banner",
+          "contribution": 525.0,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 42,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 5,
+      "money": 25,
+      "action": "купил в магазине: Lusty Joker",
+      "reason": "прирост 4808 ≥ порога 60, цена $7, денег $25",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 2276.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 1913.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2681.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 728.5,
+          "sell_value": 4
+        }
+      ]
+    },
+    {
+      "step": 43,
+      "phase": "SHOP",
+      "ante": 3,
+      "round": 5,
+      "money": 18,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Misprint (3382) порог берёт, но слоты полны (5), слабейший в слотах Scholar (вклад 2037) размен не прошёл, денег $18",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 4867.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 3674.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2037.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 3477.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4808.1,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 44,
+      "phase": "BLIND_SELECT",
+      "ante": 3,
+      "round": 5,
+      "money": 18,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 45,
+      "phase": "SELECTING_HAND",
+      "ante": 3,
+      "round": 6,
+      "money": 18,
+      "action": "сыграл AH",
+      "reason": "гарантированный ход: нижний предел 10212 уже перекрывает остаток 2000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 2000,
+      "hands_left": 1,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 46,
+      "phase": "ROUND_EVAL",
+      "ante": 4,
+      "round": 6,
+      "money": 18,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 10212,
+      "requirement": null,
+      "hands_left": 0,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 47,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 6,
+      "money": 29,
+      "action": "купил пак: Celestial Pack",
+      "reason": "ожидание от пака 220, цена $4, денег $29",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 4867.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 3674.5,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2037.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 3477.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4808.1,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 48,
+      "phase": "SMODS_BOOSTER_OPENED",
+      "ante": 4,
+      "round": 6,
+      "money": 25,
+      "action": "взял из пака: Uranus",
+      "reason": "planet: прирост 91",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 49,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 6,
+      "money": 25,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 2528 против лучшего на витрине 1183 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 4901.1,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 3591.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2062.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 3567.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4827.6,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 50,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 6,
+      "money": 20,
+      "action": "продал джокера: Scholar",
+      "reason": "размен под Gros Michel: оффер 4467 против вклада 2062, оффер кратно сильнее; требование блайнда 5000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Scholar",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 4901.1,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 3591.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Scholar",
+          "contribution": 2062.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 3567.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4827.6,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 51,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 6,
+      "money": 22,
+      "action": "купил в магазине: Gros Michel",
+      "reason": "прирост 4072 ≥ порога 150, цена $5, денег $22",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 3875.7,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2473.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 3517.9,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 5446.4,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 52,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 6,
+      "money": 17,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Crafty Joker (1400) порог берёт, но слоты полны (5), слабейший в слотах Hanging Chad (вклад 2639) размен не прошёл, денег $17",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel"
+      ],
+      "board": [
+        {
+          "label": "Blue Joker",
+          "contribution": 5388.5,
+          "sell_value": 5
+        },
+        {
+          "label": "Hanging Chad",
+          "contribution": 2639.1,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 4483.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 5976.8,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 4071.6,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 53,
+      "phase": "BLIND_SELECT",
+      "ante": 4,
+      "round": 6,
+      "money": 17,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Standard Tag проект не оценивает: бесплатный Mega Standard Pack — игральные карты проект не оценивает",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel"
+      ],
+      "board": []
+    },
+    {
+      "step": 54,
+      "phase": "SELECTING_HAND",
+      "ante": 4,
+      "round": 7,
+      "money": 17,
+      "action": "переставил джокеров",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Blue Joker",
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel"
+      ],
+      "board": []
+    },
+    {
+      "step": 55,
+      "phase": "SELECTING_HAND",
+      "ante": 4,
+      "round": 7,
+      "money": 17,
+      "action": "сыграл AH",
+      "reason": "гарантированный ход: нижний предел 9204 уже перекрывает остаток 5000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 5000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 56,
+      "phase": "ROUND_EVAL",
+      "ante": 4,
+      "round": 7,
+      "money": 17,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 9204,
+      "requirement": 7500,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 57,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 7,
+      "money": 25,
+      "action": "продал джокера: Hanging Chad",
+      "reason": "размен под Photograph: оффер 10746 против вклада 2707, оффер кратно сильнее; требование блайнда 7500",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Hanging Chad",
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker"
+      ],
+      "board": [
+        {
+          "label": "Hanging Chad",
+          "contribution": 2707.4,
+          "sell_value": 2
+        },
+        {
+          "label": "Smeared Joker",
+          "contribution": 4966.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 6251.1,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6116.6,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 7433.5,
+          "sell_value": 5
+        }
+      ]
+    },
+    {
+      "step": 58,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 7,
+      "money": 27,
+      "action": "купил в магазине: Photograph",
+      "reason": "прирост 1306 ≥ порога 225, цена $5, денег $27",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 3595.1,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4074.2,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 5882.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 5953.2,
+          "sell_value": 5
+        }
+      ]
+    },
+    {
+      "step": 59,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 7,
+      "money": 22,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3059 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 4620.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4626.0,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 5974.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 6726.4,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1305.5,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 60,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 7,
+      "money": 17,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Devious Joker (123) ниже порога 225, денег $17",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 4620.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4626.0,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 5974.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 6726.4,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1305.5,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 61,
+      "phase": "BLIND_SELECT",
+      "ante": 4,
+      "round": 7,
+      "money": 17,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Skip Tag проект не оценивает: формула требует счётчик уровня рана (см. core/tags.py) — мод его не присылает",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 62,
+      "phase": "SELECTING_HAND",
+      "ante": 4,
+      "round": 8,
+      "money": 17,
+      "action": "сыграл KD",
+      "reason": "гарантированный ход: нижний предел 7988 уже перекрывает остаток 7500",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 7500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 63,
+      "phase": "ROUND_EVAL",
+      "ante": 4,
+      "round": 8,
+      "money": 17,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 7987,
+      "requirement": 10000,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 64,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 8,
+      "money": 26,
+      "action": "купил пак: Celestial Pack",
+      "reason": "ожидание от пака 356, цена $4, денег $26",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 4620.0,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4626.0,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 5974.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 6726.4,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1305.5,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 65,
+      "phase": "SMODS_BOOSTER_OPENED",
+      "ante": 4,
+      "round": 8,
+      "money": 22,
+      "action": "взял из пака: Jupiter",
+      "reason": "planet: прирост 1220",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 66,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 8,
+      "money": 22,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3257 против лучшего на витрине 1099 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 5746.4,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4907.1,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6181.9,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 7323.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1708.8,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 67,
+      "phase": "SHOP",
+      "ante": 4,
+      "round": 8,
+      "money": 17,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Scholar (1070) порог берёт, но слоты полны (5), слабейший в слотах Photograph (вклад 1709) размен не прошёл, денег $17",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 5746.4,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4907.1,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6181.9,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 7323.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1708.8,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 68,
+      "phase": "BLIND_SELECT",
+      "ante": 4,
+      "round": 8,
+      "money": 17,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 69,
+      "phase": "SELECTING_HAND",
+      "ante": 4,
+      "round": 9,
+      "money": 17,
+      "action": "сыграл KD TD 5D 4D 3H",
+      "reason": "гарантированный ход: нижний предел 18225 уже перекрывает остаток 10000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 10000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 70,
+      "phase": "ROUND_EVAL",
+      "ante": 5,
+      "round": 9,
+      "money": 17,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 18225,
+      "requirement": null,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": []
+    },
+    {
+      "step": 71,
+      "phase": "SHOP",
+      "ante": 5,
+      "round": 9,
+      "money": 27,
+      "action": "продал джокера: Photograph",
+      "reason": "размен под Bloodstone: оффер 6094 против вклада 1709, оффер кратно сильнее; требование блайнда 11000",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Photograph"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 5746.4,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4907.1,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6181.9,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 7323.6,
+          "sell_value": 5
+        },
+        {
+          "label": "Photograph",
+          "contribution": 1708.8,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 72,
+      "phase": "SHOP",
+      "ante": 5,
+      "round": 9,
+      "money": 29,
+      "action": "купил в магазине: Bloodstone",
+      "reason": "прирост 4429 ≥ порога 330, цена $7, денег $29",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 4318.2,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 4228.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6180.2,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 6329.4,
+          "sell_value": 5
+        }
+      ]
+    },
+    {
+      "step": 73,
+      "phase": "SHOP",
+      "ante": 5,
+      "round": 9,
+      "money": 22,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 74,
+      "phase": "SHOP",
+      "ante": 5,
+      "round": 9,
+      "money": 17,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Banner (1858) порог берёт, но слоты полны (5), слабейший в слотах Bloodstone (вклад 4429) размен не прошёл, денег $17",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 75,
+      "phase": "BLIND_SELECT",
+      "ante": 5,
+      "round": 9,
+      "money": 17,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Holographic Tag: структурная оценка 5 против порога 6 (издание Holographic бесплатно (+10 множителя))",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 76,
+      "phase": "SELECTING_HAND",
+      "ante": 5,
+      "round": 10,
+      "money": 17,
+      "action": "сыграл 7H 7C 3S 3S 3D",
+      "reason": "на темпе без сброса: прогноз 36326 на 4 рук против остатка 11000 × 1.5 = 16500; сбросов не тронуто 3",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 11000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 77,
+      "phase": "ROUND_EVAL",
+      "ante": 5,
+      "round": 10,
+      "money": 17,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 11295,
+      "requirement": 16500,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 78,
+      "phase": "SHOP",
+      "ante": 5,
+      "round": 10,
+      "money": 28,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Bull (2396) порог берёт, но слоты полны (5), слабейший в слотах Bloodstone (вклад 4429) размен не прошёл, денег $28",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 16500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 79,
+      "phase": "BLIND_SELECT",
+      "ante": 5,
+      "round": 10,
+      "money": 28,
+      "action": "скипнул блайнд ради тега",
+      "reason": "тег Polychrome Tag: структурная оценка 6 против порога 6 (издание Polychrome бесплатно (×1.5 множителя джокеру))",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 16500,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 80,
+      "phase": "BLIND_SELECT",
+      "ante": 5,
+      "round": 10,
+      "money": 28,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 22000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 81,
+      "phase": "SELECTING_HAND",
+      "ante": 5,
+      "round": 11,
+      "money": 28,
+      "action": "сыграл QS JS TS 7C 2S",
+      "reason": "перевес сброса — шум: 9139 против 8726 × 1.15 = 10034",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 22000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 82,
+      "phase": "SELECTING_HAND",
+      "ante": 5,
+      "round": 11,
+      "money": 28,
+      "action": "сыграл AH QH 9H 6D 5D",
+      "reason": "на темпе без сброса: прогноз 21546 на 3 рук против остатка 13275 × 1.5 = 19912; сбросов не тронуто 3",
+      "rejected": false,
+      "chips_scored": 8725,
+      "requirement": 22000,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 83,
+      "phase": "SELECTING_HAND",
+      "ante": 5,
+      "round": 11,
+      "money": 28,
+      "action": "сыграл AC JS 7S 5C 2C",
+      "reason": "гарантированный ход: нижний предел 7970 уже перекрывает остаток 6093",
+      "rejected": false,
+      "chips_scored": 15907,
+      "requirement": 22000,
+      "hands_left": 2,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 84,
+      "phase": "ROUND_EVAL",
+      "ante": 6,
+      "round": 11,
+      "money": 28,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 23876,
+      "requirement": null,
+      "hands_left": 1,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 85,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 11,
+      "money": 37,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 86,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 11,
+      "money": 32,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 2/2 за заход, цена $6",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 87,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 11,
+      "money": 26,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Abstract Joker (4946) порог берёт, но слоты полны (5), слабейший в слотах Bloodstone (вклад 4429) размен не прошёл, денег $26",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 88,
+      "phase": "BLIND_SELECT",
+      "ante": 6,
+      "round": 11,
+      "money": 26,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Charm Tag проект не оценивает: бесплатный Mega Arcana Pack — Таро из пака проект не оценивает",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 89,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 12,
+      "money": 26,
+      "action": "сбросил KC QS 9C 2C",
+      "reason": "лучший в общем списке: discard 14338, следом discard 9582",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 90,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 12,
+      "money": 26,
+      "action": "сыграл JS JS JD 7C 7D",
+      "reason": "на темпе без сброса: прогноз 38208 на 4 рук против остатка 20000 × 1.5 = 30000; сбросов не тронуто 2",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 20000,
+      "hands_left": 4,
+      "discards_left": 2,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 91,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 12,
+      "money": 26,
+      "action": "сыграл 8D 8D",
+      "reason": "гарантированный ход: нижний предел 6762 уже перекрывает остаток 6041",
+      "rejected": false,
+      "chips_scored": 13959,
+      "requirement": 20000,
+      "hands_left": 3,
+      "discards_left": 2,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 92,
+      "phase": "ROUND_EVAL",
+      "ante": 6,
+      "round": 12,
+      "money": 26,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 20721,
+      "requirement": 30000,
+      "hands_left": 2,
+      "discards_left": 2,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 93,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 12,
+      "money": 37,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 94,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 12,
+      "money": 32,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Abstract Joker (4946) порог берёт, но слоты полны (5), слабейший в слотах Bloodstone (вклад 4429) размен не прошёл, денег $32",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 95,
+      "phase": "BLIND_SELECT",
+      "ante": 6,
+      "round": 12,
+      "money": 32,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Coupon Tag: структурная оценка 4 против порога 6 (джокеры и паки следующего магазина бесплатны)",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 96,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 13,
+      "money": 32,
+      "action": "сбросил 8C 5C 4C 2S",
+      "reason": "лучший в общем списке: discard 17208, следом discard 13916",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 97,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 13,
+      "money": 32,
+      "action": "сбросил KC QC QC JS",
+      "reason": "лучший в общем списке: discard 23734, следом discard 11042",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 2,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 98,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 13,
+      "money": 32,
+      "action": "сыграл AH KD JD 7H 6D",
+      "reason": "на темпе без сброса: прогноз 83105 на 4 рук против остатка 30000 × 1.5 = 45000; сбросов не тронуто 1",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 30000,
+      "hands_left": 4,
+      "discards_left": 1,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 99,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 13,
+      "money": 32,
+      "action": "сыграл 9H",
+      "reason": "гарантированный ход: нижний предел 5580 уже перекрывает остаток 674",
+      "rejected": false,
+      "chips_scored": 29326,
+      "requirement": 30000,
+      "hands_left": 3,
+      "discards_left": 1,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 100,
+      "phase": "ROUND_EVAL",
+      "ante": 6,
+      "round": 13,
+      "money": 32,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 34906,
+      "requirement": 40000,
+      "hands_left": 2,
+      "discards_left": 1,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 101,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 13,
+      "money": 42,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 1/2 за заход, цена $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 40000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 102,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 13,
+      "money": 37,
+      "action": "перекатил витрину",
+      "reason": "ожидание от ролла 3245 против лучшего на витрине 0 (запас ×1.5), ролл 2/2 за заход, цена $6",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 40000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 103,
+      "phase": "SHOP",
+      "ante": 6,
+      "round": 13,
+      "money": 31,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Abstract Joker (4946) порог берёт, но слоты полны (5), слабейший в слотах Bloodstone (вклад 4429) размен не прошёл, денег $31",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 40000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": [
+        {
+          "label": "Smeared Joker",
+          "contribution": 8274.8,
+          "sell_value": 4
+        },
+        {
+          "label": "Lusty Joker",
+          "contribution": 7058.9,
+          "sell_value": 3
+        },
+        {
+          "label": "Gros Michel",
+          "contribution": 6043.0,
+          "sell_value": 2
+        },
+        {
+          "label": "Blue Joker",
+          "contribution": 8861.3,
+          "sell_value": 5
+        },
+        {
+          "label": "Bloodstone",
+          "contribution": 4428.9,
+          "sell_value": 3
+        }
+      ]
+    },
+    {
+      "step": 104,
+      "phase": "BLIND_SELECT",
+      "ante": 6,
+      "round": 13,
+      "money": 31,
+      "action": "выбрал блайнд — играет",
+      "reason": "боссовый блайнд — скип невозможен",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 40000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 105,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 14,
+      "money": 31,
+      "action": "сыграл QC JS 9S 8C 8C",
+      "reason": "перевес сброса — шум: 9216 против 8914 × 1.15 = 10252",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 40000,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 106,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 14,
+      "money": 31,
+      "action": "сыграл KH QH 5H 5D 4H",
+      "reason": "лучший в общем списке: play 7182, следом play 7182",
+      "rejected": false,
+      "chips_scored": 8914,
+      "requirement": 40000,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 107,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 14,
+      "money": 31,
+      "action": "сыграл AC QS JS TS 5C",
+      "reason": "перевес сброса — шум: 8745 против 8316 × 1.15 = 9563",
+      "rejected": false,
+      "chips_scored": 16096,
+      "requirement": 40000,
+      "hands_left": 2,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    },
+    {
+      "step": 108,
+      "phase": "SELECTING_HAND",
+      "ante": 6,
+      "round": 14,
+      "money": 31,
+      "action": "сыграл JD TD 6D 3H 3D",
+      "reason": "перевес сброса — шум: 6856 против 6552 × 1.15 = 7535",
+      "rejected": false,
+      "chips_scored": 24412,
+      "requirement": 40000,
+      "hands_left": 1,
+      "discards_left": 3,
+      "jokers": [
+        "Smeared Joker",
+        "Lusty Joker",
+        "Gros Michel",
+        "Blue Joker",
+        "Bloodstone"
+      ],
+      "board": []
+    }
+  ]
+}
