@@ -1570,6 +1570,56 @@ The planned order (letter labels are working ones, not from the general phase nu
   `tests/test_autopilot.py::TestОбоснованиеНаИгровомПути`, `::TestOnPaceWithoutDiscard`,
   `tests/test_runner.py::TestСчётчикиСбросов`.
 
+- **A13. The journal caught a lying explanation and a bad pack policy — done.** Run 12 (ZODIAC,
+  2026-09-05, lost at ante 7 r20, 148 steps — the deepest non-winning run so far) was the first
+  run whose journal explained every decision, and it paid for itself twice within an hour.
+
+  **Defect 1, mine, introduced that morning.** `_shop_nothing_reason` named the buy bar as the
+  reason for leaving the shop empty-handed — always, whether or not the bar was the obstacle. The
+  run printed `лучший оффер 8145 не берёт порог 2100` and `лучший оффер 1937 не берёт порог 330`:
+  offers clearing those bars four- and six-fold. The genuine blockers are a full joker board, the
+  price, or a declined replace. A wrong conclusion was drawn and reported from that line before it
+  was caught, which is exactly the failure mode that matters: the journal's whole value is that a
+  line can be trusted without re-deriving it, so an explanation that asserts a cause instead of
+  determining one is worse than silence. The cause is now read off `JokerOffer`'s existing
+  `has_slot`/`affordable`/`replaces`, and "ниже порога" appears only when it is true.
+
+  **Defect 2, provable straight from the journal.** A joker must clear a fraction of the blind
+  requirement (A2); a pack only had to clear `> 0`. On antes 6–7 that bought four packs at value
+  the bot would have refused from a joker at the same price:
+
+  | ante | pack uplift bought | joker bar that visit | money left |
+  |---|---|---|---|
+  | 6 | 615 | 1 200 | $55 |
+  | 7 | 873 | 1 050 | $2 |
+  | 7 | 408 | 1 575 | $4 |
+  | 7 | 664 | 2 100 | $2 |
+
+  Packs now face the same `_worth_buying` bar as a joker and must leave the same cash reserve a
+  reroll does (`_PACK_MONEY_RESERVE = _REROLL_MONEY_RESERVE`, one constant reused deliberately —
+  the justification is identical and two copies of it would drift). Checked against the run's own
+  numbers: all four late packs fail the new bar, the two that ended at $2 also fail the reserve,
+  while the early packs (105/130/345 against bars 24/36/330) and ante 6's Jumbo Buffoon at 3 761
+  still pass. The change tightens exactly what the run showed to be wrong.
+
+  **A prior deliberate decision is overturned here, and the reasoning matters.** The `> 0` bar was
+  chosen on purpose and recorded in `docs/architecture.md` as "a pack is a hedged choice of several
+  cards". Being a hedge explains why the *outcome* varies; it does not explain accepting a third of
+  the expected return for the same dollars out of the same pocket. Run 12 is the first evidence
+  bearing on that choice and it points the other way.
+
+  **What is deliberately not claimed:** that this would have won the 8 145 offer that appeared two
+  steps after the last pack. `_decide_replace_action` may have declined it legitimately — a held
+  joker's contribution may genuinely have exceeded it — and **joker contributions are not in the
+  journal**. Establishing that needs the next journal extension, and asserting it now would repeat
+  the exact error defect 1 was. Tests — `tests/test_autopilot.py::TestПравдиваяПричинаУхода`,
+  `::TestПорогИЗапасДляПаков`.
+
+  **Open from the same run, unranked:** the replace bar at full slots (needs contributions in the
+  journal first) and `_DISCARD_PACE_MARGIN` — run 12 made three pace calls with 5–9 % headroom
+  while play estimates missed by −18 % and +9 %, which suggests the margin ignores the spread of
+  its own inputs. Three observations is not a basis for moving a constant; the batch is.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
