@@ -1515,6 +1515,61 @@ The planned order (letter labels are working ones, not from the general phase nu
   re-derived from the same misleading profile; if this path is ever attacked, the lever is the
   candidate count, and that trades against exactness.
 
+- **B2. The autopilot stopped discarding, and the journal could not say why — done.** Run 11
+  (ZODIAC, 2026-09-05, the first run with `--log`) lost at ante 5 with a clean symptom and an
+  unanswerable question, and both halves were instructive.
+
+  **The symptom, straight from the journal:** ante 1 spent 6 discards; **ante 3 onward spent zero
+  across 20 plays**, and every round from ante 2 r5 closed with all three discards untouched. The
+  losing round scored ~9 000 of 11 000 over four hands while three free discards sat unused.
+
+  **The question that could not be answered, and why.** `Action.reason` — added by E1a the day
+  before, precisely so a run could be post-mortemed without a live terminal — turned out to be
+  filled at six sites, *all six in the shop*. Of 98 decisions, 19 carried a reason and all 19 were
+  purchases, rerolls, packs or sales; all 31 plays, 7 discards, 12 blind selects, 5 pack picks and
+  12 "left the shop" carried nothing. The journal explained the shop and not one moment of actual
+  play. That was a gap in the E1a work, not a limit of the design, and only a live run surfaced it.
+
+  A probe narrowed the mechanism without closing it. Replaying one hand at rising deck power shows
+  `_discard_edge_is_noise` is **not** the culprit — a discard's EV scales with power exactly as a
+  play's does, so its 1.15× margin is cleared at every level (levels 1→7: 659/1559/2823/4447
+  against 575/1346/2392/3714). `_on_pace_without_discard` does begin firing at high power, and its
+  projection is optimistic by construction, but in the losing round its own arithmetic says it
+  should not have fired. Reconstruction cannot settle it, because the journal does not record which
+  branch decided. Hence the fix below is *observability first*.
+
+  **Fixed:** every decision with numbers behind it now carries them — the guaranteed close (its
+  floor against the remaining requirement), the on-pace guard (its projection, its bar, and the
+  count of untouched discards), the noise override, the plain `rank_actions` top-1 together with
+  its runner-up so a near-tie is visible, plus blind select, pack picks and the "nothing was worth
+  buying" exit. `rank_actions` is now asked for `top=2` rather than 1 — it ranks everything and
+  slices at the end, so the runner-up costs nothing.
+
+  **Also fixed, independently of whether it caused this loss:** `_pace_projection` replaces
+  `best × hands_left`. That formula assumed every remaining hand scores like the current best, when
+  the best hand is played *first* and the rest come from what is left — this round went 2 754,
+  2 052, 2 240, a ~25 % fall, against a projection of four hands at 2 754, and the error always
+  favoured not discarding. Future hands are now valued at the round's **observed** average once
+  there is history (measurement, not assumption), and at a decayed best before then;
+  `_PACE_DECAY = 0.75` is measured from that one round, carries its sample size in the docstring,
+  and is due for re-measurement by the batch — the same treatment `_CARD_SHARP_REPEAT_RATE` got in
+  A11. The projection can only shrink, so the guard is strictly more conservative than before.
+
+  **And made self-reporting:** `RunReport` now counts plays, discards used, and rounds closed
+  without a single discard while discards were available. Replayed against run 11's own journal it
+  prints `розыгрышей 31, сбросов 7, раундов без единого сброса 8` — the symptom that took a human
+  reading ninety-eight lines is now the summary's second line.
+
+  **`stake_observed` corrected**: it was hardcoded `false`. The stake is known exactly when the
+  runner started the run, since it passed it to `start`; only an *adopted* run has an unknowable
+  stake. Marking a known stake unknown discards real knowledge and would have hollowed out the
+  win-rate table for every run the batch starts itself.
+
+  **Still open:** which branch actually declined to discard in run 11's last round. The next
+  journalled run answers it by reading one line, which is the whole point. Tests —
+  `tests/test_autopilot.py::TestОбоснованиеНаИгровомПути`, `::TestOnPaceWithoutDiscard`,
+  `tests/test_runner.py::TestСчётчикиСбросов`.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
