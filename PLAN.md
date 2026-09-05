@@ -1620,6 +1620,51 @@ The planned order (letter labels are working ones, not from the general phase nu
   while play estimates missed by −18 % and +9 %, which suggests the margin ignores the spread of
   its own inputs. Three observations is not a basis for moving a constant; the batch is.
 
+- **A14. Blind skipping was switched off, and nobody noticed for eleven runs — done.** Run 12
+  made **20 blind selections and skipped zero times**. The journal (E1a) finally said why: seven
+  were boss blinds, correctly unskippable, and thirteen were `цена тега числом не известна` —
+  among them `Negative Tag`, `Rare Tag`, `Polychrome Tag` and `Buffoon Tag` ×3. `decide_skip`
+  required an exact dollar price, `_tag_dollars` produces one for **two of the 24 tags**, so
+  twenty-two tags could never be chosen regardless of strength. An entire decision axis was inert,
+  and no test caught it because each individual refusal was correct.
+
+  The refusal was honest when written — `solver/skip.py` is Phase 9.2, older than the pack, shop
+  and voucher valuation this project has since built. It simply went stale, which is a failure mode
+  worth naming: a principled `None` does not stay principled once the machinery to compute it
+  arrives.
+
+  **It also connects to how run 12 died.** At antes 6–7 the bot sat on $69 with full joker slots
+  while offers of 3 880 went past, unable to convert money into board strength. `Negative Tag`
+  grants the next purchased joker a Negative edition — **+1 joker slot**, exactly that problem's
+  solution — and it walked past one.
+
+  **Three tiers, reusing the voucher pattern approved in A4**, in structurally separate fields so
+  computed and assigned numbers never mix: *score* for `Meteor`/`Buffoon` (each reduces to a free
+  Mega pack, priced by the existing `monte_carlo_pack` over the existing pools) and `Orbital` (+3
+  hand levels via `level_up`) — no new formulas; *dollars* for `Investment`/`Economy`, unchanged;
+  *structural* on the same 1–8 scale as vouchers with **deliberately the same anchor** — a Negative
+  edition is +1 joker slot, precisely what `v_antimatter` gives, so it takes `v_antimatter`'s 8.0
+  rather than an independently invented number, and a test pins the two together. Honest `None`
+  survives for `Handy`/`Garbage`/`Skip` (run-level counters the mod does not send) and
+  `Standard`/`Charm`/`Ethereal` (packs this project values nowhere). A coverage test asserts every
+  one of the 24 tags gets an answer or a stated reason, so the next tag cannot fall silently
+  through the hole these thirteen did.
+
+  **Lazy by measurement.** The pools cost 2.4 s (planets) and 9.8 s (jokers) while the blind screen
+  recurs ~20 times a run, so they are computed only when one of the three pack tags is actually on
+  offer. Measured after: `Negative`/`Handy` 0.00 s, `Orbital` 2.43 s, `Meteor` 2.45 s, `Buffoon`
+  10.19 s. The shop's `_SampleCache` is deliberately **not** stretched across screens — its key does
+  not describe this one, and stretching a cache key past what it models is exactly how A11's
+  stale-samples defect happened.
+
+  **Calibration risk, recorded rather than buried.** Replaying run 12's thirteen passed tags, the
+  bot now skips 4 of 9 with full slots and 6 of 9 with slots free. That is a large behavioural
+  swing resting on one run's evidence and on assigned numbers, and **no tier models the score
+  progress a skip forfeits** — only the $3–4 reward. The tier-1 bar being scaled to the next
+  blind's requirement is the guard, and it is an approximation. The next live runs are the
+  calibration; if skipping proves too eager, `_MIN_HEURISTIC_TAG_VALUE` and `_HEURISTIC_TAG_FLOOR`
+  are the knobs. Tests — `tests/test_skip.py::TestПокрытиеТегов`, `::TestЛенивостьОценкиТегов`.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
