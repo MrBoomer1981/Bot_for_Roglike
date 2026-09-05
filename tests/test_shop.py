@@ -13,15 +13,19 @@ import pytest
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.cards import parse_cards, standard_deck
+from balatro_bot.core.hands import HandType, base_values
 from balatro_bot.core.jokers import implemented_keys
 from balatro_bot.core.scoring import score_play
-from balatro_bot.core.state import GameState, JokerCard, ShopItem
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver import shop as shop_module
 from balatro_bot.solver.shop import (
+    _CARD_SHARP_REPEAT_RATE,
     _MONEY_SENSITIVE_JOKER_KEYS,
     SAMPLE_HANDS,
+    _repeats_hand_type,
     _round_budget,
     _round_moment,
+    _sample_cache_key,
     clear_shop_cache,
     evaluate_shop,
     joker_contributions,
@@ -33,6 +37,20 @@ def _shop_state(**overrides: object) -> GameState:
     state = build_state("AH KH QH JH 9H 7C 7D 2S")
     state = replace(state, hand=())  # магазин: руки на этом экране нет
     return replace(state, **overrides)  # type: ignore[arg-type]
+
+
+def _hand_info() -> dict[HandType, PokerHandInfo]:
+    """Таблица типов рук, какую всегда присылает мод. Ручной ввод
+    (`build_state`) её не заполняет вовсе, поэтому всё, что зависит от
+    `played_this_round`, надо проверять на состоянии живого вида."""
+    return {
+        hand_type: PokerHandInfo(
+            level=1,
+            chips=base_values(hand_type, 1).chips,
+            mult=base_values(hand_type, 1).mult,
+        )
+        for hand_type in HandType
+    }
 
 
 class TestEvaluateShop:
@@ -573,9 +591,15 @@ class TestКешВыборок:
         seen: list[str] = []
         real = shop_module.joker_uplift
 
-        def counting(state: GameState, joker: JokerCard, deck: object, samples: int) -> float:
+        def counting(
+            state: GameState,
+            joker: JokerCard,
+            deck: object,
+            samples: int,
+            money_delta: int = 0,
+        ) -> float:
             seen.append(joker.key)
-            return real(state, joker, deck, samples)  # type: ignore[arg-type]
+            return real(state, joker, deck, samples, money_delta)  # type: ignore[arg-type]
 
         monkeypatch.setattr(shop_module, "joker_uplift", counting)
         return seen
@@ -805,11 +829,11 @@ class TestОценкаПоМоментуРаунда:
         assert self._uplift("j_banner") > 0
         assert self._uplift("j_mystic_summit") > 0
 
-    def test_card_sharp_осознанно_остаётся_нулём(self) -> None:
-        # Его условие — `played_this_round`, а какой именно тип руки был
-        # сыгран раньше в раунде, из выборки не вывести без лишнего
-        # `advise()`. Пробел задокументирован, и тест держит его на виду,
-        # чтобы он не выглядел недосмотром.
+    def test_card_sharp_без_таблицы_рук_остаётся_нулём(self) -> None:
+        # Ручной ввод не присылает `hand_info` вовсе, и тогда джокеру
+        # нечего читать: он честно помечает счёт неизвестным, а не
+        # выдумывает повтор. Момент раунда тут ни при чём — см. A11 и
+        # `TestПовторТипаРуки` для живого случая.
         assert self._uplift("j_card_sharp") == 0
 
     def test_вклад_acrobat_на_доске_рана_9(self) -> None:
@@ -824,3 +848,128 @@ class TestОценкаПоМоментуРаунда:
         state = replace(self._state("j_joker"), hands_left=1)
         many = joker_uplift(state, JokerCard(key="j_acrobat"), standard_deck(), SAMPLE_HANDS)
         assert many > self._uplift("j_acrobat")
+
+
+class TestПовторТипаРуки:
+    """Улучшение A11, пробел 1. `j_card_sharp` даёт X3 множ., если тип руки
+    уже игрался в этом раунде, но `_round_moment` старил только
+    `hands_left`/`hands_played`/`discards_left` — `played_this_round` во всех
+    выборках оставался нулём, джокер стоил ровно 0 и в ране 10 был продан."""
+
+    def _state(self, *jokers: str, **overrides: object) -> GameState:
+        deck = standard_deck()
+        return _shop_state(
+            jokers=tuple(JokerCard(key=key) for key in jokers),
+            hands_left=4,
+            discards_left=4,
+            deck=deck,
+            full_deck=deck,
+            hand_info=_hand_info(),
+            **overrides,
+        )
+
+    def test_пометка_ставится_всем_типам_и_не_трогает_уровни(self) -> None:
+        state = self._state()
+        moment = _round_moment(state, 1, 4, repeat=True)
+        assert all(info.played_this_round >= 1 for info in moment.hand_info.values())
+        for hand_type, info in moment.hand_info.items():
+            было = state.hand_info[hand_type]
+            assert (info.level, info.chips, info.mult) == (было.level, было.chips, было.mult)
+
+    def test_без_флага_таблица_не_меняется(self) -> None:
+        state = self._state()
+        assert _round_moment(state, 1, 4).hand_info == state.hand_info
+
+    def test_первая_рука_раунда_никогда_не_повтор(self) -> None:
+        # Повторять в начале раунда нечего — это факт правил, не допущение.
+        assert not any(_repeats_hand_type(0, cycle) for cycle in range(10))
+
+    def test_доля_повторов_сходится_к_измеренной(self) -> None:
+        # Раскладка по циклам должна давать ровно `int(C * rate)` срабатываний.
+        for циклов in (3, 10, 25, 100):
+            сработало = sum(1 for c in range(циклов) if _repeats_hand_type(1, c))
+            assert сработало == int(циклов * _CARD_SHARP_REPEAT_RATE), циклов
+
+    def test_card_sharp_больше_не_ноль(self) -> None:
+        # Прямая регрессия рана 10: джокер оценивался в 0 и продавался.
+        state = self._state("j_joker")
+        uplift = joker_uplift(state, JokerCard(key="j_card_sharp"), standard_deck(), SAMPLE_HANDS)
+        assert uplift > 0
+
+    def test_под_боссом_на_легальность_пометка_снимается(self) -> None:
+        # `solver/play.py._is_legal_play` читает то же поле: под `The Eye`
+        # «сыграны все типы» сделало бы нелегальным каждый розыгрыш. Значит
+        # и оценка тут снова 0 — узкий явный отказ вместо неверного числа.
+        глаз = BlindInfo(kind="Boss", name="The Eye", effect="", required_score=1000)
+        state = self._state("j_joker", blind=глаз)
+        moment = _round_moment(state, 1, 4, repeat=True)
+        assert moment.hand_info == state.hand_info
+        uplift = joker_uplift(state, JokerCard(key="j_card_sharp"), standard_deck(), SAMPLE_HANDS)
+        assert uplift == 0
+
+
+class TestДеньгиПослеСделки:
+    """Улучшение A11, пробел 2. Прирост считался при деньгах ДО покупки, хотя
+    `j_bull`/`j_bootstraps` читают `GameState.money` напрямую, — и тем
+    сильнее завышал оффер, чем он дороже."""
+
+    def _state(self, *jokers: str) -> GameState:
+        deck = standard_deck()
+        return _shop_state(
+            jokers=tuple(JokerCard(key=key) for key in jokers),
+            hands_left=4,
+            discards_left=4,
+            money=40,
+            deck=deck,
+            full_deck=deck,
+            hand_info=_hand_info(),
+        )
+
+    def _uplift(self, key: str, money_delta: int = 0) -> float:
+        return joker_uplift(
+            self._state(), JokerCard(key=key), standard_deck(), SAMPLE_HANDS, money_delta
+        )
+
+    def test_цена_снижает_прирост_денежного_джокера(self) -> None:
+        assert self._uplift("j_bull", -12) < self._uplift("j_bull", -6) < self._uplift("j_bull")
+
+    def test_на_неденежном_джокере_сдвиг_ничего_не_меняет(self) -> None:
+        # Сдвиг обязан быть виден ровно там, где деньги читаются, иначе это
+        # не поправка, а шум по всей витрине.
+        assert self._uplift("j_joker", -12) == self._uplift("j_joker")
+
+    def test_вклад_считается_с_учётом_выручки_от_продажи(self) -> None:
+        # Продажа возвращает деньги, а оставшийся в слоте `j_bull` их читает,
+        # поэтому чистый вклад продаваемого джокера меньше: часть потери
+        # компенсируется выручкой. Именно эта величина сравнивается с
+        # приростом оффера, уже посчитанным после траты.
+        deck = standard_deck()
+
+        def вклад(sell_value: int | None) -> float:
+            state = _shop_state(
+                jokers=(JokerCard(key="j_bull"), JokerCard(key="j_joker", sell_value=sell_value)),
+                hands_left=4,
+                discards_left=4,
+                money=10,
+                deck=deck,
+                full_deck=deck,
+                hand_info=_hand_info(),
+            )
+            return joker_contributions(state, deck, SAMPLE_HANDS)[1]
+
+        assert вклад(20) < вклад(None)
+
+    def test_ключ_кеша_видит_денежного_джокера_на_витрине(self) -> None:
+        # Пробел 2b: до A11 `money_matters` смотрел только на слоты, и с
+        # Bull'ом на полке покупка чего-то другого меняла деньги, не меняя
+        # ключа, — прирост Bull'а выдавался из кеша на старых деньгах.
+        полка = (ShopItem("j_bull", "Bull", "JOKER", 6),)
+        богатый = _shop_state(money=40, shop=полка)
+        бедный = _shop_state(money=10, shop=полка)
+        assert _sample_cache_key(богатый, SAMPLE_HANDS) != _sample_cache_key(бедный, SAMPLE_HANDS)
+
+    def test_без_денежных_джокеров_ключ_по_прежнему_не_зависит_от_денег(self) -> None:
+        полка = (ShopItem("j_joker", "Joker", "JOKER", 3),)
+        богатый = _shop_state(money=40, shop=полка)
+        бедный = _shop_state(money=10, shop=полка)
+        assert _sample_cache_key(богатый, SAMPLE_HANDS) == _sample_cache_key(бедный, SAMPLE_HANDS)

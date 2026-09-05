@@ -1184,7 +1184,7 @@ The planned order (letter labels are working ones, not from the general phase nu
   | `j_acrobat` | `hands_left <= 1` → X3 Mult | never fires → **0** |
   | `j_dusk` | `hands_left <= 1` → retrigger all | never fires → **0** |
   | `j_mystic_summit` | `discards_left <= 0` → +15 Mult | never fires → **0** |
-  | `j_card_sharp` | `played_this_round > 0` → X3 Mult | never fires → **0** |
+  | `j_card_sharp` | `played_this_round > 0` → X3 Mult | never fires → **0** (closed by A11) |
   | `j_banner` | `+30 chips × discards_left` | at its maximum → **over** |
   | `j_ice_cream` | `+100 chips − 5 × hands_played` | at its maximum → **over** |
 
@@ -1212,11 +1212,9 @@ The planned order (letter labels are working ones, not from the general phase nu
   **Stated assumption**: discards are modelled as spent evenly across the round. Real play
   front-loads them, so `j_banner` stays slightly high and `j_mystic_summit` slightly low —
   an approximation of *when* discards are spent, not a guess at an effect, and strictly better
-  than the old "all discards always remain". **`j_card_sharp` remains at 0 by decision**: its
-  condition needs to know *which* hand type was played earlier in the round, which costs an
-  extra `advise()` per sample — 50 % more for one joker. The gap is documented and pinned by
-  its own test so it stays visible instead of looking like an oversight. Five of six is the
-  whole claim.
+  than the old "all discards always remain". **`j_card_sharp` was left at 0 by decision** —
+  five of six was the whole claim at the time. That debt came due immediately: run 10 sold
+  the joker, and **A11 below discharges it**.
 
   **Out of scope, noted**: `solver/vouchers.py` prices `+1 hand`/`+1 discard` vouchers from the
   same shop-moment snapshot, and `solver/pack.py`'s planet pool likewise. The same argument
@@ -1348,14 +1346,91 @@ The planned order (letter labels are working ones, not from the general phase nu
   `c_fool` under `_RANDOM_TAROTS` ("creates cards, depends on RNG"), and that classification
   is wrong: The Fool recreates *the last Tarot or Planet used this run*, which is not random at
   all — it is simply history the project does not track, and `GameState` has no field for it.
-  There is a plausible route that needs checking against a real card before it is built: the
-  mod already sends every consumable's live effect text into `ShopItem.effect`
-  (`mod_bridge._parse_shop_item`), and the game renders The Fool's text with the card it would
-  copy, so the name may be readable straight off it — the same trick `JokerCard.current_value`
-  uses to recover accumulator values the schema does not expose. If the text does name the
-  card, valuing The Fool reduces to valuing that card, which slice 1 can already do for the
-  eight enhance-Tarots and every Planet. If it does not, the honest `None` stands but the
-  *reason* still has to change: it is missing history, not RNG.
+  The route proposed here (read the copied card's name out of the live effect text, the way
+  `JokerCard.current_value` recovers accumulator values) was **checked against the game and is
+  disproved**: `localization/en-us.lua` renders `c_fool` as four lines of fixed text with no
+  substitution variable at all, so there is no name to read; the real target is
+  `G.GAME.last_tarot_planet` (`card.lua`, both the `use` and `can_use` paths), which the mod's
+  `utils/gamestate.lua` does not serialize. The honest `None` therefore stands, and its
+  *reason* changes from RNG to missing history. The one remaining route is for the bot to track
+  its own last-used Tarot/Planet in the run loop — workable, since the autopilot is normally
+  the one using them, but it is a new mechanism with a hole in it (a card used by the human
+  during a hand-over would be missed), not a text read.
+- **A11. An audit of the whole "wrong state to evaluate from" defect class — done.** A8, A9,
+  A10 and the `j_card_sharp` gap were, in retrospect, four instances of *one* defect: not a
+  joker implemented wrongly, but the shop counterfactual scoring jokers from a state the round
+  will never actually be in. Each cost a live run to find, one at a time. So instead of waiting
+  for run 11 to surface the next one, the class was audited directly — which implemented jokers
+  read a `GameState` field, and which of those fields does the counterfactual model? The audit
+  is small and complete; exactly nine jokers read state:
+
+  | field | jokers | modelled |
+  |---|---|---|
+  | `hands_left` | `j_acrobat`, `j_dusk` | ✅ A10 |
+  | `discards_left` | `j_banner`, `j_mystic_summit` | ✅ A10 (stated assumption) |
+  | `hands_played` | `j_ice_cream` | ✅ A10 |
+  | `joker_slots` | `j_stencil` | ✅ (`len(ctx.jokers)` grows with the candidate) |
+  | `deck`, `deck_type`, `full_deck` | `j_blue_joker`, `j_erosion`, the `_FullDeckJoker` family | ✅ static within a round |
+  | `hand_info.played_this_round` | `j_card_sharp` | ❌ **gap 1** |
+  | `money` | `j_bull`, `j_bootstraps` | ❌ **gap 2** |
+
+  Two gaps, and the second was not previously known. This table is the deliverable as much as
+  the code is: it is reproduced in `docs/architecture.md`, and `CLAUDE.md`'s "Adding a Joker"
+  now sends any new state-reading joker through it — so the next one gets checked instead of
+  costing a run.
+
+  **Gap 1 — `j_card_sharp`, the joker A10 knowingly left behind.** Run 10 sold it, exactly as
+  predicted. `_round_moment` aged `hands_left`/`hands_played`/`discards_left` but left
+  `hand_info` alone, so `played_this_round` was 0 in every sample. It now takes `repeat: bool`
+  and, when set, marks **every** hand type as played — whichever type the solver goes on to
+  pick then counts as a repeat, so the caller never has to know which one it will be, and
+  levels/chips/mult are carried through untouched.
+
+  The rate is **measured, not guessed**: the run 9 and run 10 decision logs were parsed and
+  every played hand re-evaluated through `core.hands.evaluate` — of 19 non-first plays in a
+  round, 13 repeated a type already played that round, **68 %** (by step: 7/12, 4/5, 2/2, so
+  the share rises through the round). `_CARD_SHARP_REPEAT_RATE = 0.68` carries that sample size
+  in its docstring; 19 observations is small, so it is a declared assumption of the same shape
+  as A10's "discards are spent evenly", to be re-measured by the E1 batch. `_repeats_hand_type`
+  allocates the mixture across sample cycles the way Bresenham's algorithm splits a slope —
+  exactly `int(C × rate)` firings over `C` cycles, deterministic, no second RNG — and the
+  averaging `joker_uplift`/`joker_contributions` already do turns it into an estimate at the
+  measured share. Measured: `j_card_sharp` 0 → **184**.
+
+  **Boss guard, required.** `solver/play.py._is_legal_play` reads the same field for `The Eye`
+  and `The Mouth`, so "every type has been played" would make *every* play illegal under
+  `The Eye`. The marking is therefore skipped under the three bosses whose
+  `restricts_legal_plays` is set (`_RESTRICTING_BOSS_NAMES`, read straight off `core/bosses.py`
+  rather than re-listed). The price is that `j_card_sharp` is back to 0 under those three —
+  a narrow, explicit refusal instead of a silently wrong number, and pinned by its own test.
+
+  **Gap 2 — money was counted before the purchase.** `joker_uplift` scored the boosted side
+  with `state.money` untouched, but buying costs `item.price`, and `j_bull` (+2 chips per $1)
+  and `j_bootstraps` (+2 Mult per $5) read that field directly. The bias grew with price, so
+  the more expensive the offer the more its own cost was ignored — `interest_lost` already
+  prices spending in dollars, the score side simply never did. `money_delta` is now applied to
+  the **modified side only**, which is the point of a counterfactual rather than an oversight:
+  not buying costs nothing. Measured on a `j_bull` offer: 206.7 at $0, 175.7 at $6, 144.7 at
+  $12. `joker_contributions` gets the mirror — money moves by the sold joker's `sell_value` —
+  so `autopilot._decide_replace_action` no longer compares an uplift priced after the spend
+  against a contribution priced before the refund. `solver/pack.py` keeps the default 0: a
+  pack is already paid for.
+
+  **Gap 2b — the F2 cache key ignored the shelf**, a correctness defect introduced by F2 and
+  found by this audit rather than by a run. `money_matters` scanned held jokers only, and the
+  key blanks `shop`, so with a `Bull` *on the shelf* but not in a slot, buying anything else
+  changed money without changing the key and the stale uplift was served from cache. The scan
+  now covers the shelf too. `_evaluate_joker_offer`'s memo id gains the price for the same
+  reason: the same joker at $4 and at $8 is no longer one entry.
+
+  **Cost: none.** Sample counts are unchanged and the extra `hand_info` rebuild is per sample,
+  not per score — cold shop visit 17.4 s against 17.7 s before, after a reroll 1.48 s, repeat
+  poll 0.48 s. F2 and F3 hold. Tests — `tests/test_shop.py::TestПовторТипаРуки`,
+  `::TestДеньгиПослеСделки`, `tests/test_autopilot.py::TestDecideActionCardSharpНеБалласт`.
+
+  **Not verified live yet**, along with A9's sell-on-negative branch, C1 and A10 — the next
+  run is the first chance to see any of the four.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,

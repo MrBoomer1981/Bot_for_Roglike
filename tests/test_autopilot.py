@@ -27,9 +27,15 @@ from balatro_bot.autopilot import (
     dispatch_action,
 )
 from balatro_bot.core.cards import Card, Rank, Suit, parse_cards
-from balatro_bot.core.hands import HandType
+from balatro_bot.core.hands import HandType, base_values
 from balatro_bot.core.scoring import ScoreOutcome
-from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
+from balatro_bot.core.state import (
+    BlindInfo,
+    GameState,
+    JokerCard,
+    PokerHandInfo,
+    ShopItem,
+)
 from balatro_bot.solver.actions import ActionOption, rank_actions
 from balatro_bot.solver.play import Advice, Candidate
 from balatro_bot.solver.skip import evaluate_skip
@@ -1138,3 +1144,57 @@ class TestDescribeAction:
             Action(kind="use"),
         ):
             assert describe_action(action)
+
+
+def _hand_info() -> dict[HandType, PokerHandInfo]:
+    """Таблица типов рук, какую мод присылает всегда. Ручной ввод её не
+    заполняет, а без неё `j_card_sharp` читать нечего."""
+    return {
+        hand_type: PokerHandInfo(
+            level=1,
+            chips=base_values(hand_type, 1).chips,
+            mult=base_values(hand_type, 1).mult,
+        )
+        for hand_type in HandType
+    }
+
+
+class TestDecideActionCardSharpНеБалласт:
+    """Улучшение A11: в ране 10 бот продал `Card Sharp`, потому что
+    контрфактум магазина не старил `played_this_round` и джокер измерялся
+    ровно в 0 — тот же класс ошибки, что A9 и A10, только последний из
+    девяти читающих состояние джокеров."""
+
+    def _board(self, *jokers: JokerCard) -> GameState:
+        return GameState(
+            phase="SHOP",
+            money=25,
+            joker_slots=5,  # слоты НЕ полны: работает именно ветка балласта
+            shop_slots=2,
+            reroll_cost=5,
+            hands_left=4,
+            discards_left=4,
+            hand_info=_hand_info(),
+            blinds={"small": _blind("SMALL", "UPCOMING", 300)},
+            jokers=jokers,
+            shop=(ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+        )
+
+    def test_card_sharp_не_продаётся_как_балласт(self) -> None:
+        board = self._board(
+            JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+            JokerCard(key="j_joker", label="Joker", sell_value=2),
+            JokerCard(key="j_card_sharp", label="Card Sharp", sell_value=3),
+        )
+        action = decide_action(board)
+        assert action is not None
+        assert not (action.kind == "sell" and action.label == "Card Sharp")
+
+    def test_настоящий_балласт_на_той_же_доске_по_прежнему_продаётся(self) -> None:
+        # Контроль: сама ветка жива, изменилась только оценка Card Sharp.
+        board = self._board(
+            JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+            JokerCard(key="j_joker", label="Joker", sell_value=2),
+            JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
+        )
+        assert decide_action(board) == Action(kind="sell", item_index=2, label="Rough Gem")

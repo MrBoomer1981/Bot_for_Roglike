@@ -128,10 +128,12 @@ from dataclasses import dataclass, replace
 from typing import Final
 
 from balatro_bot.core import economy
+from balatro_bot.core.bosses import BOSSES
 from balatro_bot.core.cards import Card, Edition, standard_deck
 from balatro_bot.core.catalogue import is_known_joker
+from balatro_bot.core.hands import HandType
 from balatro_bot.core.jokers import implemented_keys
-from balatro_bot.core.state import GameState, JokerCard, ShopItem
+from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 
@@ -219,6 +221,26 @@ _SHOP_TOTAL_RATE: Final[int] = (
 _MONEY_SENSITIVE_JOKER_KEYS: Final[frozenset[str]] = frozenset({"j_bull", "j_bootstraps"})
 
 
+#: Улучшение A11. Доля розыгрышей, повторяющих тип руки, уже сыгранный в
+#: этом же раунде, — от этого зависит `j_card_sharp` (X3 множ. на повторе).
+#: Число **измерено**, а не взято из головы: логи решений ранов 9 и 10
+#: разобраны, каждая сыгранная рука переоценена через `core.hands.evaluate`,
+#: и из 19 не-первых розыгрышей в раунде 13 оказались повторами — 68% (по
+#: шагам раунда: 7 из 12, 4 из 5, 2 из 2, то есть доля с шагом растёт).
+#: Выборка мала (19 наблюдений), поэтому число заявлено как допущение и
+#: подлежит перемеру батчем E1, а не считается константой игры.
+_CARD_SHARP_REPEAT_RATE: Final[float] = 0.68
+
+#: Боссы, чей `restricts_legal_plays` завязан ровно на `played_this_round`
+#: (`solver/play.py._is_legal_play`). Под ними пометка «тип руки уже
+#: сыгран» ломала бы фильтр легальности: под `The Eye` нелегальным стал бы
+#: **каждый** розыгрыш. Берём флаг прямо из каталога — здесь, в отличие от
+#: `solver/play.py`, нужен именно он, а не механика каждого босса.
+_RESTRICTING_BOSS_NAMES: Final[frozenset[str]] = frozenset(
+    boss.name for boss in BOSSES.values() if boss.restricts_legal_plays
+)
+
+
 def _sample_cache_key(state: GameState, samples: int) -> tuple[GameState, int]:
     """Ключ мемо дорогих выборок (улучшение F2) — всё состояние, кроме того,
     что заведомо не влияет на счёт сэмплированной руки. Сравнивается через
@@ -233,12 +255,18 @@ def _sample_cache_key(state: GameState, samples: int) -> tuple[GameState, int]:
     * `reroll_cost` — то же самое (в `core/` не читается нигде, кроме
       собственного определения в `core/state.py`);
     * `money` — читают ровно два джокера (`_MONEY_SENSITIVE_JOKER_KEYS`),
-      поэтому обнуляем только когда ни одного из них нет в слотах.
+      поэтому обнуляем только когда ни одного из них нет **ни в слотах, ни
+      на витрине**. Витрину сюда добавило A11: первая версия смотрела
+      только на слоты, и с Bull'ом на полке (но не в слотах) покупка
+      чего-то другого меняла деньги, ключ при этом не менялся, и прирост
+      Bull'а выдавался из кеша посчитанным на старых деньгах.
 
     Именно это делает кеш полезным: реролл (`button_callbacks.lua`'s
     `G.FUNCS.reroll_shop`) заменяет только карты витрины, а деньги и цену
     ролла — единственное, что он трогает помимо неё."""
-    money_matters = any(joker.key in _MONEY_SENSITIVE_JOKER_KEYS for joker in state.jokers)
+    money_matters = any(joker.key in _MONEY_SENSITIVE_JOKER_KEYS for joker in state.jokers) or any(
+        item.key in _MONEY_SENSITIVE_JOKER_KEYS for item in state.shop
+    )
     stripped = replace(
         state,
         shop=(),
@@ -266,7 +294,7 @@ class _SampleCache:
         self.random_joker_uplifts: list[float] | None = None
         self.planet_uplifts: list[float] | None = None
         self.contributions: tuple[float, ...] | None = None
-        self.joker_uplifts: dict[tuple[str, Edition], float] = {}
+        self.joker_uplifts: dict[tuple[str, Edition, int], float] = {}
 
     def sync(self, key: tuple[GameState, int]) -> None:
         """Сбросить всё, если состояние изменилось не только витриной."""
@@ -302,7 +330,7 @@ def _interest_lost(state: GameState, price: int) -> int:
     )
 
 
-def _round_moment(state: GameState, step: int, hands: int) -> GameState:
+def _round_moment(state: GameState, step: int, hands: int, *, repeat: bool = False) -> GameState:
     """Состояние на `step`-й руке раунда (улучшение A10).
 
     Контрфактум магазина сэмплирует руку, но раньше не сэмплировал **момент
@@ -320,10 +348,50 @@ def _round_moment(state: GameState, step: int, hands: int) -> GameState:
     остаётся немного завышен, а `j_mystic_summit` немного занижен; это
     заявленное допущение о том, **когда** тратятся сбросы, а не догадка об
     эффекте джокера, и оно строго лучше прежнего «сбросы всегда все на
-    месте»."""
+    месте».
+
+    `repeat=True` (улучшение A11) — этот момент раунда разыгрывает тип
+    руки, **уже сыгранный** в нём раньше: седьмой джокер, читающий
+    состояние, — `j_card_sharp`, и его A10 оставила стоить ровно 0, из-за
+    чего ран 10 его продал. Помечаем сыгранными **все** типы сразу:
+    какой из них выберет солвер, заранее неизвестно, а нужен ровно факт
+    «выбранный тип уже играли». Уровни, фишки и множитель каждого типа
+    при этом сохраняются — меняется одно поле. Долю таких моментов задаёт
+    `_CARD_SHARP_REPEAT_RATE`, раскладывает `_repeats_hand_type`.
+
+    Под тремя боссами из `_RESTRICTING_BOSS_NAMES` пометка не ставится:
+    `solver/play.py._is_legal_play` читает то же самое поле, и «сыграны
+    все типы» сделало бы под `The Eye` нелегальным любой розыгрыш. Плата —
+    `j_card_sharp` под этими боссами снова стоит 0; это узкий и явный
+    отказ, а не молчаливо неверное число."""
     discards = state.discards_left
     left = round(discards * (hands - 1 - step) / (hands - 1)) if hands > 1 else 0
-    return replace(state, hands_left=hands - step, hands_played=step, discards_left=left)
+    moment = replace(state, hands_left=hands - step, hands_played=step, discards_left=left)
+    if not repeat or not state.hand_info:
+        return moment
+    if state.blind is not None and state.blind.name in _RESTRICTING_BOSS_NAMES:
+        return moment
+    played: dict[HandType, PokerHandInfo] = {
+        hand_type: replace(info, played_this_round=max(info.played_this_round, 1))
+        for hand_type, info in state.hand_info.items()
+    }
+    return replace(moment, hand_info=played)
+
+
+def _repeats_hand_type(step: int, cycle: int) -> bool:
+    """Разыгрывает ли выборка `cycle`-го цикла на `step`-й руке раунда тип,
+    уже сыгранный в этом раунде (улучшение A11).
+
+    Первая рука раунда повторять нечего, поэтому `step == 0` — всегда
+    «нет». На остальных шагах доля должна выйти `_CARD_SHARP_REPEAT_RATE`;
+    вместо ГСЧ раскладываем её по циклам выборки так, как это делает
+    алгоритм Брезенхэма: за `C` циклов срабатываний ровно `int(C * rate)`.
+    Детерминированно и без второго сеянного источника случайности —
+    усреднение по выборкам, которое `joker_uplift`/`joker_contributions`
+    и так делают, превращает эту смесь в оценку по измеренной доле."""
+    if step == 0:
+        return False
+    return int((cycle + 1) * _CARD_SHARP_REPEAT_RATE) > int(cycle * _CARD_SHARP_REPEAT_RATE)
 
 
 def _round_budget(state: GameState) -> int:
@@ -335,13 +403,26 @@ def _round_budget(state: GameState) -> int:
 
 
 def joker_uplift(
-    state: GameState, joker: JokerCard, deck_source: tuple[Card, ...], samples: int
+    state: GameState,
+    joker: JokerCard,
+    deck_source: tuple[Card, ...],
+    samples: int,
+    money_delta: int = 0,
 ) -> float:
     """Средний прирост лучшего счёта от добавления `joker` к текущим — по
     `samples` представительным рукам из `deck_source` (детерминированная,
     сеянная выборка). Общий контрфактум: оценка джокера в витрине
     (`_evaluate_joker_offer`) и оценка джокера из Buffoon-пака
-    (`solver/pack.py`, `_evaluate_pack_purchase` ниже) считают одно и то же."""
+    (`solver/pack.py`, `_evaluate_pack_purchase` ниже) считают одно и то же.
+
+    `money_delta` (улучшение A11) — на сколько изменятся деньги, если
+    джокера взять: покупка в витрине стоит `-item.price`, джокер из уже
+    оплаченного Buffoon-пака — 0. Сдвиг применяется **только к стороне с
+    джокером**, и это не оплошность, а сам смысл контрфактума: не купив,
+    денег не тратишь. `j_bull` (+2 фишки за $1) и `j_bootstraps` (+2 множ.
+    за $5) читают `GameState.money` напрямую, поэтому без сдвига прирост
+    считался на деньгах, которые вот-вот уйдут на эту же покупку, — и тем
+    сильнее, чем дороже оффер."""
     with_candidate = (*state.jokers, joker)
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)
@@ -352,10 +433,14 @@ def joker_uplift(
         # Улучшение A10: выборки распределены по моментам раунда, а не свалены
         # все на его первую руку. Обе стороны разности считаются в **одном** и
         # том же моменте, поэтому контрфактум остаётся честным — различается
-        # только джокер.
-        moment = _round_moment(state, i % hands, hands)
+        # только джокер (и деньги, ровно на цену покупки, — A11).
+        step = i % hands
+        moment = _round_moment(state, step, hands, repeat=_repeats_hand_type(step, i // hands))
         baseline = advise(replace(moment, hand=hand, jokers=state.jokers), limit=1).best.score
-        boosted = advise(replace(moment, hand=hand, jokers=with_candidate), limit=1).best.score
+        boosted = advise(
+            replace(moment, hand=hand, jokers=with_candidate, money=moment.money + money_delta),
+            limit=1,
+        ).best.score
         total += boosted - baseline
     return total / samples
 
@@ -372,26 +457,44 @@ def joker_contributions(
     Зеркало `joker_uplift`: тот меряет «плюс новый джокер», этот — «минус
     существующий». Базовый счёт полного набора усредняется один раз, затем по
     разу на каждый вынутый джокер (нужно `autopilot`'у для продажи-замены,
-    когда все слоты заняты — какой джокер не жалко продать под лучший оффер)."""
+    когда все слоты заняты — какой джокер не жалко продать под лучший оффер).
+
+    Деньги сдвигаются на `sell_value` продаваемого джокера — зеркало
+    `money_delta` в `joker_uplift` (A11) и по той же причине только на
+    стороне без джокера: не продав, денег не получаешь. Иначе
+    `autopilot._decide_replace_action` сравнивал бы прирост, посчитанный
+    после траты, с вкладом, посчитанным до выручки, — ровно та
+    несопоставимость сторон, из-за которой понадобилась A10."""
     if not state.jokers or len(deck_source) < _HAND_SIZE:
         return ()
     rng = random.Random(_SAMPLE_SEED)
     pool = list(deck_source)
     budget = _round_budget(state)
-    # Тот же график моментов, что у `joker_uplift` (A10) — иначе вклад и
+    # Тот же график моментов, что у `joker_uplift` (A10/A11) — иначе вклад и
     # прирост несопоставимы, а `autopilot._decide_replace_action` сравнивает
     # их напрямую.
     moments = [
-        replace(_round_moment(state, i % budget, budget), hand=tuple(rng.sample(pool, _HAND_SIZE)))
+        replace(
+            _round_moment(
+                state,
+                i % budget,
+                budget,
+                repeat=_repeats_hand_type(i % budget, i // budget),
+            ),
+            hand=tuple(rng.sample(pool, _HAND_SIZE)),
+        )
         for i in range(samples)
     ]
     baselines = [advise(moment, limit=1).best.score for moment in moments]
     contributions: list[float] = []
-    for i in range(len(state.jokers)):
+    for i, sold in enumerate(state.jokers):
         without = state.jokers[:i] + state.jokers[i + 1 :]
+        refund = sold.sell_value or 0
         drop = 0.0
         for moment, base in zip(moments, baselines, strict=True):
-            reduced = advise(replace(moment, jokers=without), limit=1).best.score
+            reduced = advise(
+                replace(moment, jokers=without, money=moment.money + refund), limit=1
+            ).best.score
             drop += base - reduced
         contributions.append(drop / samples)
     return tuple(contributions)
@@ -942,13 +1045,16 @@ def _evaluate_joker_offer(
     if not known or len(deck_source) < _HAND_SIZE:
         return _offer(None, 0)
 
-    # Мемо по (ключ, издание) — только эти два поля влияют на счёт, `label`
-    # нет. Переживает реролл: выпавший снова джокер не пересэмплируется.
-    memo_id = (item.key, item.edition)
+    # Мемо по (ключ, издание, цена) — `label` на счёт не влияет, а вот цена
+    # влияет с A11: она уходит в `money_delta`, и один и тот же джокер за
+    # $4 и за $8 — уже разные приросты. Переживает реролл: выпавший снова
+    # джокер по той же цене не пересэмплируется.
+    money_delta = -item.price
+    memo_id = (item.key, item.edition, money_delta)
     if cache is not None and memo_id in cache.joker_uplifts:
         return _offer(cache.joker_uplifts[memo_id], samples)
     candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
-    uplift = joker_uplift(state, candidate, deck_source, samples)
+    uplift = joker_uplift(state, candidate, deck_source, samples, money_delta=money_delta)
     if cache is not None:
         cache.joker_uplifts[memo_id] = uplift
     return _offer(uplift, samples)
