@@ -251,14 +251,24 @@ class TestБоссФлинт:
         outcome = сыграть(parse_cards("AH AD"), [0, 1], blind=_flint(), hand_info=info)
         assert outcome.exact is True
 
-    def test_с_джокером_расчёт_честно_помечен_неточным(self) -> None:
-        # Наш конвейер считает джокеров последним шагом (раздел 5 плана), а
-        # в игре The Flint срабатывает до хендовых джокеров вроде "Joker" —
-        # точно воспроизвести порядок нельзя, поэтому это честно unknown,
-        # а не тихо неверное число.
+    def test_с_джокером_расчёт_тоже_точный(self) -> None:
+        # Сверено с игрой 2026-09-05: `Blind:modify_hand` вызывается в
+        # `state_events.lua` сразу после чтения базы и ДО подсчёта карт и
+        # джокеров — то есть ровно там, где стоит наш шаг 1.5. Прежняя
+        # пометка `unknown` при любом джокере опиралась на неверное
+        # предположение о порядке и занижала точность каждой такой руки.
         info = {HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)}
         outcome = сыграть(parse_cards("AH AD"), [0, 1], ["j_joker"], blind=_flint(), hand_info=info)
-        assert outcome.exact is False
+        assert outcome.exact is True
+        # Джокер прибавляет к уполовиненному множителю в полную силу:
+        # (5 + 11 + 11) × (1 + 4) = 135.
+        assert outcome.expected == 135
+
+    def test_chicot_отменяет_уполовинивание(self) -> None:
+        # `Blind:modify_hand` начинается с `if self.disabled then return` —
+        # а `Chicot` боссовый блайнд как раз отключает.
+        hand = parse_cards("AH AD")
+        assert сыграть(hand, [0, 1], ["j_chicot"], blind=_flint()).expected == 64
 
 
 class TestРетриггеры:
@@ -533,6 +543,67 @@ class TestНакопителиИзТекстаЭффекта:
         assert not outcome.exact
         assert any("j_square" in reason for reason in outcome.unknown)
 
+
+class TestНакопителиПрибавляющиеДоПодсчёта:
+    """Сверено с игрой 2026-09-05 (PLAN.md §8.3 №2, §9.8 A12).
+
+    Перед чтением базовых фишек и множителя игра прогоняет отдельный проход
+    по джокерам с `context.before = true` (`functions/state_events.lua`), и
+    часть накопителей увеличивает себя именно там (`card.lua`). Значит на
+    подходящей руке текущий розыгрыш считается уже с прибавкой, а
+    `current_value` от мода снят до розыгрыша и её не содержит.
+
+    Проверяем не абсолютным числом, а сравнением с обычным накопителем того
+    же типа: `j_castle` (фишки) и `j_green_joker` (множитель) прибавки не
+    имеют, поэтому «j_square с 8» обязан совпасть с «j_castle с 8 + 4» на
+    подходящей руке и с «j_castle с 8» на неподходящей. Так тест ловит
+    именно размер шага, а не переписывает арифметику руки.
+    """
+
+    def _пара_фишек(self, hand: str, key: str, свои: float, контроль: float) -> None:
+        карты = parse_cards(hand)
+        индексы = list(range(len(карты)))
+        свой = сыграть(карты, индексы, [key], joker_values={key: свои})
+        эталон = сыграть(карты, индексы, ["j_castle"], joker_values={"j_castle": контроль})
+        assert свой.expected == эталон.expected
+
+    def test_square_прибавляет_на_четырёх_картах(self) -> None:
+        self._пара_фишек("AH AD KS KC", "j_square", 8, 8 + 4)
+
+    def test_square_молчит_на_пяти_картах(self) -> None:
+        self._пара_фишек("AH AD KS KC QH", "j_square", 8, 8)
+
+    def test_runner_прибавляет_на_стрите(self) -> None:
+        self._пара_фишек("2H 3D 4S 5C 6H", "j_runner", 30, 30 + 15)
+
+    def test_runner_молчит_без_стрита(self) -> None:
+        self._пара_фишек("AH AD KS KC QH", "j_runner", 30, 30)
+
+    def _пара_множителя(self, hand: str, свои: float, контроль: float) -> None:
+        карты = parse_cards(hand)
+        индексы = list(range(len(карты)))
+        свой = сыграть(карты, индексы, ["j_trousers"], joker_values={"j_trousers": свои})
+        эталон = сыграть(
+            карты, индексы, ["j_green_joker"], joker_values={"j_green_joker": контроль}
+        )
+        assert свой.expected == эталон.expected
+
+    def test_trousers_прибавляет_на_двух_парах(self) -> None:
+        self._пара_множителя("AH AD KS KC QH", 6, 6 + 2)
+
+    def test_trousers_прибавляет_на_фулл_хаусе(self) -> None:
+        # Игра проверяет две пары ИЛИ фулл-хаус — вторая ветка того же условия.
+        self._пара_множителя("AH AD AS KC KH", 6, 6 + 2)
+
+    def test_trousers_молчит_на_простой_паре(self) -> None:
+        self._пара_множителя("AH AD 2S 3C 4H", 6, 6)
+
+    def test_без_текущего_значения_по_прежнему_неточно(self) -> None:
+        # Прибавка не должна превращать «нет данных» в выдуманное число.
+        outcome = сыграть(parse_cards("AH AD KS KC"), [0, 1, 2, 3], ["j_square"])
+        assert not outcome.exact
+        assert any("j_square" in reason for reason in outcome.unknown)
+
     def test_без_текущего_значения_счёт_как_без_джокера(self) -> None:
         база = сыграть(parse_cards("AH"), [0])
         с_джокером = сыграть(parse_cards("AH"), [0], ["j_square"])
@@ -621,9 +692,13 @@ class TestСостояниеРана:
         assert any("Supernova" in reason for reason in outcome.unknown)
 
     def test_supernova_с_данными(self) -> None:
+        # Сверено с игрой 2026-09-05: счётчик `played` увеличивается в
+        # начале `evaluate_play`, до хода джокеров, поэтому текущая рука
+        # считается тоже. Мод присылает состояние до розыгрыша (played=5),
+        # значит множитель прибавляется 5 + 1 = 6, а всего 1 + 6 = 7.
         info = {HandType.HIGH_CARD: PokerHandInfo(level=1, chips=5, mult=1, played=5)}
         outcome = сыграть(parse_cards("AH"), [0], ["j_supernova"], hand_info=info)
-        assert outcome.expected == 16 * 6
+        assert outcome.expected == 16 * 7
 
     def test_mystic_summit_без_сбросов(self) -> None:
         outcome = сыграть(parse_cards("AH"), [0], ["j_mystic_summit"], discards_left=0)

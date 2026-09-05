@@ -1431,6 +1431,46 @@ The planned order (letter labels are working ones, not from the general phase nu
   **Not verified live yet**, along with A9's sell-on-negative branch, C1 and A10 — the next
   run is the first chance to see any of the four.
 
+- **A12. The §8.3 assumptions audited against the game's own source — done.** A11 audited one
+  defect class (which `GameState` fields the shop counterfactual models) and found two gaps
+  without needing a run. The same question applied to §8.3 itself: six of the seven genuinely
+  open assumptions were marked **"needs a Mac"**, and that label was simply stale — it predates
+  this project learning that `Balatro.love` is a plain zip. Nothing there needed a running game
+  except `j_hiker`.
+
+  **Four assumptions verified correct and closed** (details and evidence in §8.4): base hand
+  values — *all 24 numbers match `game.lua`*, which retires the top-ranked "distorts every
+  calculation" item and lets `HAND_VALUES_ARE_PROVISIONAL` go to `False`; the scoring step
+  order, identical to `_run_once` step for step; `Photograph` on a retrigger; and the royal
+  flush being display-only.
+
+  A bonus confirmation landed for the improvement committed a day earlier: **A11's
+  `j_card_sharp` model is right.** The game tests `played_this_round > 1` *after* incrementing
+  the counter for the current hand, while we test `> 0` on the mod's pre-play snapshot — the
+  two are equivalent. It reads like an off-by-one and is not, so the code now says why.
+
+  **Four defects came out of the same read**, three of them never suspected. `The Flint` was
+  marking every hand with a joker inexact on a belief about ordering that the source
+  contradicts, and separately ignored `Chicot` disabling the blind. `Supernova` was understated
+  by 1 Mult on *every* play. And a whole class of accumulators — `j_trousers`, `j_runner`,
+  `j_square` — was understated by one increment on qualifying hands, because the game increments
+  them in a `context.before` pass that runs before base chips/mult are even read, while the
+  mod's `current_value` is snapshotted before the play. All four are fixed with regression
+  tests (§8.4).
+
+  **Two more defects were found and deliberately left open** as §8.3 rows 3 and 4, because they
+  need pipeline mechanisms rather than value fixes: `j_vampire` strips enhancements off scoring
+  cards in that same `before` pass (so we are wrong in both directions at once), and `j_space`
+  levels up the hand it is played on (we register it as an honest zero on the opposite,
+  now-disproved, belief). Characterising them precisely, with file and mechanism, is the
+  deliverable — an honest `None` beats a guess, but a *described* gap beats an unexamined one.
+
+  **The transferable lesson** is the one A11 already suggested and this confirms: the expensive
+  errors in this project are not wrong joker formulas but values read from the wrong moment or
+  the wrong state, and they are cheaper to find by auditing a class than by losing a run to each
+  instance. The second-order lesson is narrower and worth stating plainly — **"needs a Mac" was
+  wrong about six items for months.** Check the source before declaring something unknowable.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
@@ -1692,21 +1732,25 @@ Recorded so the gap between the document and the code doesn't pile up silently.
 ### 8.3. Open assumptions and defects
 
 The list is ordered by impact: at the top what distorts every number, at the bottom the
-narrow cases. A "needs a Mac" note means the item can only be closed with reference cases
-from the game (task 3a).
+narrow cases.
+
+The old "needs a Mac" note is gone from this table, and its disappearance is the point.
+It meant "only closable with reference cases from a running game", and for six of the
+seven items that was simply untrue: `Balatro.app/Contents/Resources/Balatro.love` is a
+plain zip, and `game.lua` / `card.lua` / `blind.lua` / `functions/state_events.lua` answer
+the question directly. The 2026-09-05 audit (§9.8 **A12**) closed four assumptions by
+reading and opened rows 3 and 4 below, which are defects that reading *found*. Before
+labelling anything here as needing the game, check the source first.
 
 | # | What | Impact | How to close |
 |---|---|---|---|
-| 1 | Base hand values written from memory | distorts **every** calculation | needs a Mac |
-| 2 | The scoring step order isn't checked against the game's sources | distorts calculations with complex jokers | needs a Mac or a `Balatro.love` dive |
-| 3 | 149 of 150 jokers implemented. A sizeable share are "known, but the effect doesn't touch this play's chips/mult" jokers (money, consumables, hand/discard size already reflected in the state, post-scoring events): `j_burnt`, `j_rough_gem`, `j_business`, `j_reserved_parking`, `j_ticket`, `j_8_ball`, `j_astronomer`, `j_juggler`, `j_burglar`, `j_certificate`, `j_mr_bones`, `j_midas_mask`, `j_space`, and ~25 more in this vein — a silent `BaseJoker` for them is an honest computed zero, not a guess. For some jokers the state was extended: `PokerHandInfo.played_this_round` (`j_card_sharp`), `GameState.hands_played` (`j_ice_cream`), `GameState.joker_slots` (`j_stencil`), `JokerCard.sell_value` (`j_swashbuckler`), `GameState.full_deck` (`j_steel_joker`, `j_stone`, `j_drivers_license`, `j_erosion` — exact only in the narrow case, see the field's docstring and section 8.2), `GameState.deck_type` (`j_erosion` — the starting deck size by its type), `JokerCard.current_value` (23 accumulator jokers), `JokerCard.leading_value` (`j_popcorn`, `j_ramen`), `JokerCard.target_suit`/`target_rank` (`j_ancient`, `j_idol` — only on Russian/English effect texts), `JokerCard.loyalty_active` (`j_loyalty_card` — also only ru/en; all this is section 8.2). Three new rule-modifying cards in `HandModifiers`: `pareidolia` (any card is a face card), `chicot` (the boss blind debuff is removed), `oops` (`core.scoring.double_chance` doubles the bonus-outcome probability for Lucky cards and `j_bloodstone`). Separately, a hardcoded rarity table for all 150 jokers (`_JOKER_RARITY` in `implementations.py`, for `j_baseball`) — a static game rule, not event history, checked both against the three community wiki categories (61/64/20/5, matching the official numbers) and against `rarity` directly in `game.lua` | `j_hiker` is the only one left: the bonus attaches to playing cards, not the joker, needs a new deck-card-level mechanism (section 8.2). Phase 7 |
-| 4 | Assumption: a card debuff doesn't affect hand-type detection | boss blinds | **confirmed on the game** 2026-08-20 (The Goad, spade debuff): `3S 3H 3D` → three_of_a_kind, 108, the score matched exactly — `tests/golden/20260820-104835-boss-goad-debuffed-spade-trips.json` |
-| 5 | Assumption: `Supernova` doesn't count the current hand | one joker | needs a Mac |
-| 6 | Assumption: `Photograph` triggers again on a retrigger | a combo of two jokers | needs a Mac |
-| 7 | Assumption: a royal flush is scored as a plain straight flush | the hand name in the output | needs a Mac |
-| 8 | With a `Blueprint` ⇄ `Brainstorm` cycle the chain breaks | a rare arrangement | needs a Mac |
-| 9 | ~~The Phase 6 Monte-Carlo will hit speed: 1000 samples × 218 options ≈ 13 s~~ — removed not by pruning candidates but by compressing the search: `solver.discard._enumerate_compositions`/`_build_classes` group draw cards indistinguishable by the final score into equivalence classes (rank + relevant suit + enhancement + edition + seal + debuff) and weight each class by a binomial coefficient instead of enumerating each raw card separately — the same exact answer as an honest search, orders of magnitude cheaper. `discard_outcome` for one given discard carries the exact search from ~2 cards (before) to practically all 5; `rank_discards` — an honest search over ALL up to 218 discard sets (`advise --discard-search`), each candidate an exact `discard_outcome`, not a sample-based estimate | closed. A candidate whose draw search doesn't fit the composition budget even after compression honestly drops out of the result (`None`, not a guess) — this is neither a Monte-Carlo nor a heuristic prune, but a direct consequence of the same principle used everywhere in the project |
-| 10 | **Fully closed.** The catalogue — `core/bosses.py`, 28 bosses from `game.lua`/`blind.lua`/`functions/state_events.lua` (section 6 "Autopilot" item 9.5). `The Flint` (halving base chips/mult) — fixed in `core/scoring.py._apply_boss_score_modifier`, with one honestly acknowledged incompleteness: with no jokers the calculation is exact, with any joker it's honestly marked `unknown` (our pipeline scores jokers last, section 5, and doesn't reproduce the real game's "before/after" order relative to The Flint). The illegal-option filter (`The Mouth`/`The Eye`/`The Psychic`) — in `solver/play.py._is_legal_play`, before reaching the ranked list | it was: a silently wrong number under `The Flint`, silently wrong legality advice under the three other bosses — both worse than `unknown` | closed |
+| 1 | 149 of 150 jokers implemented. A sizeable share are "known, but the effect doesn't touch this play's chips/mult" jokers (money, consumables, hand/discard size already reflected in the state, post-scoring events): `j_burnt`, `j_rough_gem`, `j_business`, `j_reserved_parking`, `j_ticket`, `j_8_ball`, `j_astronomer`, `j_juggler`, `j_burglar`, `j_certificate`, `j_mr_bones`, `j_midas_mask`, and ~25 more in this vein (`j_space` was on this list and should not have been — see row 6) — a silent `BaseJoker` for them is an honest computed zero, not a guess. For some jokers the state was extended: `PokerHandInfo.played_this_round` (`j_card_sharp`), `GameState.hands_played` (`j_ice_cream`), `GameState.joker_slots` (`j_stencil`), `JokerCard.sell_value` (`j_swashbuckler`), `GameState.full_deck` (`j_steel_joker`, `j_stone`, `j_drivers_license`, `j_erosion` — exact only in the narrow case, see the field's docstring and section 8.2), `GameState.deck_type` (`j_erosion` — the starting deck size by its type), `JokerCard.current_value` (23 accumulator jokers), `JokerCard.leading_value` (`j_popcorn`, `j_ramen`), `JokerCard.target_suit`/`target_rank` (`j_ancient`, `j_idol` — only on Russian/English effect texts), `JokerCard.loyalty_active` (`j_loyalty_card` — also only ru/en; all this is section 8.2). Three new rule-modifying cards in `HandModifiers`: `pareidolia` (any card is a face card), `chicot` (the boss blind debuff is removed), `oops` (`core.scoring.double_chance` doubles the bonus-outcome probability for Lucky cards and `j_bloodstone`). Separately, a hardcoded rarity table for all 150 jokers (`_JOKER_RARITY` in `implementations.py`, for `j_baseball`) — a static game rule, not event history, checked both against the three community wiki categories (61/64/20/5, matching the official numbers) and against `rarity` directly in `game.lua` | `j_hiker` is the only one left: the bonus attaches to playing cards, not the joker, needs a new deck-card-level mechanism (section 8.2). Phase 7 |
+| 2 | Assumption: a card debuff doesn't affect hand-type detection | boss blinds | **confirmed on the game** 2026-08-20 (The Goad, spade debuff): `3S 3H 3D` → three_of_a_kind, 108, the score matched exactly — `tests/golden/20260820-104835-boss-goad-debuffed-spade-trips.json` |
+| 3 | **`j_vampire` is scored as a plain accumulator.** In the game's `context.before` pass (`card.lua`) it *strips the enhancement* off every enhanced scoring card (`set_ability(c_base)`) and only then adds `0.1 × count` to its own x_mult. Both halves are missing: we score those cards with enhancements intact and apply the pre-play x_mult. Found by the A12 audit, not live | one joker, but in **both** directions at once | needs mid-pipeline card mutation, which `core/scoring.py` has no mechanism for |
+| 4 | **`j_space` affects the hand it is played on.** Its 1-in-4 level-up resolves in the `before` pass, *before* base chips/mult are read (`card.lua`, `functions/state_events.lua`), so it applies to the current play. The joker is registered as an honest zero on the opposite, and now disproved, belief. Found by the A12 audit | one joker, understated | needs a chance point over the **base values**, which are set before the event loop starts — `double_chance` only covers chance points raised inside it |
+| 5 | With a `Blueprint` ⇄ `Brainstorm` cycle the chain breaks | a rare arrangement | the game caps recursion by *depth* (`card.lua`, `context.blueprint > #G.jokers.cards + 1`) where `_Copycat` caps by "already in this chain". For the plain two-joker cycle both yield nothing; proving equivalence across every arrangement was **not** attempted and is not claimed |
+| 6 | ~~The Phase 6 Monte-Carlo will hit speed: 1000 samples × 218 options ≈ 13 s~~ — removed not by pruning candidates but by compressing the search: `solver.discard._enumerate_compositions`/`_build_classes` group draw cards indistinguishable by the final score into equivalence classes (rank + relevant suit + enhancement + edition + seal + debuff) and weight each class by a binomial coefficient instead of enumerating each raw card separately — the same exact answer as an honest search, orders of magnitude cheaper. `discard_outcome` for one given discard carries the exact search from ~2 cards (before) to practically all 5; `rank_discards` — an honest search over ALL up to 218 discard sets (`advise --discard-search`), each candidate an exact `discard_outcome`, not a sample-based estimate | closed. A candidate whose draw search doesn't fit the composition budget even after compression honestly drops out of the result (`None`, not a guess) — this is neither a Monte-Carlo nor a heuristic prune, but a direct consequence of the same principle used everywhere in the project |
+| 7 | **Fully closed.** The catalogue — `core/bosses.py`, 28 bosses from `game.lua`/`blind.lua`/`functions/state_events.lua` (section 6 "Autopilot" item 9.5). `The Flint` (halving base chips/mult) — fixed in `core/scoring.py._apply_boss_score_modifier`, with one honestly acknowledged incompleteness: with no jokers the calculation is exact, with any joker it's honestly marked `unknown` (our pipeline scores jokers last, section 5, and doesn't reproduce the real game's "before/after" order relative to The Flint). The illegal-option filter (`The Mouth`/`The Eye`/`The Psychic`) — in `solver/play.py._is_legal_play`, before reaching the ranked list | it was: a silently wrong number under `The Flint`, silently wrong legality advice under the three other bosses — both worse than `unknown` | closed |
 
 Every assumption in this list is **already flagged in the code** next to where it's taken,
 so they don't have to be hunted through the document later.
@@ -1714,6 +1758,56 @@ so they don't have to be hunted through the document later.
 ### 8.4. Fixed defects
 
 Kept so the same mistakes don't come back: each is closed by a regression test.
+
+**Closed 2026-09-05 by reading the game's own source** (§9.8 A12) — four assumptions that
+had sat in §8.3 for the whole project, three of them marked "needs a Mac":
+
+- **Base hand values were written from memory** and were the top-ranked open assumption,
+  "distorts **every** calculation". Checked mechanically against `G.GAME.hands` in `game.lua`:
+  all 24 numbers — 12 base chip/mult pairs and 12 per-level increments — match, zero
+  discrepancies. `HAND_VALUES_ARE_PROVISIONAL` is now `False`, so results stop being marked
+  inexact on account of them. The numbers are still hand-written; what changed is that
+  `tests/test_hands.py::TestЗначенияРук::test_таблицы_совпадают_с_game_lua` now pins them
+  (transcribed with the source cited, the same discipline as `_JOKER_RARITY`), so a future
+  "correction from memory" fails a test instead of silently skewing every score.
+- **The scoring step order was never checked against the game.** `G.FUNCS.evaluate_play` in
+  `functions/state_events.lua` runs: base values → `blind:modify_hand` → played cards left to
+  right with retriggers → cards held in hand → jokers left to right (edition first, then the
+  effect). That is `core/scoring.py::_run_once` step for step, including edition-before-effect.
+- **`Photograph` triggers again on a retrigger** — correct. Its per-card hook sits inside the
+  `for j=1,#reps do` retrigger loop, so each repetition fires it.
+- **A royal flush is scored as a plain straight flush** — correct. `state_events.lua` leaves
+  the scoring `text` as `'Straight Flush'` and only sets `disp_text = 'Royal Flush'`; the
+  distinction is display-only and never reaches a number.
+
+The same read produced four fixes, each with its own regression test:
+
+- **`The Flint` was needlessly marked inexact with any joker in play.** The old
+  `mark_unknown` claimed our pipeline could not reproduce the game's before/after ordering
+  around the halving. It could: `Blind:modify_hand` (`blind.lua`) is called immediately after
+  the base values are read and *before any card or joker scores*, which is exactly where
+  `_apply_boss_score_modifier` already sat. Every Flint hand with a joker was reported as
+  unknown for no reason. Test — `TestБоссФлинт::test_с_джокером_расчёт_тоже_точный`.
+- **`The Flint` ignored `Chicot`.** `modify_hand` opens with
+  `if self.disabled then return mult, hand_chips, false end`, and `Chicot` disables the boss
+  blind — so the halving was being applied to a blind the game had switched off. Test —
+  `::test_chicot_отменяет_уполовинивание`.
+- **`Supernova` was understated by exactly 1 Mult, every single play.** It reads
+  `G.GAME.hands[...].played`, and that counter is incremented for the current hand at the very
+  top of `evaluate_play` — so the current hand *is* counted, and the mod's pre-play snapshot
+  needs the `+ 1`. The assumption in §8.3 had it backwards. Test —
+  `TestСостояниеРана::test_supernova_с_данными`.
+- **A whole class of accumulators was understated by one increment.** Before reading base
+  chips/mult the game runs a `context.before` pass over the jokers, and several accumulators
+  increment themselves there — so the current hand is scored *with* the increment, while
+  `JokerCard.current_value` (snapshotted before the play) is *without* it. New
+  `_BeforePassAccumulator` handles `j_trousers` (+2 Mult when the played cards contain Two Pair
+  or a Full House), `j_runner` (+15 chips on a Straight) and `j_square` (+4 chips on exactly 4
+  cards played) — every increment read from that joker's `config` in `game.lua`, every
+  condition from `card.lua`, and the condition checked with the existing `contains_*`
+  vocabulary rather than a second way of asking. This is the same shape of error as improvement
+  A11 in `solver/shop.py`: a value taken from a state that is not the moment being scored.
+  Tests — `TestНакопителиПрибавляющиеДоПодсчёта`.
 
 - `Blueprint` and `Brainstorm` placed next to each other copied each other to a stack
   overflow.

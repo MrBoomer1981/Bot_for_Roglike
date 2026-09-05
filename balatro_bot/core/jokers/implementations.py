@@ -224,10 +224,78 @@ def _accumulator(kind: str) -> type[_LiveAccumulator]:
     return Built
 
 
+class _BeforePassAccumulator(_LiveAccumulator):
+    """Накопитель, который прибавляет себе ДО подсчёта текущей руки.
+
+    Сверено с игрой 2026-09-05 (см. PLAN.md §8.3 №2 и §9.8 A12). В
+    `functions/state_events.lua` перед чтением базовых фишек и множителя
+    игра прогоняет по джокерам отдельный проход с `context.before = true`,
+    и часть накопителей увеличивает себя именно там (`card.lua`). Значит
+    текущая рука считается **уже с прибавкой**, а `current_value`, который
+    мод снял до розыгрыша, её ещё не содержит.
+
+    Обычный `_LiveAccumulator` поэтому занижал такого джокера ровно на один
+    шаг накопления — но только на подходящей руке: условие проверяется тем
+    же, чем его проверяет игра, и на неподходящей руке прибавки нет вовсе.
+    Это тот же класс ошибки, что улучшение A11 в `solver/shop.py`: величина
+    берётся из состояния, не совпадающего с моментом, который считается.
+    """
+
+    increment: float = 0.0
+    condition: str = ""  #: "two_pair" | "straight" | "four_cards"
+
+    def _holds(self, ctx: ScoreContext) -> bool:
+        match self.condition:
+            case "two_pair":
+                # Игра проверяет `poker_hands['Two Pair']` ИЛИ `['Full House']`;
+                # у нас фулл-хаус — это две группы по два и более, то есть
+                # `contains_two_pair` покрывает оба случая одним условием.
+                return ctx.contains_two_pair
+            case "straight":
+                return ctx.contains_straight
+            case "four_cards":
+                # `#context.full_hand == 4` — сыгранные карты, не засчитанные.
+                return len(ctx.played) == 4
+            case _:
+                return False
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        value = self.card.current_value
+        if value is None:
+            ctx.mark_unknown(f"джокер-накопитель без текущего значения: {self.key}")
+            return
+        if self._holds(ctx):
+            value += self.increment
+        match self.kind:
+            case "chips":
+                yield AddChips(value)
+            case "mult":
+                yield AddMult(value)
+            case "xmult":
+                yield XMult(value)
+
+
+def _before_accumulator(kind: str, condition: str, increment: float) -> type[_LiveAccumulator]:
+    """Собрать накопитель, прибавляющий себе до подсчёта текущей руки.
+
+    `increment` — шаг накопления из `config` этого джокера в `game.lua`,
+    а не из головы: статическая константа игры, как `_JOKER_RARITY`.
+    """
+
+    class Built(_BeforePassAccumulator):
+        pass
+
+    Built.kind = kind
+    Built.condition = condition
+    Built.increment = increment
+    return Built
+
+
 # +N Chips, накопленное игрой: сколько именно — не важно, важно текущее число.
 register("j_castle")(_accumulator("chips"))  # +3 Chips за каждый сброшенный [масть]
-register("j_runner")(_accumulator("chips"))  # +15 Chips, если рука — стрит
-register("j_square")(_accumulator("chips"))  # +4 Chips, если в руке ровно 4 карты
+# `chip_mod` обоих — из `config` в `game.lua`; прибавка идёт до подсчёта руки.
+register("j_runner")(_before_accumulator("chips", "straight", 15))
+register("j_square")(_before_accumulator("chips", "four_cards", 4))
 register("j_wee")(_accumulator("chips"))  # +8 Chips за каждую сыгранную двойку
 
 # +N Mult, накопленное игрой.
@@ -237,7 +305,8 @@ register("j_fortune_teller")(_accumulator("mult"))  # +1 Mult за исполь�
 register("j_green_joker")(_accumulator("mult"))  # +1 за руку, −1 за сброс
 register("j_red_card")(_accumulator("mult"))  # +3 Mult за пропущенный бустер-пак
 register("j_ride_the_bus")(_accumulator("mult"))  # +1 Mult за руку без картинки
-register("j_trousers")(_accumulator("mult"))  # +2 Mult, если рука — две пары
+# `extra = 2` из `game.lua`; прибавка идёт до подсчёта руки.
+register("j_trousers")(_before_accumulator("mult", "two_pair", 2))
 
 # XN Mult, накопленное игрой.
 register("j_caino")(_accumulator("xmult"))  # X1 Mult за уничтоженную картинку
@@ -923,14 +992,24 @@ class BaseballCard(_OwnTurn):
 
 @register("j_supernova")
 class Supernova(_OwnTurn):
-    """Adds the number of times poker hand has been played this run to Mult."""
+    """Adds the number of times poker hand has been played this run to Mult.
+
+    **`+ 1` здесь обязателен, не опечатка** (сверено с игрой 2026-09-05,
+    закрытое допущение PLAN.md §8.3 №5). Джокер читает
+    `G.GAME.hands[...].played` (`card.lua`), а этот счётчик игра увеличивает
+    в самом начале `G.FUNCS.evaluate_play` (`functions/state_events.lua`) —
+    то есть **текущая рука уже посчитана** к моменту хода джокера. Мод же
+    снимает состояние до розыгрыша, поэтому `info.played` — это счёт «без
+    текущей». Раньше проект предполагал обратное и занижал джокера ровно на
+    единицу множителя в каждом розыгрыше.
+    """
 
     def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
         info = ctx.state.hand_info.get(ctx.hand_type)
         if info is None:
             ctx.mark_unknown("Supernova: неизвестно, сколько раз рука уже игралась")
             return
-        yield AddMult(info.played)
+        yield AddMult(info.played + 1)
 
 
 @register("j_mystic_summit")

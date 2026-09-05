@@ -213,9 +213,49 @@ class TestЗначенияРук:
         assert set(BASE_VALUES) == set(HandType)
         assert set(PER_LEVEL_VALUES) == set(HandType)
 
-    def test_значения_помечены_непроверенными(self) -> None:
-        # Снимается в Фазе 3, когда таблицы начнут генерироваться из игры.
-        assert HAND_VALUES_ARE_PROVISIONAL is True
+    def test_значения_сверены_с_игрой(self) -> None:
+        # Снят 2026-09-05: сверка сделана по `game.lua`, см. таблицу ниже.
+        assert HAND_VALUES_ARE_PROVISIONAL is False
+
+    def test_таблицы_совпадают_с_game_lua(self) -> None:
+        """Закрытое допущение PLAN.md §8.3 №1.
+
+        Числа выписаны из таблицы `G.GAME.hands` в `game.lua` (строки
+        2002–2013 внутри `Balatro.love`): `chips`/`mult` — база,
+        `l_chips`/`l_mult` — прибавка за уровень. Самой игры на машине с
+        тестами может не быть, поэтому ожидания транскрибированы сюда с
+        указанием источника — тот же приём, что у `_JOKER_RARITY`.
+
+        Тест держит ровно то, ради чего снят флаг провизорности: если
+        кто-то поправит число «по памяти», это перестанет быть молча
+        неверным счётом во **всех** расчётах и станет упавшим тестом.
+        """
+        # тип руки: (база фишки, база множ., за уровень фишки, за уровень множ.)
+        из_игры = {
+            HandType.FLUSH_FIVE: (160, 16, 50, 3),
+            HandType.FLUSH_HOUSE: (140, 14, 40, 4),
+            HandType.FIVE_OF_A_KIND: (120, 12, 35, 3),
+            HandType.STRAIGHT_FLUSH: (100, 8, 40, 4),
+            HandType.FOUR_OF_A_KIND: (60, 7, 30, 3),
+            HandType.FULL_HOUSE: (40, 4, 25, 2),
+            HandType.FLUSH: (35, 4, 15, 2),
+            HandType.STRAIGHT: (30, 4, 30, 3),
+            HandType.THREE_OF_A_KIND: (30, 3, 20, 2),
+            HandType.TWO_PAIR: (20, 2, 20, 1),
+            HandType.PAIR: (10, 2, 15, 1),
+            HandType.HIGH_CARD: (5, 1, 10, 1),
+        }
+        # Покрытие: ни один тип не должен выпасть из сверки незаметно.
+        assert set(из_игры) == set(HandType)
+        for hand_type, (chips, mult, l_chips, l_mult) in из_игры.items():
+            assert (BASE_VALUES[hand_type].chips, BASE_VALUES[hand_type].mult) == (
+                chips,
+                mult,
+            ), hand_type
+            assert (
+                PER_LEVEL_VALUES[hand_type].chips,
+                PER_LEVEL_VALUES[hand_type].mult,
+            ) == (l_chips, l_mult), hand_type
 
     def test_уровень_повышает_очки_и_множитель(self) -> None:
         first = base_values(HandType.PAIR, 1)
