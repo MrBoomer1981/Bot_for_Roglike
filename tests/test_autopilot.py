@@ -16,9 +16,11 @@ import pytest
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.autopilot import (
+    _BLIND_DONE_STATUSES,
     Action,
     _discard_edge_is_noise,
     _indices_of,
+    _next_blind_requirement,
     _on_pace_without_discard,
     _pace_projection,
     _reorder_indices,
@@ -1570,3 +1572,60 @@ class TestСнимкаДоски:
         action = decide_action(self._shop(jokers=()))
         assert action is not None
         assert action.board == ()
+
+
+class TestПропущенныйБлайндНеСчитается:
+    """Ран 13 (ERRATIC, 2026-09-05) — худший в проекте: поражение на анте 1
+    за 15 шагов. Причина одна и найдена по журналу.
+
+    `_next_blind_requirement` отбрасывала только `DEFEATED`, а скипнутый
+    блайнд приходит со статусом `SKIPPED` (`utils/gamestate.lua`,
+    `convert_status_to_enum`). Пока скипов не бывало — а их не бывало
+    одиннадцать ранов, см. A14, — этот вход был невозможен, и фильтр был
+    верен по построению. Как только A14 включила скипы, функция стала
+    **навсегда** возвращать требование пропущенного блайнда: бот скипнул
+    малый (300), вышел на босса (600) и мерил все пороги от 300. В журнале
+    это видно как «очки 344/300» на проигранном раунде.
+
+    Урок шире одной функции: включая спящую ветку, надо проверить всех, кто
+    читает её последствия."""
+
+    def _state(self, small_status: str) -> GameState:
+        return GameState(
+            phase="SELECTING_HAND",
+            blinds={
+                "small": _blind("SMALL", small_status, 300),
+                "big": _blind("BIG", "UPCOMING", 450),
+                "boss": _blind("BOSS", "CURRENT", 600),
+            },
+        )
+
+    def test_скипнутый_блайнд_не_задаёт_требование(self) -> None:
+        assert _next_blind_requirement(self._state("SKIPPED")) == 450
+
+    def test_побеждённый_тоже_не_задаёт(self) -> None:
+        assert _next_blind_requirement(self._state("DEFEATED")) == 450
+
+    def test_несыгранный_задаёт(self) -> None:
+        assert _next_blind_requirement(self._state("UPCOMING")) == 300
+
+    def test_все_статусы_мода_учтены(self) -> None:
+        # Список статусов взят из `utils/gamestate.lua` мода. Каждый обязан
+        # быть осознанно отнесён к «играть придётся» или «уже нет»: молчаливое
+        # попадание нового статуса в первую категорию и стоило рана 13.
+        из_мода = {"DEFEATED", "SKIPPED", "CURRENT", "SELECT", "UPCOMING"}
+        играть_не_придётся = {"DEFEATED", "SKIPPED"}
+        assert играть_не_придётся == _BLIND_DONE_STATUSES
+        for статус in из_мода - играть_не_придётся:
+            assert _next_blind_requirement(self._state(статус)) == 300, статус
+
+    def test_все_блайнды_пройдены_требования_нет(self) -> None:
+        state = GameState(
+            phase="SHOP",
+            blinds={
+                "small": _blind("SMALL", "SKIPPED", 300),
+                "big": _blind("BIG", "DEFEATED", 450),
+                "boss": _blind("BOSS", "DEFEATED", 600),
+            },
+        )
+        assert _next_blind_requirement(state) is None

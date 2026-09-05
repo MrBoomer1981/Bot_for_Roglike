@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from balatro_bot.core.cards import parse_cards, standard_deck
 from balatro_bot.core.state import BlindInfo, GameState, ShopItem
-from balatro_bot.solver.vouchers import evaluate_vouchers
+from balatro_bot.solver.vouchers import _rounds_left_in_ante, evaluate_vouchers
 
 
 def _voucher_state(**overrides: object) -> GameState:
@@ -321,3 +321,32 @@ class TestValueUnit:
         offer = evaluate_vouchers(state)[0]
         assert offer.value_unit is None
         assert offer.heuristic_value is not None
+
+
+class TestГоризонтСоСкипом:
+    """Тот же дефект, что стоил рана 13, во втором месте: скипнутый блайнд
+    считался ещё предстоящим и завышал горизонт денежных ваучеров."""
+
+    def _state(self, small_status: str) -> GameState:
+        def блайнд(kind: str, status: str, score: int) -> BlindInfo:
+            return BlindInfo(
+                kind=kind,
+                name=f"{kind.title()} Blind",
+                effect="",
+                required_score=score,
+                status=status,
+            )
+
+        return _voucher_state(
+            blinds={
+                "small": блайнд("SMALL", small_status, 300),
+                "big": блайнд("BIG", "UPCOMING", 450),
+                "boss": блайнд("BOSS", "UPCOMING", 600),
+            }
+        )
+
+    def test_скипнутый_блайнд_не_входит_в_горизонт(self) -> None:
+        assert _rounds_left_in_ante(self._state("SKIPPED")) == 2
+
+    def test_несыгранный_входит(self) -> None:
+        assert _rounds_left_in_ante(self._state("UPCOMING")) == 3

@@ -198,7 +198,7 @@ Planet-карты из инвентаря политически устроен�
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
-from typing import Literal
+from typing import Final, Literal
 
 from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.core import economy
@@ -628,14 +628,33 @@ def _skip_reason(advice: SkipAdvice, state: GameState) -> str:
     return f"тег {имя} проект не оценивает: {advice.tag_dollars_note}"
 
 
+#: Статусы блайнда, означающие «играть его уже не придётся»: побеждён либо
+#: пропущен ради тега. Мод присылает оба (`utils/gamestate.lua`,
+#: `convert_status_to_enum`).
+#:
+#: `SKIPPED` тут появился ценой худшего рана проекта. Пока скип не работал
+#: (см. A14), этот статус не мог возникнуть вовсе, и фильтр по одному лишь
+#: `DEFEATED` был верен по построению. Как только A14 включила скипы,
+#: `_next_blind_requirement` начала **навсегда** возвращать требование
+#: скипнутого блайнда: в ране 13 бот скипнул малый (300), вышел на босса
+#: (600) и считал все свои пороги от 300 — журнал показывает «очки 344/300»
+#: на проигранном раунде. Проигрыш на анте 1, 15 шагов.
+_BLIND_DONE_STATUSES: Final[frozenset[str]] = frozenset({"DEFEATED", "SKIPPED"})
+
+
 def _next_blind_requirement(state: GameState) -> int | None:
-    """Требование по очкам ближайшего ещё не побеждённого блайнда — чтобы
-    масштабировать пороги, не завязывая их на абсолютные очки (на анте 6
-    требование в разы больше, чем на анте 2). `None`, если мод не прислал
-    блайнды или их требования."""
+    """Требование по очкам ближайшего блайнда, который ещё предстоит сыграть.
+
+    «Предстоит» — это не «не побеждён»: пропущенный ради тега блайнд тоже
+    играть не придётся (`_BLIND_DONE_STATUSES`). От этого числа масштабируются
+    почти все пороги бота — покупки, пака, балласта, темпа, скипа, — поэтому
+    ошибка здесь смещает сразу всё и в одну сторону: требование выглядит
+    меньше настоящего, и всё кажется достаточным.
+
+    `None`, если мод не прислал блайнды или их требования."""
     for key in ("small", "big", "boss"):
         info = state.blinds.get(key)
-        if info is not None and info.status != "DEFEATED" and info.required_score > 0:
+        if info is not None and info.status not in _BLIND_DONE_STATUSES and info.required_score > 0:
             return info.required_score
     return None
 
