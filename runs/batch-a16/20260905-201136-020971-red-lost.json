@@ -1,0 +1,299 @@
+{
+  "deck": "RED",
+  "stake": "WHITE",
+  "stake_observed": true,
+  "seed": null,
+  "outcome": "lost",
+  "ante": 1,
+  "round": 2,
+  "steps": 16,
+  "plays": 6,
+  "discards_used": 5,
+  "rounds_with_discards_unspent": 0,
+  "note": "",
+  "adopted": false,
+  "decisions": [
+    {
+      "step": 1,
+      "phase": "BLIND_SELECT",
+      "ante": 1,
+      "round": 0,
+      "money": 4,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Double Tag: структурная оценка 3 против порога 6 (следующий тег сработает дважды)",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 300,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 2,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "сыграл 6S 6H 6C",
+      "reason": "на темпе без сброса: прогноз 468 на 4 рук против остатка 300 × 1.5 = 450; сбросов не тронуто 4",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 300,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 3,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "сбросил AS KD QS JC",
+      "reason": "лучший в общем списке: discard 200, следом discard 180",
+      "rejected": false,
+      "chips_scored": 144,
+      "requirement": 300,
+      "hands_left": 3,
+      "discards_left": 4,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 4,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "сыграл QH JH 7H 3H 2H",
+      "reason": "гарантированный ход: нижний предел 268 уже перекрывает остаток 156",
+      "rejected": false,
+      "chips_scored": 144,
+      "requirement": 300,
+      "hands_left": 3,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 5,
+      "phase": "ROUND_EVAL",
+      "ante": 1,
+      "round": 1,
+      "money": 4,
+      "action": "забрал награду за раунд",
+      "reason": "",
+      "rejected": false,
+      "chips_scored": 412,
+      "requirement": 450,
+      "hands_left": 2,
+      "discards_left": 3,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 6,
+      "phase": "SHOP",
+      "ante": 1,
+      "round": 1,
+      "money": 9,
+      "action": "купил в магазине: Zany Joker",
+      "reason": "прирост 156 ≥ порога 14, цена $4, денег $9",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [],
+      "board": []
+    },
+    {
+      "step": 7,
+      "phase": "SHOP",
+      "ante": 1,
+      "round": 1,
+      "money": 5,
+      "action": "ушёл из магазина",
+      "reason": "лучший оффер Constellation (0) ниже порога 14, денег $5",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": [
+        {
+          "label": "Zany Joker",
+          "contribution": 156.0,
+          "sell_value": 2
+        }
+      ]
+    },
+    {
+      "step": 8,
+      "phase": "BLIND_SELECT",
+      "ante": 1,
+      "round": 1,
+      "money": 5,
+      "action": "выбрал блайнд — играет",
+      "reason": "тег Uncommon Tag: структурная оценка 4 против порога 6 (следующий джокер витрины гарантированно Uncommon)",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 9,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сбросил TD 6S 5S 4D 2H",
+      "reason": "лучший в общем списке: discard 430, следом discard 263",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 4,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 10,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сбросил 9S 6C 5H 3C",
+      "reason": "лучший в общем списке: discard 577, следом discard 218",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 3,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 11,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сбросил QS 7S 7D 4H",
+      "reason": "лучший в общем списке: discard 640, следом discard 228",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 2,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 12,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сбросил AC KD TS 3H",
+      "reason": "лучший в общем списке: discard 692, следом discard 276",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 1,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 13,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сыграл JH JC 8H 8D",
+      "reason": "лучший в общем списке: play 112, следом play 112",
+      "rejected": false,
+      "chips_scored": 0,
+      "requirement": 450,
+      "hands_left": 4,
+      "discards_left": 0,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 14,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сыграл TH TC",
+      "reason": "лучший в общем списке: play 60, следом play 60",
+      "rejected": false,
+      "chips_scored": 112,
+      "requirement": 450,
+      "hands_left": 3,
+      "discards_left": 0,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 15,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сыграл 5C 5D",
+      "reason": "лучший в общем списке: play 40, следом play 40",
+      "rejected": false,
+      "chips_scored": 172,
+      "requirement": 450,
+      "hands_left": 2,
+      "discards_left": 0,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    },
+    {
+      "step": 16,
+      "phase": "SELECTING_HAND",
+      "ante": 1,
+      "round": 2,
+      "money": 5,
+      "action": "сыграл JS JD",
+      "reason": "лучший в общем списке: play 60, следом play 60",
+      "rejected": false,
+      "chips_scored": 212,
+      "requirement": 450,
+      "hands_left": 1,
+      "discards_left": 0,
+      "jokers": [
+        "Zany Joker"
+      ],
+      "board": []
+    }
+  ]
+}

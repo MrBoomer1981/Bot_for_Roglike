@@ -718,3 +718,46 @@ class TestСнимкаДоскиВЖурнале:
         (файл,) = list(tmp_path.glob("*.json"))
         for шаг in json.loads(файл.read_text(encoding="utf-8"))["decisions"]:
             assert шаг["board"] == []
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestСидыПакета:
+    """Улучшение E1c. Игра берёт сид из положения курсора мыши
+    (`generate_starting_seed` в `functions/misc_functions.lua`), а при
+    автоигре мышь не двигается — все раны пакета выходили одной и той же
+    партией. Три первых рана совпали до последней цифры, и это вскрыло
+    дефект: винрейт по N ранам был одним раном, посчитанным N раз."""
+
+    def _bridge(self) -> ScriptedBridge:
+        return ScriptedBridge([_state("GAME_OVER")])
+
+    def test_без_сида_каждый_ран_получает_свой(self) -> None:
+        bridge = self._bridge()
+        run_batch(bridge, deck="RED", stakes=("WHITE",), runs_per_stake=5, sleep=lambda _: None)
+        сиды = [сид for _, _, сид in bridge.start_calls]
+        assert len(сиды) == 5
+        assert all(сид is not None for сид in сиды)
+        assert len(set(сиды)) == 5, сиды
+
+    def test_явный_сид_повторяется_намеренно(self) -> None:
+        # Заданный сид означает «N одинаковых ранов» — это регрессионный
+        # прогон, и подменять его случайным нельзя.
+        bridge = self._bridge()
+        run_batch(
+            bridge,
+            deck="RED",
+            stakes=("WHITE",),
+            runs_per_stake=3,
+            seed="ABCD1234",
+            sleep=lambda _: None,
+        )
+        assert [сид for _, _, сид in bridge.start_calls] == ["ABCD1234"] * 3
+
+    def test_сид_в_алфавите_игры(self) -> None:
+        # Игра принимает только 1–9 и A–N, P–Z: ноль и O исключены ею самой.
+        bridge = self._bridge()
+        run_batch(bridge, deck="RED", stakes=("WHITE",), runs_per_stake=6, sleep=lambda _: None)
+        for _, _, сид in bridge.start_calls:
+            assert сид is not None
+            assert len(сид) == 8, сид
+            assert set(сид) <= set("123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"), сид

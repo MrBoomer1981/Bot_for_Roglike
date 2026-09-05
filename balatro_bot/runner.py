@@ -31,6 +31,7 @@
 from __future__ import annotations
 
 import json
+import random
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
@@ -529,6 +530,30 @@ def _play_run(
     )
 
 
+#: Алфавит сида Balatro — из `random_string` в `functions/misc_functions.lua`:
+#: цифры 1–9 и буквы A–N, P–Z. Ноль и буква O исключены самой игрой,
+#: чтобы их нельзя было спутать при вводе от руки.
+_SEED_ALPHABET: Final[str] = "123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"
+_SEED_LENGTH: Final[int] = 8
+
+
+def _случайный_сид(rng: random.Random) -> str:
+    """Сид для одного рана пакета (улучшение E1c).
+
+    Без него игра берёт сид сама — и **не случайно**: `game.lua` зовёт
+    `generate_starting_seed()`, а тот строит строку из положения курсора
+    мыши и времени наведения (`functions/misc_functions.lua`). Когда раны
+    запускает бот через RPC, мышь не двигается, `cursor_hover` не
+    меняется — и все раны пакета выходят **одной и той же партией**. Три
+    первых рана пакета совпали до последней цифры (оценки сбросов
+    430/577/640/692, итог 112, 16 шагов), что это и вскрыло.
+
+    Это не дефект мода и не наш: игра черпает случайность из ввода
+    человека, которого при автоигре нет. Поэтому сид выдаём мы, иначе
+    винрейт по N ранам — это один ран, посчитанный N раз."""
+    return "".join(rng.choice(_SEED_ALPHABET) for _ in range(_SEED_LENGTH))
+
+
 def _раунд_сбрасывал(decisions: Sequence[DecisionEntry], до_шага: int) -> bool:
     """Был ли сброс в раунде, закончившемся на шаге `до_шага`."""
     for entry in reversed([e for e in decisions if e.step < до_шага]):
@@ -770,6 +795,10 @@ def run_batch(
     обычно."""
     summaries: list[StakeSummary] = []
     adopt_next = adopt_first
+    # Явный `seed` от пользователя означает «прогнать N одинаковых ранов»
+    # (регрессия), и тогда сид не трогаем. Без него каждый ран получает
+    # свой — см. `_случайный_сид`, без этого пакет мерил один ран N раз.
+    rng = random.Random()
     for stake in stakes:
         reports: list[RunReport] = []
         for _ in range(runs_per_stake):
@@ -778,7 +807,7 @@ def run_batch(
                     bridge,
                     deck=deck,
                     stake=stake,
-                    seed=seed,
+                    seed=seed if seed is not None else _случайный_сид(rng),
                     include_discards=include_discards,
                     max_steps=max_steps,
                     adopt=adopt_next,
