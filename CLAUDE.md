@@ -37,6 +37,7 @@ uv run balatro-bot autoplay         # live mode: watch + play the running game; 
 uv run balatro-bot autoplay --deck RED --stake WHITE          # managed run: start a fresh run, play it to the end, print a report + decision log
 uv run balatro-bot autoplay --deck RED --all-stakes --runs 20 # batch: 20 runs per stake, WHITE→GOLD, win-rate table (Phase 9.7)
 uv run balatro-bot autoplay --deck RED --stake WHITE --runs 50 --adopt  # adopt the run already in progress, then keep playing
+uv run balatro-bot autoplay --deck RED --runs 20 --log runs/            # write one JSON decision journal per run (E1a) — needed to post-mortem an unattended batch
 uv run balatro-bot record NAME      # snapshot live state into tests/golden/ (see Testing Infrastructure)
 # global --host/--port (default 127.0.0.1:12346) go before the subcommand: balatro-bot --port 12346 doctor
 # watch/autoplay also take --no-joker-order / --no-discard / --no-shop (poll-budget escape hatches);

@@ -1338,9 +1338,36 @@ The planned order (letter labels are working ones, not from the general phase nu
   Tests — `tests/test_consumables.py::TestТаблицаТаротов`, `::TestОценкаТаротов`,
   `tests/test_autopilot.py::TestDecideActionТаро`, `tests/test_render.py::TestВыводТаротов`.
 
-  **Slice 2 still owes:** `Star`/`Moon`/`Sun`/`World` (up to 3 cards to a suit), `Strength`,
-  `Death`, `The Hanged Man` — the ones needing a reachability filter on targets, in the shape
-  of `solver/discard.py`'s `_flush_targets`.
+  **Slice 2 — done (2026-09-05).** All seven remaining cards are valued, and three of their
+  mechanics turned out to differ from what the names suggest, so `card.lua` was read rather
+  than guessed: `change_suit` rebuilds only `base`, so rank, enhancement, edition and seal all
+  survive a suit conversion; `Strength` **wraps an Ace to a 2** rather than capping at Ace
+  (`id == 14 and 2 or min(id+1, 14)`); and `Death` has `min_highlighted = 2` as well as max —
+  exactly two targets — with the rightmost cloned onto the other *whole* (base, enhancement,
+  edition, seal), not merely its rank. `The Hanged Man` is a **computed zero, not a gap**:
+  destroying cards can only shrink the set `advise` chooses from, so this hand's best score
+  can never rise — the same honest zero as `The Devil`, with the deck-thinning value it really
+  has named in the note as unmodelled.
+
+  **The reachability filter is load-bearing, not decoration.** Three targets out of eight is
+  `C(8,1)+C(8,2)+C(8,3) = 92` subsets, past `MAX_TAROT_CANDIDATES = 64`, so slice 1's budget
+  gate would have refused these cards outright. Converting suits only matters for a flush, so
+  `_suit_conversion_targets` computes how many cards short of one the hand is — through the
+  existing `core.cards.effective_suits`, which already knows `Wild` and `Smeared` — and
+  searches subsets of exactly that size among the cards not already that suit. Unreachable, or
+  a flush already in hand, is an honest `0.0`. Shape taken from `solver/discard.py`'s
+  `_flush_targets`, as planned.
+
+  **No autopilot change was needed**, which is the payoff of slice 1's design:
+  `_decide_consumable_action` already iterates every offer generically and gates on
+  `value_unit`/`targets`/`expected_uplift`/`_worth_buying`.
+
+  **Stated limitation**, carried in the offer's own `note`: the game re-derives a card's debuff
+  after a suit change (`card.lua`'s `change_suit` calls `debuff_card`), while `Card.debuffed`
+  here is a static field from the mod that nothing recomputes — so under a suit-restricting
+  boss the uplift reads optimistic. Cost measured: four Tarots on a 5-joker `Misprint` stack
+  2.56 s, on an empty stack 0.22 s. Tests — `tests/test_consumables.py`'s
+  `TestТаблицаМастевыхТаротов`, `TestПовышениеРанга`, `TestОценкаВторогоСреза`.
 
   **`The Fool` — reported from a live run, to fix.** The bot never uses it. Slice 1 filed
   `c_fool` under `_RANDOM_TAROTS` ("creates cards, depends on RNG"), and that classification
@@ -1471,6 +1498,23 @@ The planned order (letter labels are working ones, not from the general phase nu
   instance. The second-order lesson is narrower and worth stating plainly — **"needs a Mac" was
   wrong about six items for months.** Check the source before declaring something unknowable.
 
+- **F4. Event dispatch — measured and rejected, not deferred.** Profiling `rank_discards` on a
+  5-joker stack showed **37.8 M no-op `BaseJoker.react` calls**, which reads like an obvious win:
+  index jokers by the events they handle and stop walking the whole list for every event. It is
+  not a win. Patched experimentally — addressing a `JokerTurn` at the single joker it is for (an
+  invariant: both `_OwnTurn` and `_Copycat` check `event.joker is self`), plus skipping `_OwnTurn`
+  jokers on other events — the measurement is **15.0 s → 13.7 s, 1.09×**. cProfile's per-call
+  overhead had inflated the apparent cost of call-heavy code enormously; those 37.8 M calls are
+  worth about one second of real time.
+
+  The real cost is **454 k `_run_once` invocations**, i.e. the number of candidates the discard
+  search scores, not the dispatch under each. And all of it is on `advise --discard-search`, which
+  the autopilot never calls — its own decision path measures 0.24 s. So: 9 % on a path nobody
+  automated uses, bought with dispatch complexity and a standing risk that a joker silently drops
+  out of an event it needed. Recorded here with the numbers precisely so the idea is not
+  re-derived from the same misleading profile; if this path is ever attacked, the lever is the
+  candidate count, and that trades against exactness.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
@@ -1491,9 +1535,50 @@ The planned order (letter labels are working ones, not from the general phase nu
   `GameState.deck_type`, but the **stake is not in `GameState` at all** — the mod never sends
   it — so the stake stays merely what the flags asked for, and labelling such a run
   "RED/WHITE" unconditionally would poison the very win-rate table this unblocks. The other
-  half of E2 — a watchdog that restarts a crashed game or mod — is **not** done; a dead bridge
-  still ends the run with the existing `error` outcome and stops the batch. Tests —
+  half of E2 — a watchdog — is covered by the next entry. Tests —
   `tests/test_runner.py::TestПодхватИдущегоРана`.
+
+  **E1a — a diagnosable run journal — done (2026-09-05).** Every diagnosis in runs 8–10 came
+  from watching a live terminal, because `DecisionEntry` held step / phase / ante / round /
+  money / action and nothing else. A run nobody watched could not be post-mortemed at all —
+  and E1, the batch, consists entirely of such runs. Two additions, both free at decision
+  time: `Action.reason` carries the numbers the decision was actually made on, filled at the
+  six sites that already compute them (the offer's uplift and the bar it cleared, the sold
+  joker's contribution against the dead-weight margin, the reroll's expected value against the
+  best on the shelf plus which roll of the per-visit limit this is, the voucher's tier and
+  threshold); and `DecisionEntry` gains `chips_scored`, `requirement`, `hands_left`,
+  `discards_left` and the jokers in slot order. Without the requirement, `chips_scored` has
+  nothing to be compared against, and the gap between them is what explains a lost run.
+  `autoplay --log DIR` writes one JSON file per run; `play_run` became a thin wrapper over
+  `_play_run` so the log is written on **every** exit — the crash and stall paths are exactly
+  the ones it exists for, and appending a write to each of a dozen `return`s would eventually
+  miss one. `report_to_json` builds the dict by hand rather than via `asdict`, because this
+  file is read a month later and its field set should change deliberately. This is also what
+  will settle `_MIN_BUY_REQ_FRACTION` at high antes by measurement rather than feel. Tests —
+  `tests/test_runner.py::TestЖурналРана`, `tests/test_autopilot.py::TestОбоснованиеРешения`.
+
+  **E2, second slice — a reconnecting watchdog — done (2026-09-05), with its limit stated.**
+  Every `ModBridgeError` inside `play_run` used to end the run `error`, but the bridge drops
+  for reasons that are not a dead game: the mod is mid-animation, the window is backgrounded,
+  a socket blips. `_reconnect` polls with doubling backoff up to 30 s and returns a **fresh**
+  state — the game may have moved on while the connection was gone, and resuming from the
+  pre-outage state would act on a stale picture. No new exception type: "the mod refused this
+  action" and "the bridge is gone" arrive as the same error but need opposite treatment (a
+  stall vs. a wait), and the honest way to tell them apart is to ask whether `game_state`
+  answers. That also fixed a real misclassification — a dropped connection during dispatch was
+  being recorded as a *rejected action* and counted toward `stall_limit`.
+
+  **A correction to what this document previously claimed:** a dead bridge did **not** stop a
+  batch. `run_batch` appended the error report and started the next run, so it burned every
+  remaining run into a useless `error` in seconds — worse than stopping. Now an `error`
+  outcome is followed by one liveness probe and the batch returns what it has.
+
+  **Deliberately not done: launching the game.** Nothing in Python starts it — `subprocess`
+  appears only in `install.py`, and the game comes up by hand via `uvx balatrobot serve`. A
+  watchdog that restarts a crashed game would therefore have to spawn the game *and* start a
+  run, i.e. choose deck and stake, which is the user's call, not the bot's. So this half
+  survives a blip, not a crash, and says so. Tests —
+  `tests/test_runner.py::TestПереподключение`, `::TestПакетНеЖжётРаны`.
 
   Next: another live re-run, then the batch (`autoplay --all-stakes --runs N`) for the actual
   win-rate table.
