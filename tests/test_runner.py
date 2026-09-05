@@ -22,7 +22,7 @@ import pytest
 
 from balatro_bot import runner
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
-from balatro_bot.autopilot import Action
+from balatro_bot.autopilot import Action, BoardEntry
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard
 from balatro_bot.runner import DecisionEntry, RunReport, StakeSummary, play_run, run_batch
 
@@ -673,3 +673,48 @@ class TestСчётчикиСбросов:
         данные = json.loads(файл.read_text(encoding="utf-8"))
         assert "discards_used" in данные
         assert "rounds_with_discards_unspent" in данные
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestСнимкаДоскиВЖурнале:
+    """Улучшение E1b: вклады джокеров должны доезжать до файла, иначе они
+    так же бесполезны, как когда их не считали вовсе."""
+
+    def _bridge(self) -> ScriptedBridge:
+        return ScriptedBridge([_state("SELECTING_HAND"), _state("GAME_OVER")])
+
+    def test_запись_копирует_снимок_из_решения(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        доска = (
+            BoardEntry(label="Joker Stencil", contribution=1200.0, sell_value=4),
+            BoardEntry(label="Hit the Road", contribution=-722.0, sell_value=3),
+        )
+
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            return Action(kind="play", board=доска)
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        report = play_run(self._bridge(), deck="RED", stake="WHITE")
+        assert report.decisions[0].board == доска
+
+    def test_журнал_везёт_вклады_в_файл(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            return Action(
+                kind="play",
+                board=(BoardEntry(label="Hit the Road", contribution=-722.0, sell_value=3),),
+            )
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        шаг = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
+        assert шаг["board"] == [{"label": "Hit the Road", "contribution": -722.0, "sell_value": 3}]
+
+    def test_без_магазина_поле_есть_но_пусто(self, tmp_path: Path) -> None:
+        # Поле должно присутствовать всегда: отсутствующий ключ и пустой
+        # список — разные вещи для того, кто потом разбирает журнал.
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        for шаг in json.loads(файл.read_text(encoding="utf-8"))["decisions"]:
+            assert шаг["board"] == []

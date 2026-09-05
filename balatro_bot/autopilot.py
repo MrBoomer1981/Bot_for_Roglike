@@ -197,7 +197,7 @@ Planet-карты из инвентаря политически устроен�
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from balatro_bot.adapters.mod_bridge import ModBridge
@@ -405,6 +405,23 @@ _DISCARD_EDGE_MARGIN = 1.15
 
 
 @dataclass(frozen=True, slots=True)
+class BoardEntry:
+    """Джокер в слоте с измеренным вкладом — для журнала (улучшение E1b).
+
+    Зеркало `solver.shop.HeldJoker` без полей, нужных только политике
+    магазина. Метка везётся вместе с числом, а не выводится по позиции из
+    `DecisionEntry.jokers`: набор чисел, смысл которого держится на
+    совпадении индексов с другим полем, ломается молча, а этот файл
+    читают спустя месяцы."""
+
+    label: str
+    contribution: float
+    """На сколько упадёт лучший счёт, если убрать этого джокера.
+    Отрицательное — держать его хуже, чем оставить слот пустым."""
+    sell_value: int
+
+
+@dataclass(frozen=True, slots=True)
 class Action:
     """Одно решённое действие: что вызвать у моста и с каким параметром.
 
@@ -450,6 +467,16 @@ class Action:
     """Название выбранного предмета для лога автопилота (`buy`/`pack` —
     иначе показать было бы нечего, `item_index` сам по себе не читается
     человеком)."""
+
+    board: tuple[BoardEntry, ...] = ()
+    """Джокеры в слотах с их вкладами на момент решения (улучшение E1b).
+
+    Заполняется только в магазине: вклад — измерение экрана магазина
+    (`ShopAdvice.held`), и придумывать его в других фазах значило бы
+    гадать. Без этих чисел два вопроса не имеют ответа даже при полном
+    журнале: законно ли отклонён размен (A13 честно отказалась это
+    утверждать) и не съедает ли ценность текучка джокеров — в ране 12 их
+    куплено десять и продано пять."""
 
     reason: str = ""
     """Почему выбрано именно это — числа, по которым решение принято
@@ -854,6 +881,32 @@ def _decide_reroll_action(
 
 
 def _decide_shop_action(state: GameState) -> Action:
+    """Решение в магазине плюс снимок доски для журнала (улучшение E1b).
+
+    Само решение принимает `_shop_action`; здесь только прикрепляется
+    `Action.board`. Обёртка нужна потому, что выходов у ветки магазина
+    восемь, часть — внутри помощников, и дописывать снимок к каждому
+    `return` значило бы однажды пропустить один: ровно так в E1a
+    обоснование получили шесть мест из четырнадцати. Тот же приём и по
+    той же причине, что `play_run` вокруг `_play_run` в `runner.py`."""
+    advice = evaluate_shop(state)
+    action = _shop_action(state, advice)
+    if advice is None or not advice.held:
+        return action
+    return replace(
+        action,
+        board=tuple(
+            BoardEntry(
+                label=entry.label,
+                contribution=entry.contribution,
+                sell_value=entry.sell_value,
+            )
+            for entry in advice.held
+        ),
+    )
+
+
+def _shop_action(state: GameState, advice: ShopAdvice | None) -> Action:
     """В магазине решение — купить лучшего по приросту джокера (порог A2:
     прирост не ниже доли требования блайнда, не просто > 0), затем ваучер
     (порог по уровню честности оценки, улучшение A4), затем продажа-замена,
@@ -868,7 +921,6 @@ def _decide_shop_action(state: GameState) -> Action:
     заметно лучше лежащего на витрине, остаётся денежный запас и не исчерпан
     лимит роллов на заход — улучшение A8), иначе уйти (`next_round`). См. модульный
     докстринг про политику и её границы."""
-    advice = evaluate_shop(state)
     if advice is not None:
         requirement = _next_blind_requirement(state)
         for offer in advice.jokers:

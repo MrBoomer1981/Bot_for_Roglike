@@ -41,6 +41,7 @@ from typing import Final, Literal
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import (
     Action,
+    BoardEntry,
     _next_blind_requirement,
     decide_action,
     describe_action,
@@ -180,6 +181,14 @@ class DecisionEntry:
     jokers: tuple[str, ...] = ()
     """Джокеры в слотах по порядку — порядок влияет на счёт, поэтому
     именно кортеж, а не множество."""
+
+    board: tuple[BoardEntry, ...] = ()
+    """Те же джокеры, но с измеренным вкладом каждого (улучшение E1b).
+
+    Непусто только на решениях в магазине: вклад считается там
+    (`ShopAdvice.held`) и больше нигде. Без этих чисел по журналу нельзя
+    сказать ни законно ли отклонён размен, ни во что обошлась текучка
+    джокеров — оба вопроса висели открытыми именно поэтому."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -589,6 +598,7 @@ def _entry(
         action=action,
         rejected=rejected,
         reason=decided.reason if decided is not None else "",
+        board=decided.board if decided is not None else (),
         chips_scored=state.chips_scored,
         requirement=_next_blind_requirement(state),
         hands_left=state.hands_left,
@@ -701,6 +711,14 @@ def report_to_json(report: RunReport) -> dict[str, object]:
                 "hands_left": entry.hands_left,
                 "discards_left": entry.discards_left,
                 "jokers": list(entry.jokers),
+                "board": [
+                    {
+                        "label": место.label,
+                        "contribution": round(место.contribution, 1),
+                        "sell_value": место.sell_value,
+                    }
+                    for место in entry.board
+                ],
             }
             for entry in report.decisions
         ],
@@ -829,6 +847,9 @@ def render_run_report(report: RunReport, *, verbose: bool = False) -> None:
         # утопило бы сами шаги, а нужно оно ровно тогда, когда ран разбирают.
         if verbose and entry.reason:
             print(f"        └ {entry.reason}")
+        if verbose and entry.board:
+            доска = ", ".join(f"{место.label} {место.contribution:.0f}" for место in entry.board)
+            print(f"          доска: {доска}")
 
 
 def render_batch_summary(summaries: Sequence[StakeSummary]) -> None:

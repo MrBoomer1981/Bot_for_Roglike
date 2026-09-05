@@ -39,6 +39,7 @@ from balatro_bot.core.state import (
 )
 from balatro_bot.solver.actions import ActionOption, rank_actions
 from balatro_bot.solver.play import Advice, Candidate
+from balatro_bot.solver.shop import evaluate_shop
 from balatro_bot.solver.skip import evaluate_skip
 from tests.fake_mod import FakeMod
 
@@ -371,11 +372,12 @@ class TestDecideActionПереставляетДжокеров:
 def _без_повода(action: Action | None) -> Action | None:
     """Действие без поля `reason` — для сравнения на равенство.
 
-    `Action.reason` (улучшение E1a) хранит числа, по которым решение принято,
-    и меняется при каждой правке порогов. Тесты здесь про **выбор**, а не про
-    формулировку обоснования, поэтому сравнивают действие без него; сам
-    `reason` проверяется отдельно в `TestОбоснованиеРешения`."""
-    return None if action is None else replace(action, reason="")
+    `Action.reason` (E1a) и `Action.board` (E1b) — диагностика: числа, по
+    которым решение принято, и снимок доски. Оба меняются при каждой правке
+    порогов и при каждом ране. Тесты здесь про **выбор**, а не про
+    диагностику, поэтому сравнивают действие без них; сами поля проверяются
+    отдельно в `TestОбоснованиеРешения` и `TestСнимкаДоски`."""
+    return None if action is None else replace(action, reason="", board=())
 
 
 def _blind(
@@ -1491,3 +1493,80 @@ class TestПорогИЗапасДляПаков:
         action = decide_action(self._shop(money=8, requirement=70_000, price=6))
         assert action is not None
         assert action.kind != "buy_pack"
+
+
+class TestСнимкаДоски:
+    """Улучшение E1b. Вклад каждого джокера считается в магазине
+    (`ShopAdvice.held`) и до сих пор выбрасывался: журнал знал метки доски,
+    но не знал, чего каждая стоит. Из-за этого два вопроса остались без
+    ответа — законно ли отклонён размен (A13 честно отказалась утверждать) и
+    во что обошлась текучка джокеров рана 12 (куплено 10, продано 5)."""
+
+    def _доска(self) -> tuple[JokerCard, ...]:
+        return (
+            JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+            JokerCard(key="j_joker", label="Joker", sell_value=2),
+            JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
+        )
+
+    def _shop(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "jokers": self._доска(),
+            "shop": (ShopItem("j_joker", "Joker", "JOKER", 3),),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_снимок_совпадает_с_оценкой_магазина(self) -> None:
+        state = self._shop()
+        action = decide_action(state)
+        advice = evaluate_shop(state)
+        assert action is not None and advice is not None
+        assert len(action.board) == len(advice.held)
+        for место, held in zip(action.board, advice.held, strict=True):
+            assert место.label == held.label
+            assert место.contribution == held.contribution
+            assert место.sell_value == held.sell_value
+
+    def test_порядок_слотов_сохранён(self) -> None:
+        action = decide_action(self._shop())
+        assert action is not None
+        assert tuple(м.label for м in action.board) == (
+            "Joker Stencil",
+            "Joker",
+            "Rough Gem",
+        )
+
+    def test_снимок_есть_на_каждом_выходе_магазина(self) -> None:
+        # Регрессия против «восьми выходов»: в E1a обоснование получили
+        # шесть мест из четырнадцати именно потому, что дописывалось к
+        # каждому `return` по отдельности.
+        сцены = {
+            "покупка": self._shop(joker_slots=5),
+            "уход": self._shop(money=0, shop=(ShopItem("j_x", "???", "JOKER", 99),)),
+            "реролл": self._shop(shop=(ShopItem("j_x", "???", "JOKER", 99),), money=40),
+            "пак": self._shop(
+                shop=(),
+                shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
+                money=40,
+            ),
+        }
+        for имя, state in сцены.items():
+            action = decide_action(state)
+            assert action is not None, имя
+            assert action.board, (имя, action.kind)
+
+    def test_вне_магазина_снимка_нет(self) -> None:
+        # Вклад — измерение экрана магазина; в других фазах его неоткуда взять,
+        # и выдумывать нельзя.
+        assert decide_action(GameState(phase="ROUND_EVAL")).board == ()  # type: ignore[union-attr]
+
+    def test_без_джокеров_снимок_пуст(self) -> None:
+        action = decide_action(self._shop(jokers=()))
+        assert action is not None
+        assert action.board == ()
