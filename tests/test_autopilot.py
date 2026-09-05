@@ -464,7 +464,22 @@ class TestDecideActionНаВыбореБлайнда:
         action = decide_action(state)
         assert _без_повода(action) == Action(kind="skip")
 
-    def test_играть_когда_скип_не_доказан(self) -> None:
+    def test_играть_когда_тег_проект_не_оценивает(self) -> None:
+        # `Handy Tag` требует счётчика уровня рана, которого мод не присылает,
+        # — оценки нет ни на одном из трёх уровней (A14), значит играем.
+        state = GameState(
+            phase="BLIND_SELECT",
+            blinds={
+                "big": _blind("BIG", "SELECT", 450, "Handy Tag", "..."),
+                "boss": _blind("BOSS", "UPCOMING", 600),
+            },
+        )
+        action = decide_action(state)
+        assert _без_повода(action) == Action(kind="select")
+
+    def test_структурный_тег_теперь_даёт_скип(self) -> None:
+        # Прямая регрессия рана 12: `Rare Tag` проходил мимо, потому что
+        # денежной цены у него нет. Улучшение A14 оценивает его структурно.
         state = GameState(
             phase="BLIND_SELECT",
             blinds={
@@ -473,7 +488,7 @@ class TestDecideActionНаВыбореБлайнда:
             },
         )
         action = decide_action(state)
-        assert _без_повода(action) == Action(kind="select")
+        assert _без_повода(action) == Action(kind="skip")
 
     def test_boss_нельзя_скипнуть_решение_select(self) -> None:
         state = GameState(

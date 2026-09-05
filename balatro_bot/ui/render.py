@@ -171,10 +171,19 @@ def render_skip_advice(advice: SkipAdvice) -> None:
         print(f"            {advice.tag_effect}")
     if advice.tag is None and advice.tag_name:
         print(f"            тег не опознан ботом: {advice.tag_name!r}")
-    if advice.tag_dollars is not None:
+    # Три уровня честности (A14) печатаются раздельно и не сливаются в один
+    # столбец — очки, доллары и назначенная структурная оценка суть величины
+    # разной природы, ровно как у ваучеров в `render_shop_advice`.
+    if advice.tag_uplift is not None:
+        print(
+            f"            в очках: ~{format_number(advice.tag_uplift)} ({advice.tag_dollars_note})"
+        )
+    elif advice.tag_dollars is not None:
         print(f"            в деньгах: ${advice.tag_dollars:g} ({advice.tag_dollars_note})")
+    elif advice.tag_heuristic is not None:
+        print(f"            структурно: {advice.tag_heuristic:g} из 8 ({advice.tag_dollars_note})")
     elif advice.tag_dollars_note:
-        print(f"            в деньгах: не оценено — {advice.tag_dollars_note}")
+        print(f"            не оценено — {advice.tag_dollars_note}")
 
 
 def render_shop_advice(advice: ShopAdvice) -> None:

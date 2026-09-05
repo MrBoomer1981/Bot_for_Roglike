@@ -284,6 +284,16 @@ _STRUCTURAL_SHOP_VOUCHERS = frozenset({"v_overstock_norm", "v_overstock_plus"})
 #: считается только когда после покупки остаётся запас `_REROLL_MONEY_RESERVE`.
 #: Калибруется на живых прогонах.
 _HEURISTIC_RELIEF_PER_EMPTY_SLOT = 1.0
+
+#: Улучшение A14. Порог структурной оценки тега на той же условной шкале
+#: 1–8, что у ваучеров. База выше ваучерной (6.0 против 5.0): скип отдаёт
+#: не только деньги, но и продвижение по очкам блайнда, поэтому за тег
+#: спрашивается больше, чем за покупку ваучера. Пол ниже (2.0): при полных
+#: слотах структурный тег — единственный способ расшить затор, ровно тот
+#: случай, на котором ран 12 встал на анте 6–7 с $69 без применения.
+#: Калибруется живыми прогонами, как и остальные пороги.
+_MIN_HEURISTIC_TAG_VALUE = 6.0
+_HEURISTIC_TAG_FLOOR = 2.0
 _HEURISTIC_VOUCHER_FLOOR = 3.0
 
 #: Улучшение A5. Сколько денег автопилот оставляет себе после рерола: реролл
@@ -499,11 +509,59 @@ def _reorder_indices(current: tuple[object, ...], desired: tuple[object, ...]) -
     return tuple(order)
 
 
-def decide_skip(advice: SkipAdvice) -> bool:
-    """Скипнуть ли блайнд — предельно консервативная политика, см. модульный
-    докстринг. `True` только когда денежная цена тега точно известна и
-    строго больше гарантированной награды за игру."""
-    return advice.tag_dollars is not None and advice.tag_dollars > advice.play_reward_min
+def decide_skip(advice: SkipAdvice, state: GameState | None = None) -> bool:
+    """Скипнуть ли блайнд — три уровня честности (улучшение A14), ровно
+    как у ваучеров в `_decide_voucher_action`.
+
+    Прежняя версия скипала только при точно известной денежной цене тега,
+    а такая цена есть у двух тегов из двадцати четырёх — то есть двадцать
+    два тега не могли быть выбраны никогда, какими бы сильными ни были. В
+    ране 12 это дало 20 выборов блайнда и ноль скипов, включая пропущенные
+    `Negative Tag`, `Rare Tag` и `Polychrome Tag`.
+
+    Уровни:
+
+    * **очки** (`tag_uplift`) — прирост посчитан движком; порог тот же
+      `_worth_buying`, что у покупки джокера и (с A13) пака: доля
+      требования блайнда, а не абсолютное число;
+    * **доллары** (`tag_dollars`) — как раньше, строго больше
+      гарантированной награды за игру;
+    * **структурная оценка** (`tag_heuristic`) — назначенное число по
+      условной шкале ваучеров; порог `_heuristic_tag_bar`, который, как и
+      у ваучеров (A7), смягчается при простаивающих слотах джокеров —
+      именно в этом случае `Negative Tag` (+1 слот) и нужен больше всего.
+
+    `state` нужен только третьему уровню (слоты, требование блайнда); без
+    него работают первые два, и поведение совпадает с прежним.
+
+    Чего эти числа **не** учитывают: скип отдаёт не только $3–4 награды, но
+    и продвижение по очкам этого блайнда. Защита от этого — что порог
+    первого уровня масштабирован требованием **следующего** блайнда; это
+    приближение, а не доказательство."""
+    requirement = advice.next_required_score or None
+    if advice.tag_uplift is not None and _worth_buying(advice.tag_uplift, requirement):
+        return True
+    if advice.tag_dollars is not None and advice.tag_dollars > advice.play_reward_min:
+        return True
+    if advice.tag_heuristic is not None and state is not None:
+        return advice.tag_heuristic >= _heuristic_tag_bar(state)
+    return False
+
+
+def _heuristic_tag_bar(state: GameState) -> float:
+    """Порог структурной оценки тега — та же форма, что
+    `_heuristic_voucher_bar` (A7): база, смягчаемая за каждый пустующий
+    слот джокера, но не ниже пола.
+
+    Смягчение здесь работает даже сильнее, чем у ваучеров: пустой слот
+    означает, что боту есть куда девать то, что даст тег, а полные слоты —
+    что структурный тег вроде `Negative Tag` (+1 слот) как раз и
+    расшивает затор. Поэтому пол ниже ваучерного."""
+    if state.joker_slots is None:
+        return _MIN_HEURISTIC_TAG_VALUE
+    свободных = max(state.joker_slots - len(state.jokers), 0)
+    смягчение = _HEURISTIC_RELIEF_PER_EMPTY_SLOT * свободных
+    return max(_MIN_HEURISTIC_TAG_VALUE - смягчение, _HEURISTIC_TAG_FLOOR)
 
 
 def _decide_blind_action(state: GameState) -> Action:
@@ -515,23 +573,32 @@ def _decide_blind_action(state: GameState) -> Action:
     if advice is None:
         # Босс: скипнуть нельзя, решение единственное.
         return Action(kind="select", reason="боссовый блайнд — скип невозможен")
-    if decide_skip(advice):
-        return Action(
-            kind="skip",
-            reason=(
-                f"тег {advice.tag_name} стоит ${advice.tag_dollars:g} против "
-                f"${advice.play_reward_min} гарантированной награды за игру"
-            ),
+    if decide_skip(advice, state):
+        return Action(kind="skip", reason=_skip_reason(advice, state))
+    return Action(kind="select", reason=_skip_reason(advice, state))
+
+
+def _skip_reason(advice: SkipAdvice, state: GameState) -> str:
+    """Почему скипнули или не скипнули — с уровнем и числом (A14).
+
+    Урок A13: причина обязана называть то, что решило на самом деле. У
+    скипа уровней три, и по строке журнала должно быть видно, какой
+    сработал и какого числа не хватило."""
+    имя = advice.tag_name or "без тега"
+    if advice.tag_uplift is not None:
+        порог = _describe_buy_bar(advice.next_required_score or None)
+        return f"тег {имя}: прирост {advice.tag_uplift:.0f} против порога {порог}"
+    if advice.tag_dollars is not None:
+        return (
+            f"тег {имя}: ${advice.tag_dollars:g} против "
+            f"${advice.play_reward_min} гарантированной награды за игру"
         )
-    if advice.tag_dollars is None:
-        имя = advice.tag_name or "без тега"
-        повод = f"цена тега {имя} числом не известна"
-    else:
-        повод = (
-            f"тег {advice.tag_name} стоит ${advice.tag_dollars:g}, не больше "
-            f"${advice.play_reward_min} за игру"
+    if advice.tag_heuristic is not None:
+        return (
+            f"тег {имя}: структурная оценка {advice.tag_heuristic:g} против порога "
+            f"{_heuristic_tag_bar(state):g} ({advice.tag_dollars_note})"
         )
-    return Action(kind="select", reason=повод)
+    return f"тег {имя} проект не оценивает: {advice.tag_dollars_note}"
 
 
 def _next_blind_requirement(state: GameState) -> int | None:

@@ -278,13 +278,16 @@ class TestAutoplay:
         out = capsys.readouterr().out
         assert "скипнул блайнд" in out
 
-    def test_на_выборе_блайнда_играет_без_доказанного_тега(
+    def test_на_выборе_блайнда_играет_без_оценимого_тега(
         self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
     ) -> None:
+        # `Handy Tag` не оценивается ни на одном из трёх уровней A14 —
+        # его формула требует счётчика уровня рана, которого мод не шлёт.
+        # (`Rare Tag` тут стоял до A14 и теперь оценивается структурно.)
         state = sample_state()
         state["state"] = "BLIND_SELECT"
         state["blinds"]["big"]["status"] = "SELECT"
-        state["blinds"]["big"]["tag_name"] = "Rare Tag"
+        state["blinds"]["big"]["tag_name"] = "Handy Tag"
         FakeMod.state = state
 
         tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)

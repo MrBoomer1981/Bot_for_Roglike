@@ -156,7 +156,7 @@ _BUFFOON_PACK_PREFIX: Final[str] = "p_buffoon"
 #: Размер Buffoon-пака: (сколько джокеров показывают, сколько можно взять) —
 #: из `game.lua`'s `P_CENTERS` (`config = {extra, choose}`). Normal — 2/1,
 #: Jumbo — 4/1, Mega — 4/2.
-_BUFFOON_PACK_SIZES: Final[dict[str, tuple[int, int]]] = {
+BUFFOON_PACK_SIZES: Final[dict[str, tuple[int, int]]] = {
     "mega": (4, 2),
     "jumbo": (4, 1),
     "normal": (2, 1),
@@ -167,7 +167,7 @@ _CELESTIAL_PACK_PREFIX: Final[str] = "p_celestial"
 
 #: Размер Celestial-пака: (сколько планет показывают, сколько можно взять) —
 #: из `game.lua`'s `P_CENTERS`. Normal — 3/1, Jumbo — 5/1, Mega — 5/2.
-_CELESTIAL_PACK_SIZES: Final[dict[str, tuple[int, int]]] = {
+CELESTIAL_PACK_SIZES: Final[dict[str, tuple[int, int]]] = {
     "mega": (5, 2),
     "jumbo": (5, 1),
     "normal": (3, 1),
@@ -192,12 +192,12 @@ PACK_SIM_TRIALS: Final[int] = 400
 SAMPLE_HANDS: Final[int] = 12
 
 #: Столько карт добирается на пробную руку — как в реальной игре.
-_HAND_SIZE: Final[int] = 8
+HAND_SIZE: Final[int] = 8
 
-#: Тот же принцип, что `solver.discard._SAMPLE_SEED`: результат должен быть
+#: Тот же принцип, что `solver.discard.SAMPLE_SEED`: результат должен быть
 #: воспроизводимым при одном и том же состоянии, а не дребезжать между
 #: вызовами.
-_SAMPLE_SEED: Final[int] = 0
+SAMPLE_SEED: Final[int] = 0
 
 #: Вместимость витрины по умолчанию, если источник состояния её не прислал
 #: (`GameState.shop_slots is None` — ручной ввод). `game.lua`: `joker_max`
@@ -424,12 +424,12 @@ def joker_uplift(
     считался на деньгах, которые вот-вот уйдут на эту же покупку, — и тем
     сильнее, чем дороже оффер."""
     with_candidate = (*state.jokers, joker)
-    rng = random.Random(_SAMPLE_SEED)
+    rng = random.Random(SAMPLE_SEED)
     pool = list(deck_source)
     hands = _round_budget(state)
     total = 0.0
     for i in range(samples):
-        hand = tuple(rng.sample(pool, _HAND_SIZE))
+        hand = tuple(rng.sample(pool, HAND_SIZE))
         # Улучшение A10: выборки распределены по моментам раунда, а не свалены
         # все на его первую руку. Обе стороны разности считаются в **одном** и
         # том же моменте, поэтому контрфактум остаётся честным — различается
@@ -465,9 +465,9 @@ def joker_contributions(
     `autopilot._decide_replace_action` сравнивал бы прирост, посчитанный
     после траты, с вкладом, посчитанным до выручки, — ровно та
     несопоставимость сторон, из-за которой понадобилась A10."""
-    if not state.jokers or len(deck_source) < _HAND_SIZE:
+    if not state.jokers or len(deck_source) < HAND_SIZE:
         return ()
-    rng = random.Random(_SAMPLE_SEED)
+    rng = random.Random(SAMPLE_SEED)
     pool = list(deck_source)
     budget = _round_budget(state)
     # Тот же график моментов, что у `joker_uplift` (A10/A11) — иначе вклад и
@@ -481,7 +481,7 @@ def joker_contributions(
                 budget,
                 repeat=_repeats_hand_type(i % budget, i // budget),
             ),
-            hand=tuple(rng.sample(pool, _HAND_SIZE)),
+            hand=tuple(rng.sample(pool, HAND_SIZE)),
         )
         for i in range(samples)
     ]
@@ -811,13 +811,13 @@ def evaluate_shop(
     # оценку не считаем вовсе — это лишние ~24 × 2 `advise()` на каждый заход.
     reroll_affordable = state.reroll_cost is not None and state.money >= state.reroll_cost
     random_joker_uplifts: list[float] | None = None
-    if len(deck_source) >= _HAND_SIZE and (
+    if len(deck_source) >= HAND_SIZE and (
         reroll_affordable or any(p.key.startswith(_BUFFOON_PACK_PREFIX) for p in state.shop_packs)
     ):
         if cache is not None and cache.random_joker_uplifts is not None:
             random_joker_uplifts = cache.random_joker_uplifts
         else:
-            rng = random.Random(_SAMPLE_SEED)
+            rng = random.Random(SAMPLE_SEED)
             keys = sorted(implemented_keys())
             pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
             random_joker_uplifts = [
@@ -832,12 +832,12 @@ def evaluate_shop(
     planet_uplifts: list[float] | None = None
     if (
         any(p.key.startswith(_CELESTIAL_PACK_PREFIX) for p in state.shop_packs)
-        and len(deck_source) >= _HAND_SIZE
+        and len(deck_source) >= HAND_SIZE
     ):
         if cache is not None and cache.planet_uplifts is not None:
             planet_uplifts = cache.planet_uplifts
         else:
-            planet_uplifts = _planet_uplift_pool(state, deck_source)
+            planet_uplifts = planet_uplift_pool(state, deck_source)
             if cache is not None:
                 cache.planet_uplifts = planet_uplifts
 
@@ -854,7 +854,20 @@ def evaluate_shop(
     )
 
 
-def _planet_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list[float]:
+def random_joker_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list[float]:
+    """Прирост от каждого из `PACK_JOKER_SAMPLE` случайных реализованных
+    джокеров — пул для Монте-Карло Buffoon-пака и для оценки `Buffoon Tag`
+    (улучшение A14). Выбор джокеров детерминирован (сортировка + сеянный
+    `sample`), как и всё остальное сэмплирование в проекте."""
+    rng = random.Random(SAMPLE_SEED)
+    keys = sorted(implemented_keys())
+    picked = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
+    return [
+        joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS) for key in picked
+    ]
+
+
+def planet_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list[float]:
     """Прирост лучшего счёта от подъёма уровня каждого из 12 типов руки на
     один — по `PACK_SAMPLE_HANDS` представительным рукам. Базовый счёт
     считается один раз, затем по разу на каждый прокачанный тип. Нужен для
@@ -863,9 +876,9 @@ def _planet_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list
     # поэтому импорт отложенный, на месте.
     from balatro_bot.solver.pack import PLANET_HAND_TYPES, level_up
 
-    rng = random.Random(_SAMPLE_SEED)
+    rng = random.Random(SAMPLE_SEED)
     pool = list(deck_source)
-    hands = [tuple(rng.sample(pool, _HAND_SIZE)) for _ in range(PACK_SAMPLE_HANDS)]
+    hands = [tuple(rng.sample(pool, HAND_SIZE)) for _ in range(PACK_SAMPLE_HANDS)]
     baselines = [advise(replace(state, hand=hand), limit=1).best.score for hand in hands]
     uplifts: list[float] = []
     for hand_type in PLANET_HAND_TYPES.values():
@@ -887,12 +900,12 @@ def _pack_size(key: str, sizes: dict[str, tuple[int, int]]) -> tuple[int, int]:
     return sizes["normal"]
 
 
-def _monte_carlo_pack(uplifts: list[float], extra: int, choose: int) -> float:
+def monte_carlo_pack(uplifts: list[float], extra: int, choose: int) -> float:
     """Среднее от «взять лучшие `choose` из `extra` случайных карт» —
     `PACK_SIM_TRIALS` пересэмплирований без возврата. Общий механизм для
     Buffoon (джокеры) и Celestial (планеты)."""
     extra = min(extra, len(uplifts))
-    sim = random.Random(_SAMPLE_SEED)
+    sim = random.Random(SAMPLE_SEED)
     total = 0.0
     for _ in range(PACK_SIM_TRIALS):
         drawn = sorted(sim.sample(uplifts, extra), reverse=True)
@@ -908,7 +921,7 @@ def _monte_carlo_reroll(uplifts: list[float], slots: int) -> float:
     Планета — их вклад в счёт тут ноль (не моделируется, консервативно
     занижает). `PACK_SIM_TRIALS` розыгрышей, сид фиксирован."""
     p_joker = economy.SHOP_JOKER_RATE / _SHOP_TOTAL_RATE
-    sim = random.Random(_SAMPLE_SEED)
+    sim = random.Random(SAMPLE_SEED)
     total = 0.0
     for _ in range(PACK_SIM_TRIALS):
         best = 0.0
@@ -990,8 +1003,8 @@ def _evaluate_pack_purchase(
     if is_buffoon:
         if buffoon_uplifts is None:
             return _offer(None, 0, "колода для выборки неизвестна")
-        extra, choose = _pack_size(item.key, _BUFFOON_PACK_SIZES)
-        uplift = _monte_carlo_pack(buffoon_uplifts, extra, choose)
+        extra, choose = _pack_size(item.key, BUFFOON_PACK_SIZES)
+        uplift = monte_carlo_pack(buffoon_uplifts, extra, choose)
         note = (
             f"оценка: лучшие {choose} из {min(extra, len(buffoon_uplifts))} "
             f"случайных джокеров (выборка {len(buffoon_uplifts)})"
@@ -1003,8 +1016,8 @@ def _evaluate_pack_purchase(
     if item.key.startswith(_CELESTIAL_PACK_PREFIX):
         if planet_uplifts is None:
             return _offer(None, 0, "колода для выборки неизвестна")
-        extra, choose = _pack_size(item.key, _CELESTIAL_PACK_SIZES)
-        uplift = _monte_carlo_pack(planet_uplifts, extra, choose)
+        extra, choose = _pack_size(item.key, CELESTIAL_PACK_SIZES)
+        uplift = monte_carlo_pack(planet_uplifts, extra, choose)
         shown = min(extra, len(planet_uplifts))
         note = f"оценка: лучшие {choose} из {shown} случайных планет (из 12)"
         if choose > 1:
@@ -1042,7 +1055,7 @@ def _evaluate_joker_offer(
             replaces=None,
         )
 
-    if not known or len(deck_source) < _HAND_SIZE:
+    if not known or len(deck_source) < HAND_SIZE:
         return _offer(None, 0)
 
     # Мемо по (ключ, издание, цена) — `label` на счёт не влияет, а вот цена

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from dataclasses import replace
 
+import pytest
+
+from balatro_bot.core.cards import standard_deck
 from balatro_bot.core.state import BlindInfo, GameState
+from balatro_bot.solver import shop as shop_module
 from balatro_bot.solver.skip import evaluate_skip
 
 
@@ -185,3 +189,124 @@ class TestEvaluateSkip:
         )
         assert state.blind is None
         assert evaluate_skip(state) is not None
+
+
+class TestПокрытиеТегов:
+    """Улучшение A14. До него скип требовал точной денежной цены, а она есть
+    у двух тегов из двадцати четырёх — то есть двадцать два тега не могли
+    быть выбраны никогда. Ран 12: 20 выборов блайнда, 0 скипов, мимо прошли
+    `Negative Tag`, `Rare Tag`, `Polychrome Tag`.
+
+    Главное здесь — покрытие: каждый тег обязан получить **какой-то** ответ,
+    иначе новый тег молча провалится в «не оценивается», как это и было."""
+
+    def _state(self, tag: str, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "BLIND_SELECT",
+            "blinds": {
+                "small": _blind("SMALL", "SELECT", 300, tag, "..."),
+                "big": _blind("BIG", "UPCOMING", 450),
+                "boss": _blind("BOSS", "UPCOMING", 600),
+            },
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_каждый_тег_каталога_получает_ответ(self) -> None:
+        from balatro_bot.core.tags import TAGS
+
+        без_ответа = []
+        for effect in TAGS.values():
+            advice = evaluate_skip(self._state(effect.name))
+            assert advice is not None, effect.name
+            оценён = (
+                advice.tag_uplift is not None
+                or advice.tag_dollars is not None
+                or advice.tag_heuristic is not None
+            )
+            # Не оценён — обязан объяснить почему, а не молчать.
+            if not оценён and not advice.tag_dollars_note:
+                без_ответа.append(effect.name)
+        assert без_ответа == []
+
+    def test_структурные_теги_на_шкале_ваучеров(self) -> None:
+        from balatro_bot.solver.vouchers import _HEURISTIC_VALUES
+
+        # `Negative Tag` даёт +1 слот джокера — ровно то же, что `v_antimatter`,
+        # и оценка обязана быть той же, а не отдельно выдуманной.
+        advice = evaluate_skip(self._state("Negative Tag"))
+        assert advice is not None
+        assert advice.tag_heuristic == _HEURISTIC_VALUES["v_antimatter"]
+
+    def test_неоценимый_тег_называет_причину(self) -> None:
+        advice = evaluate_skip(self._state("Handy Tag"))
+        assert advice is not None
+        assert advice.tag_heuristic is None
+        assert advice.tag_uplift is None
+        assert "счётчик" in advice.tag_dollars_note
+
+    def test_пак_который_проект_не_оценивает_назван(self) -> None:
+        advice = evaluate_skip(self._state("Charm Tag"))
+        assert advice is not None
+        assert advice.tag_uplift is None
+        assert "не оценивает" in advice.tag_dollars_note
+
+
+class TestЛенивостьОценкиТегов:
+    """Оценка первого уровня требует пула приростов — замерено 2.4 с
+    (планеты) и 9.8 с (джокеры). Экран выбора блайнда случается за ран
+    десятки раз, поэтому пул обязан считаться, только когда на экране лежит
+    тег, которому он действительно нужен."""
+
+    def _state(self, tag: str) -> GameState:
+        return GameState(
+            phase="BLIND_SELECT",
+            full_deck=standard_deck(),
+            blinds={
+                "small": _blind("SMALL", "SELECT", 300, tag, "..."),
+                "big": _blind("BIG", "UPCOMING", 450),
+            },
+        )
+
+    def _счётчик(
+        self, monkeypatch: pytest.MonkeyPatch, *, настоящий_планетный: bool = False
+    ) -> list[str]:
+        """Подменить оба пула считающими обёртками. Планетный по желанию
+        остаётся настоящим — чтобы проверить не только факт вызова, но и что
+        число получилось."""
+        вызовы: list[str] = []
+        исходный = shop_module.planet_uplift_pool
+
+        def планетный(state: GameState, deck: object) -> list[float]:
+            вызовы.append("planet")
+            return исходный(state, deck) if настоящий_планетный else []  # type: ignore[arg-type]
+
+        def джокерный(state: GameState, deck: object) -> list[float]:
+            вызовы.append("joker")
+            return []
+
+        monkeypatch.setattr(shop_module, "planet_uplift_pool", планетный)
+        monkeypatch.setattr(shop_module, "random_joker_uplift_pool", джокерный)
+        return вызовы
+
+    def test_без_пакового_тега_пулы_не_трогаются(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        вызовы = self._счётчик(monkeypatch)
+        for tag in ("Negative Tag", "Handy Tag", "Investment Tag", "Charm Tag"):
+            evaluate_skip(self._state(tag))
+        assert вызовы == []
+
+    def test_meteor_считает_только_планетный_пул(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        вызовы = self._счётчик(monkeypatch, настоящий_планетный=True)
+        advice = evaluate_skip(self._state("Meteor Tag"))
+        assert advice is not None
+        assert вызовы == ["planet"]
+        assert advice.tag_uplift is not None and advice.tag_uplift > 0
+
+    def test_buffoon_считает_только_джокерный_пул(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        вызовы = self._счётчик(monkeypatch)
+        evaluate_skip(self._state("Buffoon Tag"))
+        assert вызовы == ["joker"]
+
+    def test_orbital_оценивается_в_очках(self) -> None:
+        advice = evaluate_skip(self._state("Orbital Tag"))
+        assert advice is not None
+        assert advice.tag_uplift is not None and advice.tag_uplift > 0
