@@ -415,6 +415,20 @@ class Action:
     иначе показать было бы нечего, `item_index` сам по себе не читается
     человеком)."""
 
+    reason: str = ""
+    """Почему выбрано именно это — числа, по которым решение принято
+    (улучшение E1a).
+
+    `describe_action` отвечает на вопрос «что сделано», а это поле — на
+    «почему»: прирост оффера и порог, который он прошёл, вклад проданного
+    джокера, требование блайнда. Все эти числа уже посчитаны в
+    соответствующем `_decide_*`, здесь они только не выбрасываются, — иначе
+    ран, за которым никто не смотрел, разобрать нечем: все разборы ранов
+    8–10 делались по живому терминалу.
+
+    Пустая строка — решение без числового обоснования (перейти к следующему
+    раунду, забрать награду) либо запись не о действии вовсе."""
+
 
 def _indices_of(hand: tuple[Card, ...], cards: tuple[Card, ...]) -> tuple[int, ...]:
     """Индексы `cards` в `hand` — устойчиво к совпадающим по значению картам
@@ -499,6 +513,17 @@ def _worth_buying(uplift: float, requirement: int | None) -> bool:
     return uplift >= _MIN_BUY_REQ_FRACTION * requirement
 
 
+def _describe_buy_bar(requirement: int | None) -> str:
+    """Порог покупки словами — для `Action.reason` (улучшение E1a).
+
+    Ровно то же условие, что проверяет `_worth_buying`, только
+    напечатанное: журналу нужно не «купил», а «купил, потому что прирост
+    прошёл вот такой порог», иначе разобрать чужой ран нечем."""
+    if requirement is None:
+        return "0 (требование блайнда неизвестно)"
+    return f"{_MIN_BUY_REQ_FRACTION * requirement:.0f}"
+
+
 def _decide_replace_action(
     state: GameState, advice: ShopAdvice, requirement: int | None, *, strong_only: bool = False
 ) -> Action | None:
@@ -537,7 +562,18 @@ def _decide_replace_action(
         )
         multiple = offer.expected_uplift >= _REPLACE_UPLIFT_RATIO * max(victim.contribution, 0.0)
         if dead_weight or multiple:
-            return Action(kind="sell", item_index=victim.index, label=victim.label)
+            повод = "балласт" if dead_weight else "оффер кратно сильнее"
+            return Action(
+                kind="sell",
+                item_index=victim.index,
+                label=victim.label,
+                reason=(
+                    f"размен под {offer.item.label}: оффер "
+                    f"{offer.expected_uplift:.0f} против вклада "
+                    f"{victim.contribution:.0f}, {повод}; требование блайнда "
+                    f"{requirement if requirement is not None else 'неизвестно'}"
+                ),
+            )
     return None
 
 
@@ -594,10 +630,18 @@ def _decide_voucher_action(
                 state, offer.item.key, offer.item.price
             )
         if take:
+            if offer.expected_uplift is not None:
+                обоснование = f"прирост {offer.expected_uplift:.0f} ≥ цены ${offer.item.price}"
+            else:
+                обоснование = (
+                    f"экспертная оценка {offer.heuristic_value:.1f} ≥ порога "
+                    f"{_heuristic_voucher_bar(state, offer.item.key, offer.item.price):.1f}"
+                )
             return Action(
                 kind="buy_voucher",
                 item_index=_item_index_of(state.shop_vouchers, offer.item),
                 label=offer.item.label,
+                reason=обоснование,
             )
     return None
 
@@ -634,7 +678,16 @@ def _decide_dead_weight_action(
     worst = min(sellable, key=lambda entry: entry.contribution)
     if worst.contribution >= -margin:
         return None
-    return Action(kind="sell", item_index=worst.index, label=worst.label)
+    return Action(
+        kind="sell",
+        item_index=worst.index,
+        label=worst.label,
+        reason=(
+            f"балласт: вклад {worst.contribution:.0f} ниже −{margin:.0f} "
+            f"(требование {requirement if requirement is not None else 'неизвестно'}), "
+            f"в слотах {len(state.jokers)}"
+        ),
+    )
 
 
 def _decide_reroll_action(
@@ -677,9 +730,17 @@ def _decide_reroll_action(
     if outlook.expected_best_uplift < _REROLL_SHELF_MARGIN * best_on_shelf:
         return None
     # A8, структурная граница: лимит роллов на заход.
-    if economy.rerolls_done(outlook.cost, state.used_vouchers) >= _MAX_REROLLS_PER_SHOP:
+    сделано = economy.rerolls_done(outlook.cost, state.used_vouchers)
+    if сделано >= _MAX_REROLLS_PER_SHOP:
         return None
-    return Action(kind="reroll")
+    return Action(
+        kind="reroll",
+        reason=(
+            f"ожидание от ролла {outlook.expected_best_uplift:.0f} против лучшего "
+            f"на витрине {best_on_shelf:.0f} (запас ×{_REROLL_SHELF_MARGIN}), "
+            f"ролл {сделано + 1}/{_MAX_REROLLS_PER_SHOP} за заход, цена ${outlook.cost}"
+        ),
+    )
 
 
 def _decide_shop_action(state: GameState) -> Action:
@@ -712,6 +773,11 @@ def _decide_shop_action(state: GameState) -> Action:
                     kind="buy",
                     item_index=_item_index_of(state.shop, offer.item),
                     label=offer.item.label,
+                    reason=(
+                        f"прирост {offer.expected_uplift:.0f} ≥ порога "
+                        f"{_describe_buy_bar(requirement)}, цена ${offer.item.price}, "
+                        f"денег ${state.money}"
+                    ),
                 )
         voucher_action = _decide_voucher_action(state, advice, requirement)
         if voucher_action is not None:
@@ -734,6 +800,10 @@ def _decide_shop_action(state: GameState) -> Action:
                     kind="buy_pack",
                     item_index=_item_index_of(state.shop_packs, pack.item),
                     label=pack.item.label,
+                    reason=(
+                        f"ожидание от пака {pack.expected_uplift:.0f}, "
+                        f"цена ${pack.item.price}, денег ${state.money}"
+                    ),
                 )
         replace_action = _decide_replace_action(state, advice, requirement)
         if replace_action is not None:

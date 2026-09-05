@@ -13,15 +13,17 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import replace
+from pathlib import Path
 
 import pytest
 
 from balatro_bot import runner
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import Action
-from balatro_bot.core.state import GameState
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard
 from balatro_bot.runner import StakeSummary, play_run, run_batch
 
 
@@ -405,3 +407,81 @@ class TestПодхватИдущегоРана:
         assert [report.adopted for report in reports] == [True, False, False]
         # Первый ран не звал start, остальные два — звали.
         assert len(bridge.start_calls) == 2
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestЖурналРана:
+    """Улучшение E1a: запись решения должна быть разбираемой без живого
+    терминала. Раньше в ней были только шаг/фаза/анте/раунд/деньги/действие,
+    и ран, за которым никто не смотрел, разобрать было нечем — а батч E1
+    именно из таких ранов и состоит."""
+
+    def _bridge(self) -> ScriptedBridge:
+        blind = BlindInfo(
+            kind="SMALL", name="Small Blind", effect="", required_score=300, status="CURRENT"
+        )
+        играем = replace(
+            _state("SELECTING_HAND"),
+            chips_scored=120,
+            hands_left=3,
+            discards_left=2,
+            money=17,
+            jokers=(JokerCard(key="j_joker", label="Joker"),),
+            blinds={"small": blind},
+        )
+        return ScriptedBridge([играем, _state("GAME_OVER")])
+
+    def test_запись_несёт_положение_а_не_только_действие(self) -> None:
+        report = play_run(self._bridge(), deck="RED", stake="WHITE")
+        entry = report.decisions[0]
+        assert entry.chips_scored == 120
+        assert entry.requirement == 300
+        assert entry.hands_left == 3
+        assert entry.discards_left == 2
+        assert entry.jokers == ("Joker",)
+
+    def test_повод_берётся_из_решения(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            return Action(kind="play", reason="прирост 900 ≥ порога 9")
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        report = play_run(self._bridge(), deck="RED", stake="WHITE")
+        assert report.decisions[0].reason == "прирост 900 ≥ порога 9"
+
+    def test_запись_без_действия_остаётся_без_повода(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Затык: решения нет вовсе, значит и обосновывать нечего — поле
+        # обязано быть пустым, а не унаследовать чужой текст.
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kw: None)
+        report = play_run(self._bridge(), deck="RED", stake="WHITE")
+        assert report.outcome == "stuck"
+        assert report.decisions[-1].reason == ""
+
+    def test_журнал_пишется_в_файл_и_читается_обратно(self, tmp_path: Path) -> None:
+        report = play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        данные = json.loads(файл.read_text(encoding="utf-8"))
+        assert данные["deck"] == "RED"
+        assert данные["outcome"] == report.outcome
+        assert len(данные["decisions"]) == len(report.decisions)
+        шаг = данные["decisions"][0]
+        assert шаг["chips_scored"] == 120
+        assert шаг["requirement"] == 300
+        assert шаг["jokers"] == ["Joker"]
+
+    def test_ставка_в_журнале_помечена_ненаблюдаемой(self, tmp_path: Path) -> None:
+        # Мод ставку не присылает вовсе (см. `RunReport.adopted`), поэтому в
+        # журнале она обязана быть отмечена как «то, что попросили флагом».
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        assert json.loads(файл.read_text(encoding="utf-8"))["stake_observed"] is False
+
+    def test_без_каталога_ничего_не_пишется(self, tmp_path: Path) -> None:
+        play_run(self._bridge(), deck="RED", stake="WHITE")
+        assert list(tmp_path.iterdir()) == []
+
+    def test_аварийный_исход_тоже_попадает_в_журнал(self, tmp_path: Path) -> None:
+        # Ради таких ранов журнал и заводился: упавший должен оставить след.
+        monkeypatch_bridge = ScriptedBridge([_state("MENU")])
+        play_run(monkeypatch_bridge, deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        assert json.loads(файл.read_text(encoding="utf-8"))["outcome"] == "stuck"

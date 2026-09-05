@@ -308,6 +308,7 @@ def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
                 max_steps=args.max_steps,
                 adopt_first=args.adopt,
                 on_run=lambda report: render_run_report(report, verbose=args.explain),
+                log_dir=args.log,
             )
             render_batch_summary(summaries)
         else:
@@ -320,6 +321,7 @@ def _autoplay_managed(bridge: ModBridge, args: argparse.Namespace) -> int:
                 max_steps=args.max_steps,
                 adopt=args.adopt,
                 on_step=_print_run_step,
+                log_dir=args.log,
             )
             render_run_report(report, verbose=args.explain)
     except KeyboardInterrupt:
@@ -474,6 +476,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=int,
         default=2000,
         help="потолок шагов на ран, чтобы зациклившийся ран не крутился вечно",
+    )
+    auto.add_argument(
+        "--log",
+        type=Path,
+        help="каталог для журналов ранов (по файлу JSON на ран) — нужен, чтобы разобрать "
+        "прогон, за которым никто не смотрел",
     )
     auto.add_argument("--top", type=int, default=5, help="сколько вариантов показывать")
     auto.add_argument("--explain", action="store_true", help="показывать разбор лучшего варианта")

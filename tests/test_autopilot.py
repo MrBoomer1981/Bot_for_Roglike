@@ -336,6 +336,16 @@ class TestDecideActionПереставляетДжокеров:
         assert action.kind == "play"
 
 
+def _без_повода(action: Action | None) -> Action | None:
+    """Действие без поля `reason` — для сравнения на равенство.
+
+    `Action.reason` (улучшение E1a) хранит числа, по которым решение принято,
+    и меняется при каждой правке порогов. Тесты здесь про **выбор**, а не про
+    формулировку обоснования, поэтому сравнивают действие без него; сам
+    `reason` проверяется отдельно в `TestОбоснованиеРешения`."""
+    return None if action is None else replace(action, reason="")
+
+
 def _blind(
     kind: str, status: str, score: int, tag_name: str = "", tag_effect: str = ""
 ) -> BlindInfo:
@@ -547,7 +557,7 @@ class TestDecideActionВМагазине:
             shop_vouchers=(ShopItem("v_grabber", "Grabber", "VOUCHER", 10),),
         )
         action = decide_action(state)
-        assert action == Action(kind="buy_voucher", item_index=0, label="Grabber")
+        assert _без_повода(action) == Action(kind="buy_voucher", item_index=0, label="Grabber")
 
     def test_a4_покупает_структурный_эвристический_ваучер(self) -> None:
         # v_antimatter (+1 слот джокера), heuristic_value 8.0 >= 5.0.
@@ -558,7 +568,7 @@ class TestDecideActionВМагазине:
             shop_vouchers=(ShopItem("v_antimatter", "Antimatter", "VOUCHER", 10),),
         )
         action = decide_action(state)
-        assert action == Action(kind="buy_voucher", item_index=0, label="Antimatter")
+        assert _без_повода(action) == Action(kind="buy_voucher", item_index=0, label="Antimatter")
 
     def test_a4_слабый_эвристический_ваучер_не_покупается(self) -> None:
         # v_telescope heuristic_value 3.0 < порог 5.0 — не структурный апгрейд.
@@ -604,7 +614,7 @@ class TestDecideActionВМагазине:
             shop_packs=(ShopItem("p_buffoon_normal_1", "Buffoon Pack", "BOOSTER", 4),),
         )
         action = decide_action(state)
-        assert action == Action(kind="buy_pack", item_index=0, label="Buffoon Pack")
+        assert _без_повода(action) == Action(kind="buy_pack", item_index=0, label="Buffoon Pack")
 
     def test_покупает_celestial_пак(self) -> None:
         # Планеты слот не занимают; подъём уровня руки не может навредить —
@@ -617,7 +627,7 @@ class TestDecideActionВМагазине:
             shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),),
         )
         action = decide_action(state)
-        assert action == Action(kind="buy_pack", item_index=0, label="Celestial Pack")
+        assert _без_повода(action) == Action(kind="buy_pack", item_index=0, label="Celestial Pack")
 
     def test_buffoon_пак_без_слота_не_покупается(self) -> None:
         state = GameState(
@@ -696,7 +706,7 @@ class TestDecideActionВМагазине:
             shop_vouchers=(ShopItem("v_overstock_norm", "Overstock", "VOUCHER", 10),),
         )
         action = decide_action(state)
-        assert action == Action(kind="buy_voucher", item_index=0, label="Overstock")
+        assert _без_повода(action) == Action(kind="buy_voucher", item_index=0, label="Overstock")
 
     def test_a7_при_нехватке_денег_порог_overstock_базовый(self) -> None:
         # $15 − $10 = $5 < _REROLL_MONEY_RESERVE (12): запаса нет, планка 5.0,
@@ -793,7 +803,7 @@ class TestDecideActionРеролМагазина:
         return GameState(**{**base, **overrides})  # type: ignore[arg-type]
 
     def test_рероллит_когда_витрина_мусор_а_денег_с_запасом(self) -> None:
-        assert decide_action(self._junk_shop()) == Action(kind="reroll")
+        assert _без_повода(decide_action(self._junk_shop())) == Action(kind="reroll")
 
     def test_не_рероллит_без_денежного_запаса(self) -> None:
         # $15 − $5 = $10 < _REROLL_MONEY_RESERVE (12).
@@ -833,7 +843,7 @@ class TestDecideActionРеролМагазина:
 
     def test_рероллит_пока_лимит_не_исчерпан(self) -> None:
         # Цена $6 — сделан один ролл, лимит (2) ещё не выбран.
-        assert decide_action(self._junk_shop(reroll_cost=6)) == Action(kind="reroll")
+        assert _без_повода(decide_action(self._junk_shop(reroll_cost=6))) == Action(kind="reroll")
 
     def test_лимит_роллов_учитывает_удешевляющий_ваучер(self) -> None:
         # С Reroll Surplus база $3, поэтому цена $5 означает уже два ролла —
@@ -871,7 +881,7 @@ class TestDecideActionПродажаБалласта:
 
     def test_продаёт_джокера_хуже_пустого_слота(self) -> None:
         action = decide_action(self._board())
-        assert action == Action(kind="sell", item_index=2, label="Rough Gem")
+        assert _без_повода(action) == Action(kind="sell", item_index=2, label="Rough Gem")
 
     def test_не_продаёт_когда_все_вклады_положительны(self) -> None:
         state = self._board(
@@ -922,7 +932,7 @@ class TestDecideActionПродажаБалласта:
     def test_продажа_балласта_приоритетнее_рерола(self) -> None:
         # Денег хватает и на ролл, но сначала избавляемся от балласта.
         action = decide_action(self._board(money=40))
-        assert action == Action(kind="sell", item_index=2, label="Rough Gem")
+        assert _без_повода(action) == Action(kind="sell", item_index=2, label="Rough Gem")
 
 
 class TestDecideActionТаро:
@@ -1197,4 +1207,54 @@ class TestDecideActionCardSharpНеБалласт:
             JokerCard(key="j_joker", label="Joker", sell_value=2),
             JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
         )
-        assert decide_action(board) == Action(kind="sell", item_index=2, label="Rough Gem")
+        assert _без_повода(decide_action(board)) == Action(
+            kind="sell", item_index=2, label="Rough Gem"
+        )
+
+
+class TestОбоснованиеРешения:
+    """Улучшение E1a: `Action.reason` несёт числа, по которым решение принято.
+
+    Проверяется не формулировка, а то, что обоснование вообще есть и в нём
+    стоят те самые величины — иначе журнал рана снова станет списком «купил,
+    продал» без единого «почему», ради которого он и заводился."""
+
+    def _shop(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "shop": (ShopItem("j_joker", "Joker", "JOKER", 3),),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_покупка_объясняет_прирост_и_порог(self) -> None:
+        action = decide_action(self._shop())
+        assert action is not None and action.kind == "buy"
+        assert "прирост" in action.reason
+        assert "порога" in action.reason
+        assert "$3" in action.reason
+
+    def test_продажа_балласта_объясняет_вклад(self) -> None:
+        state = self._shop(
+            jokers=(
+                JokerCard(key="j_stencil", label="Joker Stencil", sell_value=4),
+                JokerCard(key="j_joker", label="Joker", sell_value=2),
+                JokerCard(key="j_rough_gem", label="Rough Gem", sell_value=3),
+            ),
+            shop=(ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+        )
+        action = decide_action(state)
+        assert action is not None and action.kind == "sell"
+        assert "балласт" in action.reason
+        assert "вклад" in action.reason
+
+    def test_решение_без_чисел_остаётся_без_повода(self) -> None:
+        # `cash_out` обосновывать нечем — поле обязано быть пустым, а не
+        # содержать выдуманное объяснение.
+        action = decide_action(GameState(phase="ROUND_EVAL"))
+        assert action is not None
+        assert action.reason == ""

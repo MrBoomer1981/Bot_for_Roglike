@@ -30,13 +30,22 @@
 
 from __future__ import annotations
 
+import json
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Final, Literal
 
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
-from balatro_bot.autopilot import decide_action, describe_action, dispatch_action
+from balatro_bot.autopilot import (
+    Action,
+    _next_blind_requirement,
+    decide_action,
+    describe_action,
+    dispatch_action,
+)
 from balatro_bot.core.state import GameState
 
 __all__ = [
@@ -48,7 +57,9 @@ __all__ = [
     "play_run",
     "render_batch_summary",
     "render_run_report",
+    "report_to_json",
     "run_batch",
+    "write_run_log",
 ]
 
 #: Ставки в кумулятивном порядке (`game.lua`'s `stake_level` 1..8; тот же
@@ -117,7 +128,14 @@ _TRANSIENT_POLL_INTERVAL: Final[float] = 0.25
 
 @dataclass(frozen=True, slots=True)
 class DecisionEntry:
-    """Один шаг лога решений — что автопилот решил и в каком положении."""
+    """Один шаг лога решений — что автопилот решил и в каком положении.
+
+    Улучшение E1a расширило запись до разбираемой. Раньше здесь были
+    только шаг, фаза, анте, раунд, деньги и действие — по такому логу
+    нельзя сказать, **почему** бот сделал то, что сделал, и все разборы
+    ранов 8–10 приходилось делать, глядя в живой терминал. Ради батча E1,
+    где за ранами никто не смотрит, добавлены поля, которые на момент
+    решения уже посчитаны и достаются даром."""
 
     step: int
     phase: str
@@ -129,6 +147,26 @@ class DecisionEntry:
     rejected: bool = False
     """Мод отказал в этом действии (`ModBridgeError`) — оно записано, но не
     исполнено."""
+
+    reason: str = ""
+    """`Action.reason` — числа, по которым решение принято (порог, прирост,
+    вклад). Пусто, если действие без числового обоснования или записи об
+    действии нет вовсе."""
+
+    chips_scored: int = 0
+    """Сколько очков уже набрано в этом раунде."""
+
+    requirement: int | None = None
+    """Требование ближайшего блайнда (`autopilot._next_blind_requirement`) —
+    без него `chips_scored` не с чем сравнить, а именно отставание от
+    требования и объясняет проигранные раны."""
+
+    hands_left: int = 0
+    discards_left: int = 0
+
+    jokers: tuple[str, ...] = ()
+    """Джокеры в слотах по порядку — порядок влияет на счёт, поэтому
+    именно кортеж, а не множество."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -202,7 +240,7 @@ def _terminal_outcome(state: GameState) -> Outcome | None:
     return None
 
 
-def play_run(
+def _play_run(
     bridge: ModBridge,
     *,
     deck: str,
@@ -328,7 +366,13 @@ def play_run(
         try:
             new_state = dispatch_action(bridge, action)
         except ModBridgeError as error:
-            entry = _entry(step, state, f"{describe_action(action)} — мод отказал: {error}", True)
+            entry = _entry(
+                step,
+                state,
+                f"{describe_action(action)} — мод отказал: {error}",
+                True,
+                action,
+            )
             decisions.append(entry)
             if on_step is not None:
                 on_step(state, entry)
@@ -346,7 +390,7 @@ def play_run(
                 )
             continue
 
-        entry = _entry(step, state, describe_action(action))
+        entry = _entry(step, state, describe_action(action), decided=action)
         decisions.append(entry)
         if on_step is not None:
             on_step(state, entry)
@@ -377,7 +421,16 @@ def play_run(
     )
 
 
-def _entry(step: int, state: GameState, action: str, rejected: bool = False) -> DecisionEntry:
+def _entry(
+    step: int,
+    state: GameState,
+    action: str,
+    rejected: bool = False,
+    decided: Action | None = None,
+) -> DecisionEntry:
+    """Собрать запись журнала. `decided` — само решение, если оно было:
+    из него берётся `reason`, остальное читается из состояния (улучшение
+    E1a). Ничего не пересчитывается — все числа уже есть."""
     return DecisionEntry(
         step=step,
         phase=state.phase,
@@ -386,6 +439,12 @@ def _entry(step: int, state: GameState, action: str, rejected: bool = False) -> 
         money=state.money,
         action=action,
         rejected=rejected,
+        reason=decided.reason if decided is not None else "",
+        chips_scored=state.chips_scored,
+        requirement=_next_blind_requirement(state),
+        hands_left=state.hands_left,
+        discards_left=state.discards_left,
+        jokers=tuple(joker.label or joker.key for joker in state.jokers),
     )
 
 
@@ -414,6 +473,101 @@ def _finish(
     )
 
 
+def play_run(
+    bridge: ModBridge,
+    *,
+    deck: str,
+    stake: str,
+    seed: str | None = None,
+    include_discards: bool = True,
+    max_steps: int = _DEFAULT_MAX_STEPS,
+    stall_limit: int = _DEFAULT_STALL_LIMIT,
+    adopt: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
+    key_reader: Callable[[], str | None] = lambda: None,
+    on_step: Callable[[GameState, DecisionEntry], None] | None = None,
+    log_dir: Path | None = None,
+) -> RunReport:
+    """Провести ран (`_play_run`) и, если задан `log_dir`, записать журнал.
+
+    Обёртка отдельно от самого прогона потому, что выходов у него больше
+    десятка (победа, проигрыш, затык, отказ моста, перехват управления), и
+    журнал должен писаться на **любом** из них — особенно на аварийных,
+    ради которых он и заводился. Дописывать запись к каждому `return`
+    значило бы однажды забыть про один из них."""
+    report = _play_run(
+        bridge,
+        deck=deck,
+        stake=stake,
+        seed=seed,
+        include_discards=include_discards,
+        max_steps=max_steps,
+        stall_limit=stall_limit,
+        adopt=adopt,
+        sleep=sleep,
+        key_reader=key_reader,
+        on_step=on_step,
+    )
+    if log_dir is not None:
+        write_run_log(report, log_dir)
+    return report
+
+
+def report_to_json(report: RunReport) -> dict[str, object]:
+    """Отчёт о ране в простые типы для JSON (улучшение E1a).
+
+    Словари собираются руками, а не `dataclasses.asdict`: файл журнала
+    читают через месяц после прогона, и набор полей должен меняться
+    осознанно, а не следовать молча за перестановкой полей в датаклассе.
+    Ничего, кроме простых типов, внутри нет — json это и требует."""
+    return {
+        "deck": report.deck,
+        "stake": report.stake,
+        "stake_observed": False,
+        "seed": report.seed,
+        "outcome": report.outcome,
+        "ante": report.ante,
+        "round": report.round_number,
+        "steps": report.steps,
+        "note": report.note,
+        "adopted": report.adopted,
+        "decisions": [
+            {
+                "step": entry.step,
+                "phase": entry.phase,
+                "ante": entry.ante,
+                "round": entry.round_number,
+                "money": entry.money,
+                "action": entry.action,
+                "reason": entry.reason,
+                "rejected": entry.rejected,
+                "chips_scored": entry.chips_scored,
+                "requirement": entry.requirement,
+                "hands_left": entry.hands_left,
+                "discards_left": entry.discards_left,
+                "jokers": list(entry.jokers),
+            }
+            for entry in report.decisions
+        ],
+    }
+
+
+def write_run_log(report: RunReport, log_dir: Path) -> Path:
+    """Записать журнал рана в `log_dir` и вернуть путь.
+
+    Формат имени и способ записи — те же, что у `balatro-bot record`
+    (`cli.py`): метка времени UTC впереди, `ensure_ascii=False`, отступ 2.
+    Один файл на ран: пакет из полусотни ранов должен разбираться
+    по одному, а не одним гигантским документом."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(UTC).strftime("%Y%m%d-%H%M%S-%f")
+    target = log_dir / f"{stamp}-{report.deck.lower()}-{report.outcome}.json"
+    target.write_text(
+        json.dumps(report_to_json(report), ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return target
+
+
 def run_batch(
     bridge: ModBridge,
     *,
@@ -427,6 +581,7 @@ def run_batch(
     adopt_first: bool = False,
     key_reader: Callable[[], str | None] = lambda: None,
     on_run: Callable[[RunReport], None] | None = None,
+    log_dir: Path | None = None,
 ) -> tuple[StakeSummary, ...]:
     """Прогнать `runs_per_stake` ранов на каждой ставке из `stakes` и собрать
     сводку по каждой. `seed` фиксированным делает N одинаковых ранов (полезно
@@ -456,6 +611,7 @@ def run_batch(
                     adopt=adopt_next,
                     sleep=sleep,
                     key_reader=key_reader,
+                    log_dir=log_dir,
                 )
             except KeyboardInterrupt:
                 summaries.append(StakeSummary(stake, tuple(reports)))
@@ -505,6 +661,10 @@ def render_run_report(report: RunReport, *, verbose: bool = False) -> None:
             f"  [{entry.step:>3}] анте {entry.ante} р{entry.round_number} "
             f"${entry.money:<4} {entry.action}{метка}"
         )
+        # Обоснование — только в подробном режиме: в короткой сводке оно
+        # утопило бы сами шаги, а нужно оно ровно тогда, когда ран разбирают.
+        if verbose and entry.reason:
+            print(f"        └ {entry.reason}")
 
 
 def render_batch_summary(summaries: Sequence[StakeSummary]) -> None:
