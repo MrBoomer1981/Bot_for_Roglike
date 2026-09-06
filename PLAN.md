@@ -1837,35 +1837,40 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   джокеров» is literally true and practically false — there *is* something to buy, the bot just
   only looks at jokers. Whatever fixes the branch should fix the sentence.
 
-- **A22. The reroll promises four times what it delivers — open, and blocked on one more journal
-  field.** Measured over the 13-run deck rotation:
+- **A22. The bot rerolls when it has nowhere to put the result — open, cause now identified.**
+  First measured over the 13-run rotation: **86 rerolls, $460 spent, 7 (8 %) led to a purchase, 42
+  (49 %) were followed by leaving that same shop empty-handed**, with a mean claimed
+  `expected_best_uplift` of 2 997 against a mean best shelf offer of 771.
 
-  | | |
-  |---|---|
-  | rerolls | 86 |
-  | spent on them | **$460** |
-  | led to a purchase | **7 (8 %)** |
-  | left the same shop empty-handed right after | **42 (49 %)** |
-  | mean `expected_best_uplift` claimed | **2 997** |
-  | mean best offer actually on the shelf | 771 |
+  **My first reading of those numbers was wrong** and is recorded here because the correction is
+  the useful part. I suspected the estimate: `RerollOutlook.expected_best_uplift` is stationary,
+  drawn from a fixed pool of 24 random jokers, so "the roll over-promises" was the natural
+  suspicion. E1e added the shelf to the journal, and the shelf says otherwise.
 
-  The bot pays for a roll expecting ~3 000 and then, half the time, walks out of that same shop
-  with nothing. Note this is **not** the A8 failure returning: rolls per visit are still capped and
-  the cap holds — these are single rolls that individually fail to pay off. A8 fixed the *streaks*;
-  what shows now is that the *estimate itself* is optimistic.
+  **The roll does its job.** Comparing the shelf before and after each roll: the best offer
+  improved in 5 of 9 early pairs, mean best going 88 → 263. And of the 16 cases where the bot left
+  a shop holding an offer worth more than 200, **all 16 read «слоты полны» and not one read
+  «дорого»**:
 
-  The likely mechanism is the one A8 already documented but did not change:
-  `RerollOutlook.expected_best_uplift` is **stationary** — computed from a fixed pool of 24 random
-  implemented jokers, blind to what the shelf will actually show and to whether the result will be
-  affordable or fit a slot. A8 added the `×1.5` comparison against the current shelf and the
-  per-visit cap around that number without making the number itself honest.
+  ```
+  ante 5  $13  Splash     uplift 4089  price $3  NO SLOT
+  ante 6  $25  Arrowhead  uplift 4740  price $7  NO SLOT
+  ante 7  $29  Odd Todd   uplift 4571  price $4  NO SLOT
+  ```
 
-  **What is not proven, and why it cannot be yet.** Three explanations fit these figures equally:
-  the roll genuinely finds a strong joker but money or slots block the buy; the buy bar rejects
-  what the roll found; or the estimate is simply too high. Separating them needs the shelf *before
-  and after* each roll, and the journal does not record shop contents. That is the same
-  measurement gap E1b and E1d each closed for a different decision, and it is the prerequisite here
-  — recording the shelf, then re-running, before any constant moves.
+  So the roll finds exactly what it was asked for — thousands of uplift against a bar in the
+  hundreds, at trivial prices, with money in hand — and the find is unusable because every joker
+  slot is taken.
+
+  **The defect is that `_decide_reroll_action` never asks whether there is anywhere to put a
+  find.** It is the last branch, reached only after replace and dead-weight selling have both
+  declined, which is precisely when the board is full and staying full. The bot pays $5 to search a
+  shelf it has already established it cannot buy from.
+
+  **Fifth instance of the class this session** — after B3, D2, A21 and the A21/A22 contradiction:
+  a rule that is correct in isolation ("the roll's expectation beats the current shelf") and
+  meaningless in context ("...and the result has nowhere to go"). Worth fixing as a class rather
+  than one branch at a time.
 
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part
