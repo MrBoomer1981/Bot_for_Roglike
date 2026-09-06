@@ -1825,6 +1825,36 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   shop-screen valuation has no hand to evaluate against — the same problem `solver/shop.py` solves
   by sampling representative hands, so the shape exists.
 
+- **A22. The reroll promises four times what it delivers — open, and blocked on one more journal
+  field.** Measured over the 13-run deck rotation:
+
+  | | |
+  |---|---|
+  | rerolls | 86 |
+  | spent on them | **$460** |
+  | led to a purchase | **7 (8 %)** |
+  | left the same shop empty-handed right after | **42 (49 %)** |
+  | mean `expected_best_uplift` claimed | **2 997** |
+  | mean best offer actually on the shelf | 771 |
+
+  The bot pays for a roll expecting ~3 000 and then, half the time, walks out of that same shop
+  with nothing. Note this is **not** the A8 failure returning: rolls per visit are still capped and
+  the cap holds — these are single rolls that individually fail to pay off. A8 fixed the *streaks*;
+  what shows now is that the *estimate itself* is optimistic.
+
+  The likely mechanism is the one A8 already documented but did not change:
+  `RerollOutlook.expected_best_uplift` is **stationary** — computed from a fixed pool of 24 random
+  implemented jokers, blind to what the shelf will actually show and to whether the result will be
+  affordable or fit a slot. A8 added the `×1.5` comparison against the current shelf and the
+  per-visit cap around that number without making the number itself honest.
+
+  **What is not proven, and why it cannot be yet.** Three explanations fit these figures equally:
+  the roll genuinely finds a strong joker but money or slots block the buy; the buy bar rejects
+  what the roll found; or the estimate is simply too high. Separating them needs the shelf *before
+  and after* each roll, and the journal does not record shop contents. That is the same
+  measurement gap E1b and E1d each closed for a different decision, and it is the prerequisite here
+  — recording the shelf, then re-running, before any constant moves.
+
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part
   is **correct**: measured over the 25 most frequent boards from the journals × 4 sampled hands
