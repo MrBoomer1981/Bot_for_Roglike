@@ -45,6 +45,7 @@ from balatro_bot.autopilot import (
     Action,
     BoardEntry,
     HandOutlook,
+    ShelfEntry,
     _next_blind_requirement,
     decide_action,
     describe_action,
@@ -201,6 +202,11 @@ class DecisionEntry:
     розыгрыш и лучшая оценка сброса. Без этих двух чисел нельзя сказать,
     чего стоил отданный ради сброса розыгрыш, — попытка достать это по
     журналам батча нашла 2 случая из ~81. `None` вне фазы руки."""
+
+    shelf: tuple[ShelfEntry, ...] = ()
+    """Витрина на момент решения (улучшение E1e). Нужна, чтобы понять,
+    почему реролл не окупается: без состава полки до и после ролла три
+    объяснения из A22 неразличимы."""
 
     board: tuple[BoardEntry, ...] = ()
     """Те же джокеры, но с измеренным вкладом каждого (улучшение E1b).
@@ -657,6 +663,7 @@ def _entry(
         rejected=rejected,
         reason=decided.reason if decided is not None else "",
         board=decided.board if decided is not None else (),
+        shelf=decided.shelf if decided is not None else (),
         outlook=decided.outlook if decided is not None else None,
         chips_scored=state.chips_scored,
         requirement=_next_blind_requirement(state),
@@ -785,6 +792,17 @@ def report_to_json(report: RunReport) -> dict[str, object]:
                     if entry.outlook is not None
                     else None
                 ),
+                "shelf": [
+                    {
+                        "label": п.label,
+                        "kind": п.kind,
+                        "price": п.price,
+                        "uplift": None if п.uplift is None else round(п.uplift, 1),
+                        "affordable": п.affordable,
+                        "has_slot": п.has_slot,
+                    }
+                    for п in entry.shelf
+                ],
                 "board": [
                     {
                         "label": место.label,

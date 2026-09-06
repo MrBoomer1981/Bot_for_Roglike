@@ -428,6 +428,27 @@ class HandOutlook:
 
 
 @dataclass(frozen=True, slots=True)
+class ShelfEntry:
+    """Предмет на витрине на момент решения — для журнала (улучшение E1e).
+
+    Без состава витрины нельзя ответить, почему реролл не окупается: в
+    ротации 86 роллов за $460 привели к покупке семь раз, и три объяснения
+    подходят одинаково (ролл нашёл сильного, но не хватило денег или
+    слотов; порог покупки отверг найденное; оценка ролла завышена). Их
+    разделяет только сравнение витрины до и после ролла — см. A22.
+
+    `uplift` есть лишь у джокеров: остальным типам движок цену в очках не
+    считает, и ноль вместо `None` был бы выдумкой."""
+
+    label: str
+    kind: str
+    price: int
+    uplift: float | None
+    affordable: bool
+    has_slot: bool
+
+
+@dataclass(frozen=True, slots=True)
 class BoardEntry:
     """Джокер в слоте с измеренным вкладом — для журнала (улучшение E1b).
 
@@ -495,6 +516,9 @@ class Action:
     """Между чем выбирали на этой руке (улучшение E1d). Заполняется только
     в фазе `SELECTING_HAND`: в других фазах розыгрышей и сбросов нет, и
     сравнивать нечего."""
+
+    shelf: tuple[ShelfEntry, ...] = ()
+    """Витрина на момент решения (улучшение E1e). Только в фазе магазина."""
 
     board: tuple[BoardEntry, ...] = ()
     """Джокеры в слотах с их вкладами на момент решения (улучшение E1b).
@@ -963,10 +987,26 @@ def _decide_shop_action(state: GameState) -> Action:
     той же причине, что `play_run` вокруг `_play_run` в `runner.py`."""
     advice = evaluate_shop(state)
     action = _shop_action(state, advice)
-    if advice is None or not advice.held:
+    if advice is None:
         return action
+    # Витрина пишется всегда, даже когда джокеров в слотах нет: пустая доска
+    # с бедной витриной — это ровно случаи A21, и без состава полки их не
+    # разобрать.
+    оценённые = {offer.item.key: offer for offer in advice.jokers}
+    полка = tuple(
+        ShelfEntry(
+            label=item.label or item.key,
+            kind=item.kind,
+            price=item.price,
+            uplift=(оценённые[item.key].expected_uplift if item.key in оценённые else None),
+            affordable=state.money >= item.price,
+            has_slot=(оценённые[item.key].has_slot if item.key in оценённые else True),
+        )
+        for item in state.shop
+    )
     return replace(
         action,
+        shelf=полка,
         board=tuple(
             BoardEntry(
                 label=entry.label,

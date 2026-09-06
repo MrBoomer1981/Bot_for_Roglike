@@ -375,12 +375,13 @@ class TestDecideActionПереставляетДжокеров:
 def _без_повода(action: Action | None) -> Action | None:
     """Действие без поля `reason` — для сравнения на равенство.
 
-    `Action.reason` (E1a) и `Action.board` (E1b) — диагностика: числа, по
+    `Action.reason` (E1a), `Action.board` (E1b) и `Action.shelf` (E1e) —
+    диагностика: числа, по
     которым решение принято, и снимок доски. Оба меняются при каждой правке
     порогов и при каждом ране. Тесты здесь про **выбор**, а не про
     диагностику, поэтому сравнивают действие без них; сами поля проверяются
     отдельно в `TestОбоснованиеРешения` и `TestСнимкаДоски`."""
-    return None if action is None else replace(action, reason="", board=())
+    return None if action is None else replace(action, reason="", board=(), shelf=())
 
 
 def _blind(
@@ -1738,3 +1739,56 @@ class TestСнимкаВыбораНаРуке:
 
     def test_вне_руки_снимка_нет(self) -> None:
         assert decide_action(GameState(phase="ROUND_EVAL")).outlook is None  # type: ignore[union-attr]
+
+
+class TestСнимкаВитрины:
+    """Улучшение E1e. Без состава витрины нельзя разобрать A22: в ротации
+    86 рероллов за $460 привели к покупке семь раз, и три объяснения
+    подходят одинаково — ролл нашёл сильного джокера, но не хватило денег
+    или слотов; порог отверг найденное; оценка ролла завышена. Разделяет их
+    только полка до и после ролла."""
+
+    def _shop(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 8,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "shop": (
+                ShopItem("j_joker", "Joker", "JOKER", 4),
+                ShopItem("c_magician", "The Magician", "TAROT", 3),
+            ),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_витрина_записана_целиком(self) -> None:
+        action = decide_action(self._shop())
+        assert action is not None
+        assert [п.label for п in action.shelf] == ["Joker", "The Magician"]
+
+    def test_у_джокера_есть_оценка_у_тарота_нет(self) -> None:
+        # Ноль вместо `None` был бы выдумкой: движок цену Тарота на этом
+        # экране не считает вовсе.
+        action = decide_action(self._shop())
+        assert action is not None
+        джокер, тарот = action.shelf
+        assert джокер.uplift is not None
+        assert тарот.uplift is None
+        assert тарот.kind == "TAROT"
+
+    def test_видно_нехватку_денег(self) -> None:
+        action = decide_action(self._shop(money=2))
+        assert action is not None
+        assert all(not п.affordable for п in action.shelf)
+
+    def test_витрина_пишется_и_при_пустой_доске(self) -> None:
+        # Ровно случай A21: доски нет, денег мало — и именно тут нужен состав
+        # полки, чтобы понять, было ли что покупать.
+        action = decide_action(self._shop(jokers=()))
+        assert action is not None
+        assert action.shelf
+
+    def test_вне_магазина_витрины_нет(self) -> None:
+        assert decide_action(GameState(phase="ROUND_EVAL")).shelf == ()  # type: ignore[union-attr]
