@@ -1400,6 +1400,12 @@ The planned order (letter labels are working ones, not from the general phase nu
   counter. Valuing the card once it is known reduces to valuing that card, which slices 1 and 2
   already do for the eight enhance-Tarots, the four suit ones, `Strength`, `Death` and every
   Planet.
+
+  **And it is not a rare miss on one deck.** The `MAGIC` deck *starts the run holding two*
+  `The Fool`. A rotation run on it (2026-09-06, lost at ante 6, 134 steps) used **zero**
+  consumables of any kind: both cards sat dead for the whole run. So on that deck the gap is
+  not an occasional skipped card but a starting condition — two of the run's opening resources
+  are unusable by construction, which also blocks the consumable slot they occupy.
 - **A11. An audit of the whole "wrong state to evaluate from" defect class — done.** A8, A9,
   A10 and the `j_card_sharp` gap were, in retrospect, four instances of *one* defect: not a
   joker implemented wrongly, but the shop counterfactual scoring jokers from a state the round
