@@ -1795,6 +1795,36 @@ The planned order (letter labels are working ones, not from the general phase nu
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
 
+- **C2. The Tarot valuation is nearly unreachable — the bot cannot acquire the cards.** Found
+  while checking the user's repeated report that `The Fool` is never used. The report was right,
+  and the cause is larger than one card: across the 12-run deck rotation the bot **took 27
+  consumables and used 0**.
+
+  Tracing every way a consumable could reach the inventory:
+
+  - **Planets from Celestial packs** are applied by the game on pick and never enter the
+    inventory — correct behaviour, already documented, but it means pack picks are not a source;
+  - **Arcana packs**, the game's main Tarot source, are skipped — `solver/pack.py` returns nothing
+    for them, so `_decide_pack_action` falls through to `skip_pack`;
+  - **Tarots on the shop shelf are never bought**: `evaluate_shop` filters `state.shop` to
+    `item.kind == "JOKER"`, and `_decide_shop_action` has branches for jokers, vouchers and packs
+    and **no branch for a consumable at all**;
+  - what remains is a deck's *starting* inventory — `MAGIC`'s two `The Fool`, which is exactly the
+    case the user reported.
+
+  So C1's two slices — the eight enhance-Tarots, the four suit conversions, `Strength`, `Death`,
+  `The Hanged Man`, the reachability filter, three honesty tiers — evaluate cards the bot has
+  almost no way to hold. The valuation is not wrong; it is disconnected. That is why the same
+  report ("the bot never uses The Fool") came back twice: the second time it was not about `The
+  Fool`.
+
+  **Ranked above `The Fool` itself**, which is one card inside a channel that is not plugged in.
+  The cheapest connection is a shop branch: the shelf's Tarot/Planet items already arrive in
+  `GameState.shop` with `kind`, `evaluate_tarot_consumables` already prices what a Tarot is worth
+  on the current hand, and `_worth_buying` already exists as the bar. The harder half is that a
+  shop-screen valuation has no hand to evaluate against — the same problem `solver/shop.py` solves
+  by sampling representative hands, so the shape exists.
+
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part
   is **correct**: measured over the 25 most frequent boards from the journals × 4 sampled hands
