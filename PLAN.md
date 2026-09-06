@@ -1825,6 +1825,18 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   shop-screen valuation has no hand to evaluate against — the same problem `solver/shop.py` solves
   by sampling representative hands, so the shape exists.
 
+  **Confirmed by observation once E1e recorded the shelf**, not just inferred from the code.
+  Over the first two decks that ran with shelf logging: 39 shop decisions, **22 consumables
+  sitting on the shelves** (13 Planets, 9 Tarots), a consumable was **affordable in 21 of those
+  decisions**, and in **9** of them the bot left the shop with nothing. One journal line shows
+  it plainly — `$4, jokers 0, «на витрине нет оценённых джокеров»` with a `Saturn` at $3 on the
+  shelf. A Planet raises a hand level permanently, which is the effect this bot rates highest
+  when it picks one out of a Celestial pack; on the shelf it does not see it at all.
+
+  That also makes the exit reason misleading in the A13 sense: «на витрине нет оценённых
+  джокеров» is literally true and practically false — there *is* something to buy, the bot just
+  only looks at jokers. Whatever fixes the branch should fix the sentence.
+
 - **A22. The reroll promises four times what it delivers — open, and blocked on one more journal
   field.** Measured over the 13-run deck rotation:
 
