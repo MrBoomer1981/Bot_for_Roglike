@@ -405,6 +405,29 @@ _DISCARD_EDGE_MARGIN = 1.15
 
 
 @dataclass(frozen=True, slots=True)
+class HandOutlook:
+    """Между чем выбирал автопилот на руке — для журнала (улучшение E1d).
+
+    Журнал записывал счёт **выбранного** действия и, в обосновании,
+    только идущий следом вариант — а он обычно такой же сброс. Поэтому
+    вопрос «чего стоил отданный розыгрыш» по журналу не решался: попытка
+    достать «что можно было сыграть перед серией сбросов» по 16 ранам
+    нашла 2 случая из примерно 81.
+
+    Оба числа на руках у `decide_action` и так: лучший розыгрыш — из
+    `advise(state)`, который считается в любом случае."""
+
+    best_play: float
+    best_discard: float | None
+    """`None` — сбросы не считались вовсе. Так бывает намеренно: на ветке
+    `_on_pace_without_discard` весь `rank_actions` пропускается ради
+    скорости (улучшение F1). Ставить сюда ноль значило бы выдать
+    «сбросов нет» за «сбросы не рассматривались»."""
+
+    discards_left: int
+
+
+@dataclass(frozen=True, slots=True)
 class BoardEntry:
     """Джокер в слоте с измеренным вкладом — для журнала (улучшение E1b).
 
@@ -467,6 +490,11 @@ class Action:
     """Название выбранного предмета для лога автопилота (`buy`/`pack` —
     иначе показать было бы нечего, `item_index` сам по себе не читается
     человеком)."""
+
+    outlook: HandOutlook | None = None
+    """Между чем выбирали на этой руке (улучшение E1d). Заполняется только
+    в фазе `SELECTING_HAND`: в других фазах розыгрышей и сбросов нет, и
+    сравнивать нечего."""
 
     board: tuple[BoardEntry, ...] = ()
     """Джокеры в слотах с их вкладами на момент решения (улучшение E1b).
@@ -1283,94 +1311,127 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         consumable_action = _decide_consumable_action(state)
         if consumable_action is not None:
             return consumable_action
+        return _decide_hand_action(state, include_discards=include_discards)
 
-        # `advise(state)` для исходного порядка джокеров считается один раз и
-        # переиспользуется: перестановкой (`base_advice`), гарантированным
-        # ходом и гардами B1 ниже (улучшение F1 — раньше это было 2–3
-        # отдельных `advise()` на один вызов).
-        plays = advise(state)
+    return None
 
-        rearrange_action = _decide_rearrange_action(state, plays)
-        if rearrange_action is not None:
-            return rearrange_action
 
-        # Гарантированная победа бьёт любую ставку на сброс. `rank_actions`
-        # сравнивает розыгрыши и сбросы по матожиданию, а у сброса оно
-        # оптимистично по построению (`ActionOption.exact = False`) — поэтому
-        # «сбросить к флешу» нередко показывает число больше, чем «сыграть
-        # эту двойную пару», даже когда пара уже закрывает блайнд. Если есть
-        # ход, чей нижний предел (`Candidate.beats`) уже перекрывает
-        # оставшееся требование, играем его — не гадаем.
-        sure = plays.cheapest_sufficient
-        if sure is not None:
-            остаток = (plays.required or 0) - plays.already_scored
-            return Action(
-                kind="play",
-                cards=sure.cards,
-                indices=_indices_of(state.hand, sure.cards),
-                reason=(
-                    f"гарантированный ход: нижний предел {sure.outcome.minimum:.0f} "
-                    f"уже перекрывает остаток {остаток:.0f}"
-                ),
-            )
+def _decide_hand_action(state: GameState, *, include_discards: bool) -> Action | None:
+    """Розыгрыш или сброс плюс снимок выбора для журнала (улучшение E1d).
 
-        # Улучшение B1. `cheapest_sufficient` ловит только «закрыть блайнд
-        # одной этой рукой»; когда джокер с разбросом (Misprint) утягивает
-        # нижний предел под требование, он не находит ничего, и автопилот
-        # уходит в сброс на каждом блайнде. Но если запаса рук хватает добить
-        # блайнд одними розыгрышами (`_on_pace_without_discard`), спекулятивный
-        # сброс не нужен — играем лучшую руку. Заодно экономит дорогой
-        # `advise_discard` внутри `rank_actions` (см. F1).
-        if include_discards and _on_pace_without_discard(state, plays):
-            best_play = plays.best
-            прогноз = _pace_projection(state, plays)
-            остаток = (plays.required or 0) - plays.already_scored
-            return Action(
-                kind="play",
-                cards=best_play.cards,
-                indices=_indices_of(state.hand, best_play.cards),
-                reason=(
-                    f"на темпе без сброса: прогноз {прогноз:.0f} на {state.hands_left} "
-                    f"рук против остатка {остаток:.0f} × {_DISCARD_PACE_MARGIN} = "
-                    f"{остаток * _DISCARD_PACE_MARGIN:.0f}; сбросов не тронуто "
-                    f"{state.discards_left}"
-                ),
-            )
+    Само решение принимает `_hand_action`; здесь только прикрепляется
+    `Action.outlook`. Обёртка, а не заполнение у каждого `return`, по той
+    же причине, что у `_decide_shop_action` (E1b) и `play_run` (E1a):
+    выходов у ветки пять, и однажды один из них забудут."""
+    исход = _hand_action(state, include_discards=include_discards)
+    if исход is None:
+        return None
+    action, лучший_сброс = исход
+    return replace(
+        action,
+        outlook=HandOutlook(
+            best_play=advise(state).best.score,
+            best_discard=лучший_сброс,
+            discards_left=state.discards_left,
+        ),
+    )
 
-        # `top=2`, а не 1: ранжирование считается целиком и режется в конце,
-        # так что второй вариант достаётся даром — а в журнале он
-        # показывает, был ли выбор близким (улучшение E1a, доделка).
-        options = rank_actions(state, top=2, include_discards=include_discards)
-        if not options:
-            return None
-        best = options[0]
 
-        # Улучшение B1. Даже без гарантии и без запаса рук — не менять
-        # розыгрыш на сброс, чей перевес по матожиданию меньше
-        # задокументированной погрешности самой оценки сброса
-        # (`_discard_edge_is_noise`): такой перевес — шум, а сброс ещё и
-        # тратит ресурс и добавляет разброс к результату.
-        if best.kind == "discard" and _discard_edge_is_noise(best, plays.best):
-            best_play = plays.best
-            return Action(
-                kind="play",
-                cards=best_play.cards,
-                indices=_indices_of(state.hand, best_play.cards),
-                reason=(
-                    f"перевес сброса — шум: {best.score:.0f} против "
-                    f"{plays.best.score:.0f} × {_DISCARD_EDGE_MARGIN} = "
-                    f"{plays.best.score * _DISCARD_EDGE_MARGIN:.0f}"
-                ),
-            )
+def _hand_action(state: GameState, *, include_discards: bool) -> tuple[Action, float | None] | None:
+    """Решение на руке и лучшая оценка сброса, если сбросы вообще
+    считались. `None` во втором месте — `rank_actions` не звался: так
+    делает ветка `_on_pace_without_discard` ради скорости (F1), и выдавать
+    это за «сбросов нет» нельзя."""
 
-        второй = options[1] if len(options) > 1 else None
-        хвост = f", следом {второй.kind} {второй.score:.0f}" if второй is not None else ""
+    # `advise(state)` для исходного порядка джокеров считается один раз и
+    # переиспользуется: перестановкой (`base_advice`), гарантированным
+    # ходом и гардами B1 ниже (улучшение F1 — раньше это было 2–3
+    # отдельных `advise()` на один вызов).
+    plays = advise(state)
+
+    rearrange_action = _decide_rearrange_action(state, plays)
+    if rearrange_action is not None:
+        return rearrange_action, None
+
+    # Гарантированная победа бьёт любую ставку на сброс. `rank_actions`
+    # сравнивает розыгрыши и сбросы по матожиданию, а у сброса оно
+    # оптимистично по построению (`ActionOption.exact = False`) — поэтому
+    # «сбросить к флешу» нередко показывает число больше, чем «сыграть
+    # эту двойную пару», даже когда пара уже закрывает блайнд. Если есть
+    # ход, чей нижний предел (`Candidate.beats`) уже перекрывает
+    # оставшееся требование, играем его — не гадаем.
+    sure = plays.cheapest_sufficient
+    if sure is not None:
+        остаток = (plays.required or 0) - plays.already_scored
         return Action(
-            kind=best.kind,
-            cards=best.cards,
-            indices=_indices_of(state.hand, best.cards),
-            reason=f"лучший в общем списке: {best.kind} {best.score:.0f}{хвост}",
-        )
+            kind="play",
+            cards=sure.cards,
+            indices=_indices_of(state.hand, sure.cards),
+            reason=(
+                f"гарантированный ход: нижний предел {sure.outcome.minimum:.0f} "
+                f"уже перекрывает остаток {остаток:.0f}"
+            ),
+        ), None
+
+    # Улучшение B1. `cheapest_sufficient` ловит только «закрыть блайнд
+    # одной этой рукой»; когда джокер с разбросом (Misprint) утягивает
+    # нижний предел под требование, он не находит ничего, и автопилот
+    # уходит в сброс на каждом блайнде. Но если запаса рук хватает добить
+    # блайнд одними розыгрышами (`_on_pace_without_discard`), спекулятивный
+    # сброс не нужен — играем лучшую руку. Заодно экономит дорогой
+    # `advise_discard` внутри `rank_actions` (см. F1).
+    if include_discards and _on_pace_without_discard(state, plays):
+        best_play = plays.best
+        прогноз = _pace_projection(state, plays)
+        остаток = (plays.required or 0) - plays.already_scored
+        return Action(
+            kind="play",
+            cards=best_play.cards,
+            indices=_indices_of(state.hand, best_play.cards),
+            reason=(
+                f"на темпе без сброса: прогноз {прогноз:.0f} на {state.hands_left} "
+                f"рук против остатка {остаток:.0f} × {_DISCARD_PACE_MARGIN} = "
+                f"{остаток * _DISCARD_PACE_MARGIN:.0f}; сбросов не тронуто "
+                f"{state.discards_left}"
+            ),
+        ), None
+
+    # `top=2`, а не 1: ранжирование считается целиком и режется в конце,
+    # так что второй вариант достаётся даром — а в журнале он
+    # показывает, был ли выбор близким (улучшение E1a, доделка).
+    options = rank_actions(state, top=2, include_discards=include_discards)
+    if not options:
+        return None
+    best = options[0]
+    # Лучшая оценка сброса из уже посчитанного списка — её и записываем.
+    лучший_сброс = next((o.score for o in options if o.kind == "discard"), None)
+
+    # Улучшение B1. Даже без гарантии и без запаса рук — не менять
+    # розыгрыш на сброс, чей перевес по матожиданию меньше
+    # задокументированной погрешности самой оценки сброса
+    # (`_discard_edge_is_noise`): такой перевес — шум, а сброс ещё и
+    # тратит ресурс и добавляет разброс к результату.
+    if best.kind == "discard" and _discard_edge_is_noise(best, plays.best):
+        best_play = plays.best
+        return Action(
+            kind="play",
+            cards=best_play.cards,
+            indices=_indices_of(state.hand, best_play.cards),
+            reason=(
+                f"перевес сброса — шум: {best.score:.0f} против "
+                f"{plays.best.score:.0f} × {_DISCARD_EDGE_MARGIN} = "
+                f"{plays.best.score * _DISCARD_EDGE_MARGIN:.0f}"
+            ),
+        ), лучший_сброс
+
+    второй = options[1] if len(options) > 1 else None
+    хвост = f", следом {второй.kind} {второй.score:.0f}" if второй is not None else ""
+    return Action(
+        kind=best.kind,
+        cards=best.cards,
+        indices=_indices_of(state.hand, best.cards),
+        reason=f"лучший в общем списке: {best.kind} {best.score:.0f}{хвост}",
+    ), лучший_сброс
 
     return None
 

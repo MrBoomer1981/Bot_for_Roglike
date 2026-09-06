@@ -43,6 +43,7 @@ from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import (
     Action,
     BoardEntry,
+    HandOutlook,
     _next_blind_requirement,
     decide_action,
     describe_action,
@@ -169,7 +170,18 @@ class DecisionEntry:
     действии нет вовсе."""
 
     chips_scored: int = 0
-    """Сколько очков уже набрано в этом раунде."""
+    """Сколько очков набрано в этом раунде **до** этого действия.
+
+    Именно «до»: запись собирается перед исполнением, поэтому очки
+    последнего розыгрыша раунда в неё не попадают никогда. Разбор по
+    раундам, не знающий об этом, недосчитывает каждому раунду последнюю
+    руку — на чём один такой разбор уже поехал. Итог раунда смотреть по
+    `blind_beaten` записи, которая раунд закрывает."""
+
+    blind_beaten: bool | None = None
+    """Взят ли блайнд — только на записи, закрывающей раунд (`ROUND_EVAL`
+    означает победу над блайндом, иначе ран на этом и кончился). `None` на
+    всех прочих шагах: там это ещё не известно."""
 
     requirement: int | None = None
     """Требование ближайшего блайнда (`autopilot._next_blind_requirement`) —
@@ -182,6 +194,12 @@ class DecisionEntry:
     jokers: tuple[str, ...] = ()
     """Джокеры в слотах по порядку — порядок влияет на счёт, поэтому
     именно кортеж, а не множество."""
+
+    outlook: HandOutlook | None = None
+    """Между чем выбирал автопилот на этой руке (улучшение E1d): лучший
+    розыгрыш и лучшая оценка сброса. Без этих двух чисел нельзя сказать,
+    чего стоил отданный ради сброса розыгрыш, — попытка достать это по
+    журналам батча нашла 2 случая из ~81. `None` вне фазы руки."""
 
     board: tuple[BoardEntry, ...] = ()
     """Те же джокеры, но с измеренным вкладом каждого (улучшение E1b).
@@ -624,11 +642,13 @@ def _entry(
         rejected=rejected,
         reason=decided.reason if decided is not None else "",
         board=decided.board if decided is not None else (),
+        outlook=decided.outlook if decided is not None else None,
         chips_scored=state.chips_scored,
         requirement=_next_blind_requirement(state),
         hands_left=state.hands_left,
         discards_left=state.discards_left,
         jokers=tuple(joker.label or joker.key for joker in state.jokers),
+        blind_beaten=True if state.phase == "ROUND_EVAL" else None,
     )
 
 
@@ -736,6 +756,20 @@ def report_to_json(report: RunReport) -> dict[str, object]:
                 "hands_left": entry.hands_left,
                 "discards_left": entry.discards_left,
                 "jokers": list(entry.jokers),
+                "blind_beaten": entry.blind_beaten,
+                "outlook": (
+                    {
+                        "best_play": round(entry.outlook.best_play, 1),
+                        "best_discard": (
+                            None
+                            if entry.outlook.best_discard is None
+                            else round(entry.outlook.best_discard, 1)
+                        ),
+                        "discards_left": entry.outlook.discards_left,
+                    }
+                    if entry.outlook is not None
+                    else None
+                ),
                 "board": [
                     {
                         "label": место.label,
@@ -876,6 +910,13 @@ def render_run_report(report: RunReport, *, verbose: bool = False) -> None:
         # утопило бы сами шаги, а нужно оно ровно тогда, когда ран разбирают.
         if verbose and entry.reason:
             print(f"        └ {entry.reason}")
+        if verbose and entry.outlook is not None:
+            o = entry.outlook
+            сброс = "—" if o.best_discard is None else f"{o.best_discard:.0f}"
+            print(
+                f"          выбор: розыгрыш {o.best_play:.0f} против сброса {сброс}"
+                f" (сбросов {o.discards_left})"
+            )
         if verbose and entry.board:
             доска = ", ".join(f"{место.label} {место.contribution:.0f}" for место in entry.board)
             print(f"          доска: {доска}")

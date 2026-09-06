@@ -1745,28 +1745,33 @@ The planned order (letter labels are working ones, not from the general phase nu
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
 
-- **B3. The discard policy is biased toward discarding by construction — measured, not fixed.**
-  This is the top item, and it is the first one this project has opened with numbers rather than an
-  anecdote. Over the batch:
+- **B3. Discards: one real finding, one claim of mine that did not survive checking — open,
+  pending measurement.** This entry previously asserted that the bot "discards until discards run
+  out and the promised value is never realised", and that assertion is **wrong**. It came from one
+  vivid case (run 13 burned four discards at 206/205/236/234 and then played 144) which I
+  generalised without checking. Measured across the 16-run batch:
 
-  | discard run | promised vs. actually played |
+  | how discard chains ended | count |
   |---|---|
-  | a single discard | **119 %** |
-  | a run of three or more | **76 %** |
+  | **the bot chose to play** | **72 (89 %)** |
+  | discards ran out | 9 (11 %) |
 
-  The mechanism the numbers point at: `discard_outcome` computes "what I get if I discard **and
-  then play**", but the policy compares that against the current hand and, when it wins, discards —
-  after which the *new* discard estimate again beats the *new* current hand. So the bot discards
-  until discards run out and the promised value is never realised. Each decision is individually
-  correct; the sequence is not. Run 13 shows the extreme: four discards at 206/205/236/234, then a
-  play worth 144, while Aces and Queens were thrown away.
+  Chain lengths: 54 singles, 13 doubles, 10 triples, 4 quads. The policy stops itself in the
+  overwhelming majority of cases and long chains are the tail, not the rule. The mechanism proposed
+  here before — a comparison with no stopping rule, by analogy with A8's reroll churn — does not
+  exist. Recorded rather than deleted, because the same generalisation-from-one-case is what this
+  project keeps paying for.
 
-  And it fails in **both directions at once** — the same batch closed **87 rounds without spending
-  a single discard**. So this is not a threshold to nudge: `_DISCARD_EDGE_MARGIN` and
-  `_DISCARD_PACE_MARGIN` both behaved correctly on their own terms in the runs examined. What is
-  wrong is comparing a one-step expectation against a realised score with no notion of the sequence.
-  Any fix needs to state what it models — remaining discards as a budget, or the value of *stopping*
-  — and be measured against this batch's numbers, which is why they are recorded here.
+  **What survives the check** is narrower and still unexplained: estimate accuracy decays with chain
+  length — a single discard realises **119 %** of its estimate, a chain of three or more realises
+  **76 %** — and the same batch closed **87 rounds of 165 without spending a single discard**.
+
+  **Why it cannot be decided yet.** Judging a discard needs what it gave up: the best play available
+  at that moment. The journal records the chosen action's score and, in `reason`, only the
+  runner-up, which is usually another discard — an extraction of "play available before the chain"
+  over 16 runs matched **2 cases**. `chips_scored` is also written *before* each action, so a
+  round's final play never appears at all, which silently biased a round-level attempt. E1d adds
+  both numbers; until then any threshold change here would be tuning against a number nobody has.
 
 - **E1. The batch itself — half done.** 16 of 30 runs on RED/WHITE completed before the game was
   closed: **1 win, 6 %, mean ante 4.2** (depth: a1×2, a2×4, a3×1, a5×4, a6×2, a7×2, a9×1). The

@@ -1689,3 +1689,52 @@ class TestКалибровкаСкипа:
         action = decide_action(self._state("Negative Tag", small="DEFEATED"))
         assert action is not None
         assert action.kind == "skip"
+
+
+class TestСнимкаВыбораНаРуке:
+    """Улучшение E1d. Журнал писал счёт **выбранного** действия и, в
+    обосновании, только идущий следом вариант — обычно такой же сброс.
+    Поэтому «чего стоил отданный ради сброса розыгрыш» по журналу не
+    вычислялось: попытка достать это по 16 ранам батча нашла 2 случая из
+    примерно 81, и вопрос B3 остался нерешённым не из-за политики, а из-за
+    отсутствия числа."""
+
+    def _рука(self, требование: int, **overrides: object) -> GameState:
+        блайнд = _blind("SMALL", "CURRENT", требование)
+        base: dict[str, object] = {
+            "phase": "SELECTING_HAND",
+            "hands_left": 4,
+            "discards_left": 3,
+            "blind": блайнд,
+            "blinds": {"small": блайнд},
+            "hand_info": _hand_info(),
+        }
+        return replace(build_state("AH KH QH JH 9H 7C 7D 2S"), **{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_решение_на_руке_несёт_оба_числа(self) -> None:
+        action = decide_action(self._рука(100_000))
+        assert action is not None and action.outlook is not None
+        assert action.outlook.best_play > 0
+        assert action.outlook.discards_left == 3
+
+    def test_на_ветке_темпа_сброс_не_число_а_none(self) -> None:
+        # `_on_pace_without_discard` намеренно пропускает весь `rank_actions`
+        # ради скорости (F1). Записать туда ноль значило бы выдать «сбросов
+        # нет» за «сбросы не рассматривались» — разные вещи для разбора.
+        action = decide_action(self._рука(50))
+        assert action is not None and action.outlook is not None
+        assert action.outlook.best_discard is None
+
+    def test_когда_сбросы_считались_число_есть(self) -> None:
+        action = decide_action(self._рука(100_000))
+        assert action is not None and action.outlook is not None
+        assert action.outlook.best_discard is not None
+
+    def test_без_сбросов_в_запасе_оценки_сброса_нет(self) -> None:
+        action = decide_action(self._рука(100_000, discards_left=0))
+        assert action is not None and action.outlook is not None
+        assert action.outlook.best_discard is None
+        assert action.outlook.discards_left == 0
+
+    def test_вне_руки_снимка_нет(self) -> None:
+        assert decide_action(GameState(phase="ROUND_EVAL")).outlook is None  # type: ignore[union-attr]

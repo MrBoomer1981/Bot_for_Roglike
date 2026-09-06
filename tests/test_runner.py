@@ -22,7 +22,7 @@ import pytest
 
 from balatro_bot import runner
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
-from balatro_bot.autopilot import Action, BoardEntry
+from balatro_bot.autopilot import Action, BoardEntry, HandOutlook
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard
 from balatro_bot.runner import DecisionEntry, RunReport, StakeSummary, play_run, run_batch
 
@@ -761,3 +761,56 @@ class TestСидыПакета:
             assert сид is not None
             assert len(сид) == 8, сид
             assert set(сид) <= set("123456789ABCDEFGHIJKLMNPQRSTUVWXYZ"), сид
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestСнимкаВыбораВЖурнале:
+    """E1d: оба числа должны доезжать до файла, иначе они бесполезны так же,
+    как когда их не записывали."""
+
+    def _bridge(self) -> ScriptedBridge:
+        return ScriptedBridge([_state("SELECTING_HAND"), _state("ROUND_EVAL"), _state("GAME_OVER")])
+
+    def test_журнал_везёт_оба_числа(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        обзор = HandOutlook(best_play=1200.0, best_discard=1450.0, discards_left=2)
+
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            return Action(kind="play", outlook=обзор)
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        шаг = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
+        assert шаг["outlook"] == {
+            "best_play": 1200.0,
+            "best_discard": 1450.0,
+            "discards_left": 2,
+        }
+
+    def test_непосчитанный_сброс_остаётся_null(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # `null`, а не 0: «не считали» и «нечего сбрасывать» — разные вещи.
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            return Action(
+                kind="play",
+                outlook=HandOutlook(best_play=900.0, best_discard=None, discards_left=3),
+            )
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        шаг = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
+        assert шаг["outlook"]["best_discard"] is None
+
+    def test_закрывающая_раунд_запись_помечена(self, tmp_path: Path) -> None:
+        # Очки последнего розыгрыша в журнал не попадают (запись собирается
+        # до действия), поэтому итог раунда надо брать отсюда, а не из
+        # `chips_scored` — на чём один разбор уже поехал.
+        play_run(self._bridge(), deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        шаги = json.loads(файл.read_text(encoding="utf-8"))["decisions"]
+        взятые = [ш for ш in шаги if ш["blind_beaten"]]
+        assert взятые, "ни одна запись не помечена как закрывшая раунд"
+        assert all(ш["phase"] == "ROUND_EVAL" for ш in взятые)
+        assert all(ш["blind_beaten"] is None for ш in шаги if ш["phase"] != "ROUND_EVAL")
