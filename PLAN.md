@@ -1867,6 +1867,14 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   declined, which is precisely when the board is full and staying full. The bot pays $5 to search a
   shelf it has already established it cannot buy from.
 
+  **Cost, measured across the rotation:** of 151 rerolls, **113 (75 %) were made with the board
+  already full**, costing **$603** of the $800 spent on rolling. So three quarters of the
+  money spent searching goes to searches whose result cannot be used. Set that against A21,
+  where a run died at ante 1 because $12 of reserve blocked a roll that paid seven times over:
+  the same policy refuses to roll when it would help and rolls freely when it cannot benefit.
+  (The 75 % counts boards of five or more jokers; `BLACK` grants a sixth slot, so its two runs
+  are slightly overcounted — too few to move the figure.)
+
   **Fifth instance of the class this session** — after B3, D2, A21 and the A21/A22 contradiction:
   a rule that is correct in isolation ("the roll's expectation beats the current shelf") and
   meaningless in context ("...and the result has nowhere to go"). Worth fixing as a class rather
