@@ -1919,6 +1919,48 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   is a real trade-off rather than free value — but 239 affordable offers and 0 purchases is an
   absent option, not a trade-off being made.
 
+- **C3. The bot skips blinds to buy pack tags and then does not collect the pack.** Found from a
+  run that ended in `error` during the second rotation, then measured across all 33 journals.
+
+  `solver/skip.py` prices the pack-opening tags (A14's `_SCORE_TAGS`) by the uplift of the pack
+  they grant, and the bot acts on it: **13 skips for a Meteor/Buffoon/Charm tag**, at claimed
+  uplifts of 163–1314 against bars of 90–660, each one forfeiting the blind's money reward. The
+  pack then reached the bot **3 times**; it took a card in 2 of those. Of the remaining 10, **9
+  went on to reach a shop** — several of them 10 to 17 shop decisions later — **and no pack ever
+  opened**; exactly 1 is explained by the run ending before any shop.
+
+  **One of them failed hard**, which is how this was found. Three consecutive decisions:
+
+  ```
+  49  BLIND_SELECT          скипнул блайнд ради тега   (Meteor Tag: 204 vs bar 90)
+  50  BLIND_SELECT          выбрал блайнд — играет  -> [-32002] Method 'select' requires
+                                                       one of these states: BLIND_SELECT
+  51  SMODS_BOOSTER_OPENED  скипнул пак             -> [-32002] No pack is currently open
+  ```
+
+  The bot decided from a `BLIND_SELECT` snapshot while the game had already moved into the
+  booster state, and by the time it observed `SMODS_BOOSTER_OPENED` the pack was gone again. So a
+  granted pack can open **and close between two polls** — which is also the most likely
+  explanation for the 9 silent losses, though the journal cannot prove it.
+
+  **Cause not yet determined**, and it is one of two: the tag never fires at all, or it fires and
+  the pack is missed in the poll gap. The diagnostic that settles it is small — the mod reports
+  the run's owned tags, so recording `state.tags` on every decision (the E1 instrumentation
+  pattern) shows directly whether the tag is still held after the shop. That is the next step
+  here, not a fix: fixing the poll loop before knowing which of the two it is would be guessing.
+
+  **Ranked below C2's shop branch and above D2/B3.** It is the same Planet channel C2 identified
+  as the bottleneck — Meteor Tag grants a Celestial Pack — so it compounds the same shortage,
+  and unlike C2 the bot is *paying* for the benefit here, in forfeited blind rewards, before
+  losing it. But C2's branch is a certain fix on a larger channel (239 affordable shelf offers),
+  while this one still needs a diagnostic first.
+
+  **A correction kept, because the mistake is instructive.** My first measurement looked only 4
+  decisions past each skip and reported "17 pack-tag skips, 0 takes". Pack tags in Balatro fire on
+  the **next shop entry**, not on the skip, so the window was simply too short and the number was
+  meaningless. The corrected figures are the ones above. This is the second time this session that
+  a too-narrow window produced a confident wrong number, the first being the A22 misdiagnosis.
+
 - **A22. The bot rerolls when it has nowhere to put the result — open, cause now identified.**
   First measured over the 13-run rotation: **86 rerolls, $460 spent, 7 (8 %) led to a purchase, 42
   (49 %) were followed by leaving that same shop empty-handed**, with a mean claimed
