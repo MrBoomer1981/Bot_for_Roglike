@@ -1795,6 +1795,31 @@ The planned order (letter labels are working ones, not from the general phase nu
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
 
+- **What actually kills runs — measured, and it reorders everything below.** Across 24 lost runs
+  of the deck rotation:
+
+  | | |
+  |---|---|
+  | median share of the requirement reached | **56 %** |
+  | lost having reached ≥ 80 % | 4 (17 %) |
+  | **lost without reaching half** | **10 (42 %)** |
+  | discards left at the moment of loss (median) | 1 |
+  | money left (median) | $15 |
+
+  The bot does not lose narrowly. In 42 % of losses it fails to reach half the requirement, which
+  is not bad luck on a final hand — it is a board too weak to matter. Narrow losses are the
+  minority.
+
+  **So the items that deserve priority are the ones that affect board strength**, not the ones
+  that shave a hand: **C2** (Planets, which raise a hand level permanently, are never bought),
+  **A22** ($603 of $800 spent rolling into a full board), **A21** (early antes where the bot cannot
+  buy a joker at all). By the same measurement **D2** and the discard-threshold questions of **B3**
+  are tactical detail and can wait — a pendulum costing 0.8 % of steps, or three unspent discards,
+  do not close a 44 % gap.
+
+  One caveat kept: 8 of 24 losses still ended with all discards unspent, which remains a lot. It
+  is simply not the thing that decided those runs.
+
 - **C2. The Tarot valuation is nearly unreachable — the bot cannot acquire the cards.** Found
   while checking the user's repeated report that `The Fool` is never used. The report was right,
   and the cause is larger than one card: across the 12-run deck rotation the bot **took 27
