@@ -1665,6 +1665,141 @@ The planned order (letter labels are working ones, not from the general phase nu
   calibration; if skipping proves too eager, `_MIN_HEURISTIC_TAG_VALUE` and `_HEURISTIC_TAG_FLOOR`
   are the knobs. Tests — `tests/test_skip.py::TestПокрытиеТегов`, `::TestЛенивостьОценкиТегов`.
 
+- **A15. A skipped blind is not a pending one — done.** Run 13 (ERRATIC) lost at **ante 1 in 15
+  steps**, the worst run in the project, and the journal named the cause in one line: `очки
+  344/300` on the round it lost. The bot had scored past its requirement and still lost, because
+  the requirement it was reading was not the one it was playing.
+
+  `_next_blind_requirement` filtered only `DEFEATED`, but a blind skipped for a tag returns as
+  **`SKIPPED`** (mod's `utils/gamestate.lua`, `convert_status_to_enum`). After the first skip the
+  function returned the *skipped* blind's requirement forever, so every threshold in the bot —
+  buy, pack, dead weight, pace, skip — scaled against a number 40 % of the real one. The pace
+  guard in particular saw a comfortable margin and played on without discarding. The same bug sat
+  in `solver/vouchers._rounds_left_in_ante`, inflating the dollar-tier horizon.
+
+  **The failure mode is the lesson, and it is A14's doing.** While skipping never fired — eleven
+  runs — `SKIPPED` could not appear in a state, so filtering on `DEFEATED` alone was correct *by
+  construction*. A14 turned the branch on and the old code kept reading its consequences under an
+  assumption that had quietly expired. The A14 notes state that exact lesson ("check who reads the
+  consequences"); it was then not applied. Both sites now share a named constant and a test walks
+  every status the mod can send, asserting each is deliberately classified — so a new status
+  cannot default into "still to play", which is precisely how this one did. Tests —
+  `tests/test_autopilot.py::TestПропущенныйБлайндНеСчитается`,
+  `tests/test_vouchers.py::TestГоризонтСоСкипом`.
+
+- **A16. The tag bar was wrong by mechanism, not by number — done.** The E1 batch was launched to
+  calibrate thresholds and answered in **two runs, both dead at ante 2**: the bot skipped every
+  skippable blind and played only bosses, arriving at each with no round income, no shop visits in
+  between, and the board it started the ante with. At the ante-2 boss it scored 328 of 1 600.
+
+  The bar was 2 because `_heuristic_tag_bar` was `max(6.0 − 1.0 × free_slots, 2.0)` and early game
+  has five free slots. Nothing on the 1–8 scale sits below 2, so **every** structural tag cleared
+  it. That relief came from vouchers, where the link is real — a voucher granting a slot is worth
+  more while slots idle — but **tags have no such link**: `D6` (free reroll), `Voucher` and
+  `Coupon` have nothing to do with slots. Worse, the sign came out backwards: the bar was lowest
+  exactly when the bot is weakest and most needs to play blinds to build money and a board. This
+  was an error of reasoning, not of calibration, which is why the relief was removed rather than
+  retuned. The flat 6.0 admits `Negative` (8), `Rare` (6) and `Polychrome` (6) — the tags A14
+  existed for.
+
+  Second, a **structural rule above all three tiers**: never skip a second blind in the same ante.
+  Forfeiting both small and big means reaching the boss with no income and no shop, and no tag
+  price offsets losing most of an ante. Detectable only because A15 taught this code to read
+  `SKIPPED`. Measured after: of the tags observed in runs 13–14 and the batch, only `Negative`,
+  `Rare`, `Polychrome` and the dollar-tier `Investment` still skip; `D6`, `Voucher`, `Uncommon`,
+  `Coupon`, `Holographic` no longer do. Tests — `tests/test_autopilot.py::TestКалибровкаСкипа`.
+
+- **E1b. Joker contributions in the journal — done.** Two items were blocked on the same missing
+  number: A13 could not say whether run 12's declined 8 145 offer was a mistake, and the joker-churn
+  question (10 bought, 5 sold in one run) had no evidence either way. `evaluate_shop` computed
+  `ShopAdvice.held` for the sell decision and threw it away, so the journal knew the board's labels
+  and nothing about what any of them was worth. `Action.board` now carries a `BoardEntry` per slot
+  (label, contribution, sell value) into `DecisionEntry` and the JSON.
+
+  **Attached by a wrapper, not at each `return`** — the shop branch has eight exits, several inside
+  helpers, and per-site filling is exactly how E1a ended up covering six of fourteen decision sites.
+  Same shape as `play_run` around `_play_run`. Confirmed live in run 14: `размен под Gros Michel:
+  оффер 4467 против вклада 2062` (accepted) and `Crafty Joker (1400) порог берёт, но слоты полны,
+  слабейший Hanging Chad (вклад 2639)` (declined) — both now checkable rather than taken on faith.
+  Tests — `tests/test_autopilot.py::TestСнимкаДоски`, `tests/test_runner.py::TestСнимкаДоскиВЖурнале`.
+
+- **E1c. The batch was measuring one run N times — done, and it failed silently.** After A16 the
+  relaunched batch produced **three runs identical to the digit** — discard estimates
+  430/577/640/692, final play 112, 16 steps each.
+
+  Cause, from the game's own source: `game.lua:2164` falls back to `generate_starting_seed()` when
+  no seed is given, and that builds the string from the **mouse cursor's position and hover time**
+  (`functions/misc_functions.lua:245`). When the runner starts runs over RPC the mouse never moves,
+  `cursor_hover` never changes, and every run gets the same seed. Not a defect in the mod or in this
+  project — **the game draws its randomness from human input, which unattended play does not
+  provide.**
+
+  Worth recording for the failure mode as much as the fix: nothing errored. The runs completed, the
+  reports printed, and a win-rate table would have looked entirely plausible while being one run
+  counted thirty times. It was caught only by diffing two journals against each other. `run_batch`
+  now draws a fresh seed per run from the game's own alphabet (8 chars of 1–9, A–N, P–Z; zero and O
+  excluded by the game itself, per `random_string`); an explicit `--seed` still pins every run,
+  which is the documented regression use. Tests — `tests/test_runner.py::TestСидыПакета`.
+
+### Open, ranked — the next work
+
+Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
+
+- **B3. The discard policy is biased toward discarding by construction — measured, not fixed.**
+  This is the top item, and it is the first one this project has opened with numbers rather than an
+  anecdote. Over the batch:
+
+  | discard run | promised vs. actually played |
+  |---|---|
+  | a single discard | **119 %** |
+  | a run of three or more | **76 %** |
+
+  The mechanism the numbers point at: `discard_outcome` computes "what I get if I discard **and
+  then play**", but the policy compares that against the current hand and, when it wins, discards —
+  after which the *new* discard estimate again beats the *new* current hand. So the bot discards
+  until discards run out and the promised value is never realised. Each decision is individually
+  correct; the sequence is not. Run 13 shows the extreme: four discards at 206/205/236/234, then a
+  play worth 144, while Aces and Queens were thrown away.
+
+  And it fails in **both directions at once** — the same batch closed **87 rounds without spending
+  a single discard**. So this is not a threshold to nudge: `_DISCARD_EDGE_MARGIN` and
+  `_DISCARD_PACE_MARGIN` both behaved correctly on their own terms in the runs examined. What is
+  wrong is comparing a one-step expectation against a realised score with no notion of the sequence.
+  Any fix needs to state what it models — remaining discards as a budget, or the value of *stopping*
+  — and be measured against this batch's numbers, which is why they are recorded here.
+
+- **E1. The batch itself — half done.** 16 of 30 runs on RED/WHITE completed before the game was
+  closed: **1 win, 6 %, mean ante 4.2** (depth: a1×2, a2×4, a3×1, a5×4, a6×2, a7×2, a9×1). The
+  first win-rate number this project has ever had, and the machinery behind it (E1a/E1b/E1c) is now
+  proven. Journals kept in `runs/batch-e1c/`; the two pre-A16 runs in `runs/batch-before-a16/` are
+  the before-picture. Finishing the batch, and then `--all-stakes`, is what turns 6 % into something
+  with a confidence interval. Note the caveat honestly: all of A13–A16 and E1a–E1c landed together,
+  so this number measures the combination, not any one of them.
+
+- **Run-level strategy — three gaps, none of them started.** Raised during the 2026-09-05 review of
+  what the project misses globally, and recorded here because otherwise the next session re-derives
+  the same analysis:
+
+  1. **No run archetype.** `decide_action` dispatches by screen; every valuation states its own
+     horizon ("on this hand", "to the next round-end"). Nothing represents "I am building flushes"
+     or "I am building a mult engine". Run 12 bought 10 jokers and sold 5, ending with a board
+     sharing nothing with its ante-2 board — every swap locally justified, no coherent build
+     accumulated. Whether that churn costs value is now answerable from E1b's contributions.
+  2. **Deck composition is never changed.** Fourteen action kinds, none of which touches a deck
+     card. Deck thinning — a core mechanic — is absent entirely: `The Hanged Man` is valued at an
+     honest zero with the note "прореживание колоды на весь ран проект не моделирует", and Standard
+     packs are skipped.
+  3. **The boss is visible but never prepared for.** All 28 bosses are catalogued; three are used,
+     and only to filter illegal plays. The bot buys and plays identically against any of them.
+
+  The first two are research-sized, comparable to a phase each. The third is closer to the work
+  already done, since the catalogue exists.
+
+- **Still open from §8.3**, unchanged: `j_vampire` (strips enhancements in the `before` pass —
+  wrong in both directions at once), `j_space` (levels up the hand it is played on), the
+  `Blueprint`⇄`Brainstorm` recursion-bound equivalence, and `j_hiker`, the one unimplemented joker
+  of 150. All four need engine mechanisms rather than value fixes.
+
 - **E1/E2. Mass win-rate measurement on a live Mac → 24/7 mode.** Run 7 (RED/WHITE,
   2026-09-01) is the **first autopilot win** — beat Ante 8, 168 steps, `RunReport` outcome
   `won` — with A6/A7 plus B1/A5/F1 all live for the first time and zero mod rejections,
@@ -1752,8 +1887,9 @@ The planned order (letter labels are working ones, not from the general phase nu
   survives a blip, not a crash, and says so. Tests —
   `tests/test_runner.py::TestПереподключение`, `::TestПакетНеЖжётРаны`.
 
-  Next: another live re-run, then the batch (`autoplay --all-stakes --runs N`) for the actual
-  win-rate table.
+  **The batch ran on 2026-09-05/06 and its result is recorded in "Open, ranked" above**: 16 of 30
+  runs, 1 win, 6 %, mean ante 4.2 — plus three defects it found on the way (A16, E1c and the
+  discard bias B3). Finishing it, and then `--all-stakes`, is what remains.
 
 ---
 
