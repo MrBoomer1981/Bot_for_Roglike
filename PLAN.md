@@ -1862,6 +1862,63 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   джокеров» is literally true and practically false — there *is* something to buy, the bot just
   only looks at jokers. Whatever fixes the branch should fix the sentence.
 
+  **C2 is not a missing feature — it is the root of the loss pattern.** Measured over the full
+  15-deck rotation (32 runs), by following the question "why do boards stop scaling at ante 4?"
+  rather than by looking for this entry's confirmation. Every link below is measured; three
+  hypotheses I formed along the way were falsified by the next measurement and are recorded with
+  the rest, because each one would otherwise look plausible enough to try again.
+
+  1. **The shelf offers consumables constantly and the bot buys none.** Across the rotation the
+     shelves held **489 jokers, 123 Tarots and 120 Planets**; of the 243 consumables, **239 (98 %)
+     were affordable at the moment they were offered**. The bot bought zero — `evaluate_shop`
+     filters to `item.kind == "JOKER"`, as this entry already says.
+  2. **Packs cannot make up the difference.** The bot does buy Celestial packs (45 of 55 packs
+     bought) and does take Planets from them, but that yields **43 Planets across 32 runs — ~1.3
+     per run**, scattered over hand types (Mercury 16, Earth 7, Uranus 6, Pluto 5, Venus/Saturn/
+     Jupiter 3 each). A Planet raises **one** hand type by **one** level, so hand levels stay
+     at 1–2 for an entire run.
+  3. **At levels 1–3 the counterfactual correctly prefers additive jokers.** Sweeping hand level
+     on one fixed board, the ratio of the best multiplicative candidate's uplift to the best
+     additive one's is **0.42× at level 1, 0.74× at 3, 1.05× at 5, 1.52× at 8, 2.13× at 12** —
+     monotone, crossing over around level 5. The valuation is not biased; it is answering
+     correctly for the hand levels it is given.
+  4. **So the boards fill with additive jokers.** On full boards the median count of
+     multiplicative jokers is **0 at antes 3, 4 and 5**, and **56 %, 54 % and 54 %** of those
+     boards hold none at all.
+  5. **And an additive board cannot track the blind.** Median board contribution grows **×5.05**
+     at ante 3 against a requirement growing ×2.50, then **×2.17 vs ×2.50** at ante 4, **×1.69 vs
+     ×2.20** at ante 5, **×1.30 vs ×1.75** at ante 7 — the stall lands exactly where the runs die
+     (mean ante 4.6, median 56 % of requirement reached).
+
+  **What this reframes.** C2 was ranked high as an unreachable-valuation defect: C1's work was
+  disconnected from the game. That is still true, but it understates it. The Planet channel is
+  what moves hand levels, hand levels are what decide whether multiplicative jokers are worth
+  buying, and multiplicative jokers are what let a board keep pace with a ×2.5-per-ante
+  requirement. Plugging in the shop branch is therefore not "one more acquisition path" — it is
+  the input the whole joker economy is currently starved of, and it explains the otherwise
+  confusing observation that **joker valuation looks correct in isolation while producing losing
+  boards**. That combination is what made this hard to see from the code.
+
+  **Three hypotheses falsified on the way here**, kept so they are not re-tried:
+
+  - *"The bot starts slowly and never builds a board."* No — slots are full by ante 3 (median
+    joker count 1 → 4 → 5) and stay full for the rest of every run.
+  - *"The board locks in early and never turns over."* No — 60 % of the first full board survives
+    to the end, with a median of 3 new jokers arriving after the slots first fill; only 3 of 23
+    runs never changed composition.
+  - *"The counterfactual is biased against multiplicative jokers."* No — sweeping **board size**
+    0→4 jokers, the multiplicative/additive ratio is **flat at 0.42×**. Added chips are multiplied
+    by the board's mult just as XMult is, so both sides scale together. The variable is hand
+    **level**, not board strength; an earlier single-pair result (Cavendish overtaking Gros Michel
+    on a stronger board) was a property of that pair and I over-read it.
+
+  **Caveats.** The ante ≥ 6 rows of the growth table are survivors — only 3 runs reach ante 8 — so
+  only the ante 1–5 portion carries weight; that is the portion the argument uses. The crossover
+  sweep is one board and one hand, so "level ≈ 5" is the shape of the curve, not a constant to
+  hard-code. And buying a Planet does spend money a joker would otherwise take, so a shop branch
+  is a real trade-off rather than free value — but 239 affordable offers and 0 purchases is an
+  absent option, not a trade-off being made.
+
 - **A22. The bot rerolls when it has nowhere to put the result — open, cause now identified.**
   First measured over the 13-run rotation: **86 rerolls, $460 spent, 7 (8 %) led to a purchase, 42
   (49 %) were followed by leaving that same shop empty-handed**, with a mean claimed
