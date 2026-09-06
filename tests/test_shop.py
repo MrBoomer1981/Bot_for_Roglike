@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Final
 
 import pytest
 
@@ -18,6 +19,7 @@ from balatro_bot.core.jokers import implemented_keys
 from balatro_bot.core.scoring import score_play
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver import shop as shop_module
+from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import (
     _CARD_SHARP_REPEAT_RATE,
     _MONEY_SENSITIVE_JOKER_KEYS,
@@ -1028,3 +1030,123 @@ class TestЦенаПродажиКандидата:
         assert sell_value_of(4) == 2
         assert sell_value_of(5) == 2
         assert sell_value_of(10) == 5
+
+
+#: Улучшение A20. Джокеры, реализованные безусловной плоской прибавкой —
+#: перечислены по самим реализациям, а не по памяти: у каждого `on_turn`
+#: состоит из одного `yield` без единой проверки. Добавление такого джокера
+#: не может уменьшить счёт ни на какой доске, и это арифметика, а не
+#: суждение.
+_ВСЕГДА_ПОЛЕЗНЫЕ: Final[tuple[str, ...]] = (
+    "j_joker",  # +4 множ.
+    "j_gros_michel",  # +15 множ.
+    "j_cavendish",  # X3 множ.
+    "j_stuntman",  # +250 фишек
+)
+
+#: Джокеры, читающие **других джокеров**, — именно там «состояние, в котором
+#: игра не бывает» становится видимым, и именно там жили A9, A11 и A18.
+_ДОСКИ_БЕЗ_STENCIL: Final[tuple[tuple[str, ...], ...]] = (
+    (),
+    ("j_joker",),
+    ("j_swashbuckler",),  # сумма цен продажи остальных — спусковой крючок A18
+    ("j_abstract",),  # +3 множ. за каждого джокера
+    ("j_baseball",),  # X1.5 за каждого Uncommon
+    ("j_swashbuckler", "j_abstract", "j_baseball"),
+)
+
+#: Доски, где **никто не считает джокеров**. Нужны отдельно: на доске с
+#: `j_abstract` (+3 множ. за джокера) или `j_swashbuckler` даже
+#: бездействующий джокер законно поднимает счёт — просто тем, что занял
+#: место в списке. Это поведение игры, а не дефект, и первая версия
+#: инварианта «бездействующий даёт ровно ноль» была из-за этого
+#: сформулирована слишком широко и падала.
+_ДОСКИ_БЕЗ_СЧЁТА_ДЖОКЕРОВ: Final[tuple[tuple[str, ...], ...]] = (
+    (),
+    ("j_joker",),
+    ("j_joker", "j_droll"),
+)
+
+
+class TestИнвариантыКонтрфактума:
+    """Улучшение A20: чего оценка джокера не имеет права выдавать никогда.
+
+    Четыре дефекта этой сессии — A9, A10, A11, A18 — один класс: джокер
+    оценивался из состояния, в котором игра не бывает. Все четыре нашла
+    живая игра; ни одного не поймали ни ревью, ни тысяча тестов, потому что
+    все они проверяли, **что джокер считает**, и ни один — **чего
+    контрфактум выдать не может**.
+
+    У A18 подпись была видна без игры: `j_joker` с безусловными +4
+    множителя давал прирост −1571. Этот класс тестов и есть попытка ловить
+    следующий такой случай на месте.
+    """
+
+    def _state(self, доска: tuple[str, ...], *, слотов: int = 5) -> GameState:
+        deck = standard_deck()
+        return _shop_state(
+            money=25,
+            joker_slots=слотов,
+            jokers=tuple(JokerCard(key=k, label=k, current_value=5, sell_value=3) for k in доска),
+            deck=deck,
+            full_deck=deck,
+            hands_left=4,
+            discards_left=4,
+            hand_info=_hand_info(),
+        )
+
+    def _прирост(self, доска: tuple[str, ...], ключ: str, **kw: object) -> float:
+        кандидат = JokerCard(key=ключ, label=ключ, sell_value=sell_value_of(5))
+        return joker_uplift(self._state(доска, **kw), кандидат, standard_deck(), 3)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("ключ", _ВСЕГДА_ПОЛЕЗНЫЕ)
+    @pytest.mark.parametrize("доска", _ДОСКИ_БЕЗ_STENCIL)
+    def test_безусловный_джокер_не_вредит(self, доска: tuple[str, ...], ключ: str) -> None:
+        assert self._прирост(доска, ключ) >= 0, (доска, ключ)
+
+    def test_случай_a18_на_доске_со_swashbuckler(self) -> None:
+        # Прямая регрессия: тут было −1571.
+        доска = ("j_odd_todd", "j_greedy_joker", "j_swashbuckler", "j_jolly", "j_duo")
+        assert self._прирост(доска, "j_joker") > 0
+
+    def test_stencil_законно_уходит_в_минус(self) -> None:
+        # Единственное настоящее исключение, и это находка A9: `Joker Stencil`
+        # множит за каждый **пустой** слот, поэтому джокер может стоить меньше
+        # пустого слота. Инвариант обязан знать про этот случай, иначе он
+        # ложно упадёт и его удалят как ненадёжный.
+        #
+        # Кандидат тут намеренно бездействующий: сильный джокер своей прибавкой
+        # перекрывает потерю множителя, и знак не меняется — на чём две первые
+        # версии этого теста и ошиблись.
+        assert self._прирост(("j_stencil",), "j_rough_gem") < 0
+
+    def test_stencil_сильного_джокера_всё_равно_берёт(self) -> None:
+        # Контроль: исключение — про **слабых** кандидатов, а не про само
+        # присутствие Stencil.
+        assert self._прирост(("j_stencil",), "j_joker") > 0
+
+    @pytest.mark.parametrize("доска", _ДОСКИ_БЕЗ_СЧЁТА_ДЖОКЕРОВ)
+    def test_бездействующий_джокер_ровно_ноль(self, доска: tuple[str, ...]) -> None:
+        # Не «около нуля»: обе стороны разности идентичны, и любое отличие
+        # означало бы, что контрфактум ловит что-то помимо джокера.
+        # Доски со счётчиками джокеров сюда не входят — см. комментарий
+        # у `_ДОСКИ_БЕЗ_СЧЁТА_ДЖОКЕРОВ`.
+        assert self._прирост(доска, "j_rough_gem") == 0.0
+
+    def test_бездействующий_джокер_не_даёт_вклада(self) -> None:
+        state = self._state(("j_joker", "j_rough_gem"))
+        вклады = joker_contributions(state, standard_deck(), 3)
+        assert вклады[1] == 0.0
+
+    @pytest.mark.parametrize("ключ", _ВСЕГДА_ПОЛЕЗНЫЕ)
+    def test_точность_переживает_контрфактум(self, ключ: str) -> None:
+        # A18 ломал и это: расчёт становился неточным «цена продажи
+        # неизвестна». Точность — несущее свойство проекта, и то, что она
+        # переживает добавление кандидата, до сих пор ничем не проверялось.
+        state = self._state(("j_swashbuckler",))
+        с_кандидатом = replace(
+            state,
+            hand=parse_cards("AH KH QH JH 9H"),
+            jokers=(*state.jokers, JokerCard(key=ключ, label=ключ, sell_value=sell_value_of(5))),
+        )
+        assert advise(с_кандидатом, limit=1).best.outcome.exact
