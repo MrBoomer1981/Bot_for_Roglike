@@ -1961,6 +1961,41 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   meaningless. The corrected figures are the ones above. This is the second time this session that
   a too-narrow window produced a confident wrong number, the first being the A22 misdiagnosis.
 
+  **Every mod refusal in the corpus is in pack handling**, which is the strongest evidence that
+  this area — not the poll loop in general — is what is broken. Across **2 958 decisions in 33
+  runs there are exactly 4 refusals (0.1 %)**, and all four are packs; three of them in
+  `SMODS_BOOSTER_OPENED`:
+
+  ```
+  1  Method 'select' requires one of these states: BLIND_SELECT
+  1  No pack is currently open
+  1  Card index out of range. Index: 3, Available cards: 0
+  1  Card index out of range. Index: 2, Available cards: 2
+  ```
+
+  The two index refusals show the bot's view of a pack disagreeing with the game's, **by card
+  type, not just by count**: after buying a *Celestial* pack it tried to take `Smiley Face` (a
+  joker, reason «joker: прирост 91»); after buying a *Buffoon* pack it tried to take `Uranus` (a
+  planet, reason «planet: прирост 140»). `evaluate_pack` types a pack by the contents of
+  `state.pack`, so in both cases it was handed contents belonging to the other kind of pack. Both
+  recovered on the next decision and took a correct card, so the cost is a wasted step rather than
+  a lost pack — but the disagreement is real.
+
+  **Two explanations were checked and both are wrong**, so neither should be tried again:
+
+  - *Stale contents from the previously opened pack.* No — in the Celestial case that was the
+    **first** pack of the run, and in the Buffoon case the only earlier pack was also a Buffoon.
+    In both runs the bot saw a card type that no pack it had opened could have contained.
+  - *The shop shelf leaking into `state.pack`.* No — the E1e shelf snapshots for the surrounding
+    decisions hold `['Jolly Joker', 'Business Card']` and `['Rough Gem', 'Earth']`; neither
+    `Smiley Face` nor `Uranus` was ever on the shelf.
+
+  **The journal cannot settle where they came from, because it does not record `state.pack`.**
+  That is the same gap as C3's open question, and one change closes both: record the raw fields
+  each pack/tag decision is taken from — `state.pack` and `state.tags` — per decision entry, in
+  the E1 instrumentation pattern already used for `board`, `outlook` and `shelf`. Until that runs,
+  any fix here would be guessing at a mechanism the data does not name.
+
 - **A22. The bot rerolls when it has nowhere to put the result — open, cause now identified.**
   First measured over the 13-run rotation: **86 rerolls, $460 spent, 7 (8 %) led to a purchase, 42
   (49 %) were followed by leaving that same shop empty-handed**, with a mean claimed
