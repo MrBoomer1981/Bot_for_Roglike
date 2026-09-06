@@ -30,6 +30,7 @@ from balatro_bot.solver.shop import (
     evaluate_shop,
     joker_contributions,
     joker_uplift,
+    sell_value_of,
 )
 
 
@@ -973,3 +974,57 @@ class TestДеньгиПослеСделки:
         богатый = _shop_state(money=40, shop=полка)
         бедный = _shop_state(money=10, shop=полка)
         assert _sample_cache_key(богатый, SAMPLE_HANDS) == _sample_cache_key(бедный, SAMPLE_HANDS)
+
+
+class TestЦенаПродажиКандидата:
+    """Улучшение A18. Кандидат в контрфактуме строился **без цены продажи**, а
+    `j_swashbuckler` считает свой множитель по сумме цен продажи остальных
+    джокеров. Неизвестное значение роняло и число, и точность: прирост
+    безусловно полезного `j_joker` (+4 множ.) выходил **отрицательным** —
+    −1571 на доске рана из большого батча, — то есть контрфактум был настроен
+    против любой покупки, пока Swashbuckler на доске.
+
+    Тот же класс, что A10 и A11: кандидат собирался в состоянии, в котором
+    игра никогда не бывает."""
+
+    def _state(self) -> GameState:
+        доска = tuple(
+            JokerCard(key=k, label=k, current_value=5, sell_value=3)
+            for k in ("j_odd_todd", "j_greedy_joker", "j_swashbuckler", "j_jolly", "j_duo")
+        )
+        deck = standard_deck()
+        return _shop_state(
+            money=21,
+            joker_slots=5,
+            shop_slots=2,
+            jokers=доска,
+            deck=deck,
+            full_deck=deck,
+            hands_left=4,
+            discards_left=4,
+            hand_info=_hand_info(),
+            shop=(ShopItem("j_joker", "Joker", "JOKER", 4),),
+        )
+
+    def test_безусловно_полезный_джокер_не_уходит_в_минус(self) -> None:
+        # +4 множителя не могут уменьшить счёт: отрицательный прирост здесь
+        # математически невозможен и означает дефект.
+        advice = evaluate_shop(self._state())
+        assert advice is not None
+        (offer,) = advice.jokers
+        assert offer.expected_uplift is not None
+        assert offer.expected_uplift > 0, offer.expected_uplift
+
+    def test_оценка_остаётся_точной_при_swashbuckler(self) -> None:
+        # Раньше расчёт помечался неточным «цена продажи джокера неизвестна».
+        state = self._state()
+        кандидат = JokerCard(key="j_joker", label="Joker", sell_value=sell_value_of(4))
+        assert joker_uplift(state, кандидат, standard_deck(), SAMPLE_HANDS) > 0
+
+    def test_правило_цены_продажи_из_игры(self) -> None:
+        # `card.lua`: sell_cost = max(1, floor(cost / 2)).
+        assert sell_value_of(0) == 1
+        assert sell_value_of(1) == 1
+        assert sell_value_of(4) == 2
+        assert sell_value_of(5) == 2
+        assert sell_value_of(10) == 5

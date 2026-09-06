@@ -814,3 +814,49 @@ class TestСнимкаВыбораВЖурнале:
         assert взятые, "ни одна запись не помечена как закрывшая раунд"
         assert all(ш["phase"] == "ROUND_EVAL" for ш in взятые)
         assert all(ш["blind_beaten"] is None for ш in шаги if ш["phase"] != "ROUND_EVAL")
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestПаузаПередПовтором:
+    """Улучшение A19. Отказ мода часто означает не «нельзя», а «ещё не
+    готово»: `endpoints/select.lua` требует фазы `BLIND_SELECT` и непустого
+    `blind_on_deck`, а игра в этот момент доигрывает переход. Раннер
+    повторял немедленно и за секунду исчерпывал `stall_limit`.
+
+    В большом батче ран так и умер: бот скипнул блайнд и трижды подряд
+    получил отказ на выборе следующего, пока шла анимация скипа."""
+
+    def test_отказ_переживается_если_состояние_устаканилось(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        bridge = ScriptedBridge([_state("BLIND_SELECT"), _state("BLIND_SELECT")])
+        отказов = {"осталось": 2}
+
+        def dispatch(_b: ModBridge, action: Action) -> GameState:
+            if отказов["осталось"]:
+                отказов["осталось"] -= 1
+                raise ModBridgeError("[-32002] игра ещё не готова")
+            return _state("GAME_OVER")
+
+        monkeypatch.setattr(runner, "dispatch_action", dispatch)
+        паузы: list[float] = []
+        report = play_run(bridge, deck="RED", stake="WHITE", stall_limit=3, sleep=паузы.append)
+
+        # Два отказа пережиты: ран не умер с «мод отказал», а дошёл до конца.
+        assert "отказал" not in report.note, report.note
+        assert report.outcome == "lost"
+        # И между попытками действительно была пауза — иначе повтор бьётся в
+        # ту же дверь в пределах одной анимации.
+        assert len(паузы) >= 2, паузы
+
+    def test_настоящий_отказ_всё_ещё_даёт_затык(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Пауза не должна превращать неисполнимое действие в вечный цикл.
+        bridge = ScriptedBridge([_state("BLIND_SELECT")])
+
+        def dispatch(_b: ModBridge, action: Action) -> GameState:
+            raise ModBridgeError("нельзя продать вечного джокера")
+
+        monkeypatch.setattr(runner, "dispatch_action", dispatch)
+        report = play_run(bridge, deck="RED", stake="WHITE", stall_limit=3, sleep=lambda _: None)
+        assert report.outcome == "stuck"
+        assert "отказал" in report.note

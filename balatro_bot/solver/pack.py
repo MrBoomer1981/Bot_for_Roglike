@@ -43,7 +43,7 @@ from balatro_bot.core.catalogue import is_known_joker
 from balatro_bot.core.hands import PER_LEVEL_VALUES, HandType
 from balatro_bot.core.state import GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver.play import advise
-from balatro_bot.solver.shop import joker_uplift
+from balatro_bot.solver.shop import joker_uplift, sell_value_of
 
 __all__ = [
     "PACK_OPEN_PHASES",
@@ -219,6 +219,14 @@ def _buffoon_offer(
     if not is_known_joker(item.key) or len(deck_source) < _HAND_SIZE:
         return PackOffer(item, "joker", item.label, None, exact_deck, 0)
 
-    joker = JokerCard(key=item.key, label=item.label, edition=item.edition)
+    # Карта из пака уже оплачена, но продать её потом можно — а значит у
+    # неё есть цена продажи, которую читает `j_swashbuckler`. Без неё
+    # контрфактум занижал прирост и терял точность (см. `sell_value_of`).
+    joker = JokerCard(
+        key=item.key,
+        label=item.label,
+        edition=item.edition,
+        sell_value=sell_value_of(item.price),
+    )
     uplift = joker_uplift(state, joker, deck_source, samples)
     return PackOffer(item, "joker", item.label, uplift, exact_deck, samples)

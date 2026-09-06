@@ -241,6 +241,30 @@ _RESTRICTING_BOSS_NAMES: Final[frozenset[str]] = frozenset(
 )
 
 
+#: Типичная цена джокера в витрине — нужна только там, где кандидат
+#: случайный и своей цены не имеет (пулы для Buffoon-пака и реролла).
+#: Общий джокер стоит $4–6 (`game.lua`, поле `cost`); берём середину.
+_TYPICAL_JOKER_PRICE: Final[int] = 5
+
+
+def sell_value_of(price: int) -> int:
+    """Сколько вернёт продажа джокера, купленного за `price`.
+
+    Правило игры: `sell_cost = max(1, floor(cost / 2))` (`card.lua`).
+
+    Нужно потому, что кандидат в контрфактуме — это джокер, которого бот
+    **собирается купить**, а значит у него будет цена продажи. Без неё
+    `j_swashbuckler` (множитель по сумме цен продажи остальных джокеров)
+    не может посчитаться, честно помечает расчёт неточным и роняет число:
+    прирост даже безусловно полезного `j_joker` (+4 множ.) выходил
+    **отрицательным**, чего не бывает. То есть контрфактум был настроен
+    против любой покупки, пока Swashbuckler на доске.
+
+    Тот же класс, что улучшения A11 и A10: кандидат собирался в
+    состоянии, в котором игра никогда не бывает."""
+    return max(1, price // 2)
+
+
 def _sample_cache_key(state: GameState, samples: int) -> tuple[GameState, int]:
     """Ключ мемо дорогих выборок (улучшение F2) — всё состояние, кроме того,
     что заведомо не влияет на счёт сэмплированной руки. Сравнивается через
@@ -821,7 +845,12 @@ def evaluate_shop(
             keys = sorted(implemented_keys())
             pool = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
             random_joker_uplifts = [
-                joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS)
+                joker_uplift(
+                    state,
+                    JokerCard(key=key, sell_value=sell_value_of(_TYPICAL_JOKER_PRICE)),
+                    deck_source,
+                    PACK_SAMPLE_HANDS,
+                )
                 for key in pool
             ]
             if cache is not None:
@@ -863,7 +892,13 @@ def random_joker_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) ->
     keys = sorted(implemented_keys())
     picked = rng.sample(keys, min(PACK_JOKER_SAMPLE, len(keys)))
     return [
-        joker_uplift(state, JokerCard(key=key), deck_source, PACK_SAMPLE_HANDS) for key in picked
+        joker_uplift(
+            state,
+            JokerCard(key=key, sell_value=sell_value_of(_TYPICAL_JOKER_PRICE)),
+            deck_source,
+            PACK_SAMPLE_HANDS,
+        )
+        for key in picked
     ]
 
 
@@ -1066,7 +1101,12 @@ def _evaluate_joker_offer(
     memo_id = (item.key, item.edition, money_delta)
     if cache is not None and memo_id in cache.joker_uplifts:
         return _offer(cache.joker_uplifts[memo_id], samples)
-    candidate = JokerCard(key=item.key, label=item.label, edition=item.edition)
+    candidate = JokerCard(
+        key=item.key,
+        label=item.label,
+        edition=item.edition,
+        sell_value=sell_value_of(item.price),
+    )
     uplift = joker_uplift(state, candidate, deck_source, samples, money_delta=money_delta)
     if cache is not None:
         cache.joker_uplifts[memo_id] = uplift

@@ -30,6 +30,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import json
 import random
 import time
@@ -515,6 +516,20 @@ def _play_run(
                     note=f"мод отказал ×{stall}",
                     adopted=adopted,
                 )
+            # Улучшение A19: подождать перед повтором. Отказ часто означает
+            # не «нельзя», а «ещё не готово»: мод проверяет фазу и состояние
+            # игры (`endpoints/select.lua` требует `BLIND_SELECT` и непустой
+            # `blind_on_deck`), а игра в этот момент доигрывает переход. В
+            # большом батче ран так и умер: бот скипнул блайнд и трижды за
+            # секунду попробовал выбрать следующий, пока шла анимация скипа,
+            # исчерпав `stall_limit` на состоянии, которое устоялось бы само.
+            # Пауза та же, что у ожидания переходной фазы, — это тот же случай.
+            sleep(_TRANSIENT_POLL_INTERVAL)
+            # Перечитать состояние: за паузу игра могла доиграть переход.
+            # Не вышло — не беда, следующий круг решит по прежнему состоянию,
+            # а мёртвый мост уже проверен выше.
+            with contextlib.suppress(ModBridgeError):
+                state = bridge.game_state()
             continue
 
         entry = _entry(step, state, describe_action(action), decided=action)
