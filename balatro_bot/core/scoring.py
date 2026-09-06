@@ -29,12 +29,19 @@ from __future__ import annotations
 
 import math
 from collections.abc import Callable, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from itertools import product
 from typing import TYPE_CHECKING, Final, Protocol
 
 from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, effective_suits
-from balatro_bot.core.hands import HandModifiers, HandResult, HandType, evaluate
+from balatro_bot.core.hands import (
+    HandModifiers,
+    HandResult,
+    HandType,
+    HandValues,
+    base_values,
+    evaluate,
+)
 from balatro_bot.core.state import GameState
 
 if TYPE_CHECKING:
@@ -264,6 +271,13 @@ class ScoreContext:
     trace: list[TraceStep] = field(default_factory=list)
     unknown: list[str] = field(default_factory=list)
     picker: ChancePicker | None = None
+
+    vampire_eaten: int = 0
+    """Сколько улучшенных карт съел Vampire в этом розыгрыше (A17).
+
+    Считается до цикла событий: к моменту хода самого джокера улучшений
+    на картах уже нет — он их и снял. Ноль, если джокера нет или есть
+    нечего."""
 
     copying: list[Joker] = field(default_factory=list)
     """Цепочка копирующих джокеров, раскручиваемая прямо сейчас.
@@ -540,6 +554,84 @@ def _apply_boss_score_modifier(ctx: ScoreContext) -> None:
 # ---------------------------------------------------------------------------
 
 
+#: Улучшение A17. `Space Joker` — шанс поднять уровень сыгранной руки
+#: (`game.lua`: `j_space.config.extra = 4`, то есть 1 к 4; базовая
+#: вероятность `G.GAME.probabilities.normal` равна 1).
+_SPACE_LEVEL_CHANCE: Final[float] = 0.25
+
+#: На сколько уровней поднимает — на один (`card.lua`, `level_up = true`).
+_SPACE_LEVELS: Final[int] = 1
+
+
+def _space_level_bonus(
+    state: GameState, jokers: Sequence[Joker], picker: ChancePicker | None
+) -> int:
+    """На сколько уровней `Space Joker` поднимет эту руку (0 или 1).
+
+    Сверено с игрой (A12, закрыто A17): подъём происходит в проходе
+    `context.before` — **до** того, как читаются базовые фишки и
+    множитель, — поэтому достаётся текущему розыгрышу, а не только
+    следующим. Раньше джокер был зарегистрирован честным нулём на
+    противоположном убеждении, и оно оказалось неверным.
+
+    Точка случайности поднимается тем же `picker`, что и все остальные, —
+    `score_play` переберёт её наравне с Lucky и Bloodstone. Своей ширины
+    (два исхода) ей не хватает для свёртки F3, и это правильно: свёртка
+    рассчитана на линейный вход, а уровень меняет и фишки, и множитель."""
+    if picker is None:
+        return 0
+    if not any(joker.key == "j_space" and not joker.card.debuffed for joker in jokers):
+        return 0
+    return int(
+        picker.pick(
+            (
+                (float(_SPACE_LEVELS), _SPACE_LEVEL_CHANCE),
+                (0.0, 1.0 - _SPACE_LEVEL_CHANCE),
+            )
+        )
+    )
+
+
+#: Улучшение A17. Vampire съедает улучшение с каждой засчитанной карты и
+#: получает столько x_mult за штуку (`game.lua`: `j_vampire.config = {extra = 0.1}`).
+_VAMPIRE_PER_CARD: Final[float] = 0.1
+
+
+def _vampire_feast(
+    scoring: tuple[Card, ...], jokers: Sequence[Joker], modifiers: HandModifiers
+) -> tuple[tuple[Card, ...], int]:
+    """Снять улучшения с засчитанных карт, если на доске Vampire.
+
+    Сверено с игрой (A12, закрыто A17): в проходе `context.before`
+    (`card.lua`) джокер перебирает `context.scoring_hand` и с каждой карты,
+    у которой центр не `c_base` и которая не дебаффнута, **снимает
+    улучшение**, после чего прибавляет себе `0.1` за каждую съеденную.
+    Проект раньше не делал ни того, ни другого: карты считались вместе с
+    улучшениями, а сам джокер применял доигровой `current_value` — то есть
+    ошибались в обе стороны разом.
+
+    Карты, оставшиеся в руке, не трогаются: игра ест только засчитанные.
+
+    **Заявленное ограничение:** в игре снятие улучшения **постоянно**, такие
+    карты остаются простыми до конца рана. Движок считает один розыгрыш и
+    модели изменения колоды не имеет (тот же пробел, что у `The Hanged Man`
+    и прореживания), поэтому верным делается только текущий ход. Постоянный
+    эффект не моделируется, а не «учтён».
+    """
+    if not any(joker.key == "j_vampire" and not joker.card.debuffed for joker in jokers):
+        return scoring, 0
+    eaten = 0
+    fed: list[Card] = []
+    for card in scoring:
+        обездвижена = card.debuffed and not modifiers.chicot
+        if card.enhancement is not Enhancement.NONE and not обездвижена:
+            eaten += 1
+            fed.append(replace(card, enhancement=Enhancement.NONE))
+        else:
+            fed.append(card)
+    return tuple(fed), eaten
+
+
 def _run_once(
     state: GameState,
     played: Sequence[Card],
@@ -551,10 +643,23 @@ def _run_once(
 ) -> ScoreContext:
     """Один проход конвейера. Случайности разрешает `picker`."""
     values = state.hand_values(result.hand_type)
+    # Улучшение A17: `Space Joker` качает уровень руки в `before`-проходе
+    # игры, то есть ДО чтения базовых значений — значит его подъём
+    # достаётся этому же розыгрышу. Точка случайности поднимается здесь,
+    # раньше цикла событий, потому что после база уже прочитана.
+    levels = _space_level_bonus(state, jokers, picker)
+    if levels:
+        extra = base_values(result.hand_type, 1 + levels)
+        base = base_values(result.hand_type, 1)
+        values = HandValues(
+            values.chips + (extra.chips - base.chips),
+            values.mult + (extra.mult - base.mult),
+        )
+    scoring_cards, vampire_eaten = _vampire_feast(result.scoring_cards, jokers, modifiers)
     ctx = ScoreContext(
         state=state,
         played=tuple(played),
-        scoring_cards=result.scoring_cards,
+        scoring_cards=scoring_cards,
         held=tuple(held),
         hand_type=result.hand_type,
         jokers=tuple(jokers),
@@ -562,6 +667,7 @@ def _run_once(
         chips=float(values.chips),
         mult=float(values.mult),
         picker=picker,
+        vampire_eaten=vampire_eaten,
     )
     label = f"{result.hand_type.value}: база"
     hand_info = state.hand_info.get(result.hand_type)
@@ -578,7 +684,7 @@ def _run_once(
     ctx.emit(HandDetermined(result.hand_type, result.scoring_cards))
 
     # 3. Сыгранные карты слева направо, с учётом ретриггеров.
-    for index, card in enumerate(result.scoring_cards):
+    for index, card in enumerate(scoring_cards):
         if card.debuffed and not modifiers.chicot:
             name = f"{card.rank.value}{card.suit.value}"
             ctx.trace.append(TraceStep(name, "отключена боссом", ctx.chips, ctx.mult))

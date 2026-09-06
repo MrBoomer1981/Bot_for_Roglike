@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, ClassVar
 
 import pytest
 
@@ -28,7 +28,7 @@ from balatro_bot.core.cards import (
     standard_deck,
 )
 from balatro_bot.core.catalogue import JOKERS
-from balatro_bot.core.hands import HandType
+from balatro_bot.core.hands import HandType, base_values
 from balatro_bot.core.jokers import BaseJoker
 from balatro_bot.core.jokers.implementations import _JOKER_RARITY
 from balatro_bot.core.scoring import (
@@ -999,7 +999,7 @@ _NO_SCORE_EFFECT_JOKERS = [
     "j_astronomer",
     "j_mr_bones",
     "j_midas_mask",
-    "j_space",
+    # `j_space` был здесь до A17 — он качает уровень **этой** руки.
     "j_8_ball",
 ]
 
@@ -1180,3 +1180,195 @@ class TestСвёрткаТочкиСлучайности:
         # отказалась и посчитал перебор.
         self._сверить(медленно, быстро)
         assert быстро.minimum < быстро.expected < быстро.maximum
+
+
+class TestSpaceJoker:
+    """Улучшение A17, закрытая строка PLAN.md §8.3. `Space Joker` качает
+    уровень руки в проходе `context.before` игры — до чтения базовых фишек и
+    множителя, — значит подъём достаётся **этому** розыгрышу. Раньше джокер
+    считался не влияющим на счёт, и это было опровергнуто чтением `card.lua`
+    в A12."""
+
+    def _инфо(self, level: int = 1) -> dict[HandType, PokerHandInfo]:
+        v = base_values(HandType.PAIR, level)
+        return {HandType.PAIR: PokerHandInfo(level=level, chips=v.chips, mult=v.mult)}
+
+    def test_смесь_поднятого_и_неподнятого(self) -> None:
+        # 1 к 4: четверть исходов с уровнем выше, три четверти — как есть.
+        без = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо())
+        с = сыграть(parse_cards("AH AD"), [0, 1], ["j_space"], hand_info=self._инфо())
+        поднятый = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо(2))
+        ожидание = 0.25 * поднятый.expected + 0.75 * без.expected
+        assert с.expected == pytest.approx(ожидание)
+
+    def test_границы_охватывают_оба_исхода(self) -> None:
+        без = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо())
+        поднятый = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо(2))
+        с = сыграть(parse_cards("AH AD"), [0, 1], ["j_space"], hand_info=self._инфо())
+        assert с.minimum == без.expected
+        assert с.maximum == поднятый.expected
+
+    def test_расчёт_остаётся_точным(self) -> None:
+        # Случайность перебирается полностью, а не оценивается выборкой.
+        assert сыграть(parse_cards("AH AD"), [0, 1], ["j_space"], hand_info=self._инфо()).exact
+
+    def test_отключённый_джокер_не_качает(self) -> None:
+        state = GameState(
+            hand=parse_cards("AH AD"),
+            jokers=(JokerCard("j_space", debuffed=True),),
+            hand_info=self._инфо(),
+        )
+        без = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо())
+        assert score_play(state, list(state.hand)).expected == без.expected
+
+    def test_без_джокера_общий_путь_не_тронут(self) -> None:
+        # Регрессия: точка случайности не должна появляться, когда её некому
+        # поднять, иначе подорожает каждый расчёт в проекте.
+        outcome = сыграть(parse_cards("AH AD"), [0, 1], hand_info=self._инфо())
+        assert outcome.minimum == outcome.maximum == outcome.expected
+
+
+class TestПределКопированияДжокеров:
+    """Улучшение A17, закрытая строка PLAN.md §8.3. Игра ограничивает
+    рекурсию копирования **глубиной** (`card.lua`: `context.blueprint >
+    #G.jokers.cards + 1`), а `_Copycat` — признаком «этот копир уже в
+    цепочке». A12 отказалась заявлять их эквивалентность с беглого чтения;
+    здесь она проверена по расстановкам.
+
+    Довод, который эти тесты закрепляют: наше правило строже или равно
+    игровому, а разница — только в числе **холостых** шагов до остановки.
+    Холостой шаг ничего не прибавляет: эффект даёт лишь неподставной джокер,
+    до которого цепочка дошла. Чистый цикл не доходит до него ни при одном
+    из правил, а цепочка через настоящий джокер завершается на нём при обоих.
+    """
+
+    ИНФО: ClassVar[dict[HandType, PokerHandInfo]] = {
+        HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)
+    }
+
+    def _счёт(self, *ключи: str) -> float:
+        return сыграть(parse_cards("AH AD"), [0, 1], list(ключи), hand_info=self.ИНФО).expected
+
+    def _шаг(self) -> float:
+        """Во сколько очков обходится одна копия «+4 множителя»."""
+        return self._счёт("j_joker") - self._счёт()
+
+    def test_blueprint_копирует_соседа_справа(self) -> None:
+        assert self._счёт("j_blueprint", "j_joker") == self._счёт() + 2 * self._шаг()
+
+    def test_brainstorm_копирует_самого_левого(self) -> None:
+        assert self._счёт("j_joker", "j_brainstorm") == self._счёт() + 2 * self._шаг()
+
+    def test_чистый_цикл_не_даёт_ничего(self) -> None:
+        # Ни у нас, ни в игре цепочка не достигает неподставного джокера.
+        assert self._счёт("j_blueprint", "j_brainstorm") == self._счёт()
+        assert self._счёт("j_brainstorm", "j_blueprint") == self._счёт()
+
+    def test_цикл_через_настоящий_джокер_считается_трижды(self) -> None:
+        # Joker сам, Brainstorm копирует его, Blueprint копирует Brainstorm.
+        assert self._счёт("j_joker", "j_blueprint", "j_brainstorm") == (
+            self._счёт() + 3 * self._шаг()
+        )
+
+    def test_цепочка_из_двух_копиров(self) -> None:
+        assert self._счёт("j_blueprint", "j_blueprint", "j_joker") == (
+            self._счёт() + 3 * self._шаг()
+        )
+
+    def test_копир_указывающий_на_себя_молчит(self) -> None:
+        # Brainstorm стоит самым левым и копирует себя — ноль у обоих правил.
+        assert self._счёт("j_brainstorm", "j_blueprint", "j_joker") == (
+            self._счёт() + 2 * self._шаг()
+        )
+
+
+class TestVampire:
+    """Улучшение A17, закрытая строка PLAN.md §8.3. В проходе
+    `context.before` игры Vampire **снимает улучшение** с каждой засчитанной
+    карты и только потом прибавляет себе 0.1 за штуку (`card.lua`,
+    `game.lua`). Проект не делал ни того, ни другого: карты считались с
+    улучшениями, а x_mult брался доигровой — ошибка шла в обе стороны разом.
+    """
+
+    def _рука(self, *улучшения: Enhancement) -> tuple[Card, ...]:
+        карты = parse_cards("AH AD")
+        return tuple(
+            replace(карта, enhancement=у) if у is not Enhancement.NONE else карта
+            for карта, у in zip(карты, улучшения, strict=True)
+        )
+
+    def _счёт(self, рука: tuple[Card, ...], *, значение: float | None = 2.0) -> float:
+        state = GameState(
+            hand=рука,
+            jokers=(JokerCard("j_vampire", current_value=значение),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        return score_play(state, list(рука)).expected
+
+    def test_улучшение_снимается_до_подсчёта(self) -> None:
+        # Mult-карта даёт +4 множителя. Съеденная — не даёт ничего, и счёт
+        # обязан совпасть с рукой, где её и не было.
+        с_улучшением = self._рука(Enhancement.MULT, Enhancement.NONE)
+        без = self._рука(Enhancement.NONE, Enhancement.NONE)
+        # Съев одну карту, джокер прибавляет себе 0.1 — сравниваем с рукой
+        # без улучшений, но с тем же итоговым x_mult.
+        state = GameState(
+            hand=без,
+            jokers=(JokerCard("j_vampire", current_value=2.1),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        assert self._счёт(с_улучшением) == score_play(state, list(без)).expected
+
+    def test_за_каждую_съеденную_плюс_ноль_один(self) -> None:
+        одна = self._счёт(self._рука(Enhancement.MULT, Enhancement.NONE))
+        две = self._счёт(self._рука(Enhancement.MULT, Enhancement.MULT))
+        # Обе съедены: x_mult 2.2 против 2.1 при том же составе карт.
+        база = self._рука(Enhancement.NONE, Enhancement.NONE)
+
+        def при(x: float) -> float:
+            state = GameState(
+                hand=база,
+                jokers=(JokerCard("j_vampire", current_value=x),),
+                hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+            )
+            return score_play(state, list(база)).expected
+
+        assert одна == при(2.1)
+        assert две == при(2.2)
+
+    def test_без_улучшений_ровно_текущее_значение(self) -> None:
+        база = self._рука(Enhancement.NONE, Enhancement.NONE)
+        state = GameState(
+            hand=база,
+            jokers=(JokerCard("j_glass", current_value=2.0),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        # `j_glass` — обычный x_mult-накопитель с тем же числом.
+        assert self._счёт(база) == score_play(state, list(база)).expected
+
+    def test_карты_в_руке_не_съедаются(self) -> None:
+        # Игра ест только засчитанные карты. Steel считается при удержании,
+        # поэтому если бы улучшение сняли, его вклад исчез бы.
+        рука = (*parse_cards("AH AD"), replace(parse_cards("KS")[0], enhancement=Enhancement.STEEL))
+        state = GameState(
+            hand=рука,
+            jokers=(JokerCard("j_vampire", current_value=2.0),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        со_steel = score_play(state, list(рука[:2])).expected
+        без_steel = GameState(
+            hand=(*parse_cards("AH AD"), parse_cards("KS")[0]),
+            jokers=(JokerCard("j_vampire", current_value=2.0),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        assert со_steel > score_play(без_steel, list(без_steel.hand[:2])).expected
+
+    def test_без_значения_расчёт_неточен(self) -> None:
+        рука = self._рука(Enhancement.MULT, Enhancement.NONE)
+        state = GameState(
+            hand=рука,
+            jokers=(JokerCard("j_vampire"),),
+            hand_info={HandType.PAIR: PokerHandInfo(level=1, chips=10, mult=2)},
+        )
+        outcome = score_play(state, list(рука))
+        assert not outcome.exact

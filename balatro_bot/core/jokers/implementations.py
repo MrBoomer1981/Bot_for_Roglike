@@ -16,6 +16,7 @@ from collections.abc import Iterable
 from balatro_bot.core.cards import Card, Enhancement, Rank, Suit
 from balatro_bot.core.jokers import BaseJoker, Joker, register
 from balatro_bot.core.scoring import (
+    _VAMPIRE_PER_CARD,
     AddChips,
     AddMult,
     CardHeld,
@@ -319,8 +320,31 @@ register("j_lucky_cat")(_accumulator("xmult"))  # X0.25 за сработавш�
 register("j_madness")(_accumulator("xmult"))  # X0.5 за выбор Small/Big Blind
 register("j_obelisk")(_accumulator("xmult"))  # X0.2 за руку без самого частого типа
 register("j_throwback")(_accumulator("xmult"))  # X0.25 за пропущенный блайнд
-register("j_vampire")(_accumulator("xmult"))  # X0.1 за карту с улучшением, снимает его
 register("j_yorick")(_accumulator("xmult"))  # X1 Mult за каждые 23 сброшенные карты
+
+
+@register("j_vampire")
+class Vampire(_LiveAccumulator):
+    """X0.1 Mult per enhanced card played, removing the enhancement.
+
+    Не обычный накопитель (улучшение A17). Съеденные карты и их число
+    считает `core/scoring.py._vampire_feast` — до цикла событий, потому что
+    к ходу самого джокера улучшений на картах уже нет. Здесь остаётся
+    прибавить `0.1` за каждую съеденную к тому значению, что прислал мод.
+
+    До A17 джокер был обычным `_accumulator("xmult")`: карты считались
+    вместе с улучшениями, а x_mult брался доигровой. Ошибка шла в обе
+    стороны разом.
+    """
+
+    kind = "xmult"
+
+    def on_turn(self, ctx: ScoreContext) -> Iterable[Effect]:
+        value = self.card.current_value
+        if value is None:
+            ctx.mark_unknown(f"джокер-накопитель без текущего значения: {self.key}")
+            return
+        yield XMult(value + _VAMPIRE_PER_CARD * ctx.vampire_eaten)
 
 
 class _LeadingValueJoker(_OwnTurn):
@@ -1478,6 +1502,14 @@ class MidasMask(BaseJoker):
 class SpaceJoker(BaseJoker):
     """1 in 4 chance to upgrade level of played poker hand.
 
-    Прокачка применяется после подсчёта текущего хода: на его счёт не
-    влияет, а следующий уровень солвер и так увидит через `state.hand_info`.
+    Эффект посчитан **не здесь**, а в `core/scoring.py._space_level_bonus`, и
+    это единственный джокер с такой особенностью: подъём уровня меняет
+    базовые фишки и множитель руки, а они читаются до запуска цикла событий,
+    в котором живут все остальные эффекты. Поднять оттуда точку случайности
+    уже поздно.
+
+    До улучшения A17 джокер стоял в списке «известен, но на счёт розыгрыша не
+    влияет» с пояснением, что прокачка достаётся только следующим рукам. Это
+    неверно: в игре подъём происходит в проходе `context.before`
+    (`card.lua`), то есть до чтения базы, и достаётся текущему розыгрышу.
     """
