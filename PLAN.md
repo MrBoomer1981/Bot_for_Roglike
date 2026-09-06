@@ -1770,8 +1770,22 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   at that moment. The journal records the chosen action's score and, in `reason`, only the
   runner-up, which is usually another discard — an extraction of "play available before the chain"
   over 16 runs matched **2 cases**. `chips_scored` is also written *before* each action, so a
-  round's final play never appears at all, which silently biased a round-level attempt. E1d adds
-  both numbers; until then any threshold change here would be tuning against a number nobody has.
+  round's final play never appears at all, which silently biased a round-level attempt.
+
+  **E1d — done, the prerequisite.** `Action.outlook` now records `best_play`, `best_discard`
+  and `discards_left` on every hand decision, so what a discard gave up is in the file rather
+  than inferred. `best_discard` is `None`, never `0`, when `rank_actions` was skipped — the
+  `_on_pace_without_discard` shortcut skips it deliberately (F1), and «not considered» must not
+  read as «nothing to discard». The entry closing a round carries `blind_beaten`, because
+  `chips_scored` is written *before* each action and therefore never includes a round's final
+  play. Attached by a wrapper at the branch's single exit — the third use of that shape after
+  E1a's lesson. Tests — `tests/test_autopilot.py::TestСнимкаВыбораНаРуке`,
+  `tests/test_runner.py::TestСнимкаВыбораВЖурнале`.
+
+  **What remains is a batch, not a code change.** With these fields one batch turns both open
+  questions into arithmetic: per discard, what was given up against what was got; per
+  zero-discard round, whether a discard was available and which guard rejected it. **No
+  threshold should move before that runs.**
 
 - **E1. The batch itself — half done.** 16 of 30 runs on RED/WHITE completed before the game was
   closed: **1 win, 6 %, mean ante 4.2** (depth: a1×2, a2×4, a3×1, a5×4, a6×2, a7×2, a9×1). The
