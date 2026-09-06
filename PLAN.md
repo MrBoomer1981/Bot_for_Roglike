@@ -1772,6 +1772,33 @@ The planned order (letter labels are working ones, not from the general phase nu
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
 
+- **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
+  the user asking whether jokers end up arranged identically. They do, almost always, and that part
+  is **correct**: measured over the 25 most frequent boards from the journals × 4 sampled hands
+  each, the gain from the best order has a median of **0.0 %** and is non-zero in only **3 of 100**
+  cases. Reordering fires in 1.9 % of hand decisions, and the low rate is the right answer rather
+  than a threshold set too high — the distribution is bimodal, so `_MIN_REORDER_GAIN_FRAC` barely
+  matters at all.
+
+  The defect is elsewhere: **23 of 24 reorders (96 %) return the board to an arrangement it held
+  moments earlier.** One RED run made 13 reorders, all 13 of them reversals, swinging
+  `Droll ↔ Odd Todd` back and forth across forty steps.
+
+  The comment on `_MIN_REORDER_GAIN_FRAC` claims the threshold "не даёт этому вылиться в дёрганье
+  туда-сюда". It does not, and cannot: **the best order is genuinely different for different
+  hands.** With `Brainstorm` on the board the leftmost joker is the one it copies, so a flush hand
+  wants `Droll` first and an odd-heavy hand wants `Odd Todd` first. Every individual reorder is
+  correct; the sequence is a pendulum. That comment is now false and should be corrected along with
+  the behaviour.
+
+  **Cost is small** — 0.8 % of all steps, and a rearrange consumes neither a hand nor a discard,
+  only a poll. This is not why runs are lost, which is why it is recorded rather than fixed
+  mid-batch.
+
+  **Why it is worth recording anyway:** it is the same reasoning error as B3 — a rule that judges
+  one step correctly while the *sequence* it produces is wrong. Two instances now, in different
+  parts of the policy, which suggests looking for others rather than treating each as a one-off.
+
 - **B3. Discards: one real finding, one claim of mine that did not survive checking — open,
   pending measurement.** This entry previously asserted that the bot "discards until discards run
   out and the promised value is never realised", and that assertion is **wrong**. It came from one
