@@ -1923,9 +1923,9 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   run that ended in `error` during the second rotation, then measured across all 33 journals.
 
   `solver/skip.py` prices the pack-opening tags (A14's `_SCORE_TAGS`) by the uplift of the pack
-  they grant, and the bot acts on it: **13 skips for a Meteor/Buffoon/Charm tag**, at claimed
+  they grant, and the bot acts on it: **15 skips for a Meteor/Buffoon/Charm tag**, at claimed
   uplifts of 163–1314 against bars of 90–660, each one forfeiting the blind's money reward. The
-  pack then reached the bot **3 times**; it took a card in 2 of those. Of the remaining 10, **9
+  pack then reached the bot **4 times**; it took a card in 3 of those. Of the remaining 11, **9
   went on to reach a shop** — several of them 10 to 17 shop decisions later — **and no pack ever
   opened**; exactly 1 is explained by the run ending before any shop.
 
@@ -1939,9 +1939,16 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   ```
 
   The bot decided from a `BLIND_SELECT` snapshot while the game had already moved into the
-  booster state, and by the time it observed `SMODS_BOOSTER_OPENED` the pack was gone again. So a
-  granted pack can open **and close between two polls** — which is also the most likely
-  explanation for the 9 silent losses, though the journal cannot prove it.
+  booster state, and by the time it observed `SMODS_BOOSTER_OPENED` the pack was gone again. A
+  second run reproduced the first half exactly — skip for a `Buffoon Tag`, a refused `select`,
+  then `SMODS_BOOSTER_OPENED` — but there the pack survived and the bot took `Campfire` from it.
+  So the wasted `select` after a pack-tag skip is systematic; whether the pack is still there
+  afterwards is not.
+
+  **The firing moment is not consistent in the data, and I do not claim one.** Over 15 pack-tag
+  skips the pack opened **before any shop in 2**, **after a shop in 2**, and **never in 11**.
+  Neither "it fires on the skip" nor "it fires at the next shop" survives that spread; the journal
+  does not record enough to say.
 
   **Cause not yet determined**, and it is one of two: the tag never fires at all, or it fires and
   the pack is missed in the poll gap. The diagnostic that settles it is small — the mod reports
@@ -1955,11 +1962,14 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   losing it. But C2's branch is a certain fix on a larger channel (239 affordable shelf offers),
   while this one still needs a diagnostic first.
 
-  **A correction kept, because the mistake is instructive.** My first measurement looked only 4
-  decisions past each skip and reported "17 pack-tag skips, 0 takes". Pack tags in Balatro fire on
-  the **next shop entry**, not on the skip, so the window was simply too short and the number was
-  meaningless. The corrected figures are the ones above. This is the second time this session that
-  a too-narrow window produced a confident wrong number, the first being the A22 misdiagnosis.
+  **Two corrections kept, because the mistakes are instructive.** First, my initial measurement
+  looked only 4 decisions past each skip and reported "17 pack-tag skips, 0 takes"; since packs do
+  sometimes open only after an intervening shop, that window was too short and the number was
+  meaningless. Second, in correcting it I wrote here that pack tags fire on the **next shop
+  entry** — stated as fact, and wrong: the very next error run showed a pack opening immediately
+  after the skip, and the 2/2/11 spread above shows neither timing is the rule. A wrong mechanism
+  in this document is worse than an open question, because it aims the fix. This is the second and
+  third time this session that a confident claim outran the data, after the A22 misdiagnosis.
 
   **Every mod refusal in the corpus is in pack handling**, which is the strongest evidence that
   this area — not the poll loop in general — is what is broken. Across **2 958 decisions in 33
