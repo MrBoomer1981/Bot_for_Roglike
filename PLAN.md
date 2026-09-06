@@ -1383,6 +1383,23 @@ The planned order (letter labels are working ones, not from the general phase nu
   its own last-used Tarot/Planet in the run loop — workable, since the autopilot is normally
   the one using them, but it is a new mechanism with a hole in it (a card used by the human
   during a hand-over would be missed), not a text read.
+
+  **Re-reported by the user 2026-09-06, and the feasibility has changed since this was
+  written.** When C1 slice 1 shipped, the autopilot barely used consumables, so "track our own
+  last-used card" was a mechanism with nothing to track. It now uses them: the batch journals
+  show `The Chariot`, `The Moon` and `The Magician` actually played. So the remaining route is
+  live rather than theoretical — the run loop already dispatches every `use`, and recording the
+  key of the last Tarot/Planet it played is a few lines in `runner.py` plus a `GameState` field
+  the mod does not need to provide.
+
+  Two honest limits stay. The bot would only know about cards **it** used, so a card played by
+  the human during a hand-over, or before `--adopt` picked the run up, is invisible — the value
+  must then fall back to an honest `None`, not to a stale guess. And `G.GAME.last_tarot_planet`
+  is set by the game for *any* use, so the two can diverge; the field should therefore be named
+  for what it is (what the bot last used) rather than pretending to mirror the game's own
+  counter. Valuing the card once it is known reduces to valuing that card, which slices 1 and 2
+  already do for the eight enhance-Tarots, the four suit ones, `Strength`, `Death` and every
+  Planet.
 - **A11. An audit of the whole "wrong state to evaluate from" defect class — done.** A8, A9,
   A10 and the `j_card_sharp` gap were, in retrospect, four instances of *one* defect: not a
   joker implemented wrongly, but the shop counterfactual scoring jokers from a state the round
