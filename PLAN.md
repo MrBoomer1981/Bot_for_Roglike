@@ -1741,6 +1741,33 @@ The planned order (letter labels are working ones, not from the general phase nu
   excluded by the game itself, per `random_string`); an explicit `--seed` still pins every run,
   which is the documented regression use. Tests — `tests/test_runner.py::TestСидыПакета`.
 
+- **A20. The suite now refuses the impossible — done.** Four defects this session were one class:
+  a joker valued from a state the game is never in — **A9** (contributions measured only with full
+  slots), **A10** (the wrong moment of the round), **A11** (money counted before the purchase),
+  **A18** (a candidate built with no sell value). Every one was found by a live run. None by
+  review, and none by a suite of a thousand tests — because they all asked *what a joker computes*
+  and none asked *what the counterfactual may never output*.
+
+  A18 is why this exists: its signature was visible without a game — `j_joker`, +4 Mult
+  unconditional, uplift **−1571**. That is arithmetic, not a judgement call. Three invariants now
+  assert it: an unconditionally beneficial joker never has negative uplift (the four such jokers
+  enumerated from the implementations rather than memory); a provably inert joker moves the number
+  by exactly `0.0`; and **exactness survives the counterfactual**, which A18 also broke and nothing
+  checked.
+
+  **Verified adversarially, not assumed.** Reverting A18's fix makes the new test fail at exactly
+  −1571 — the number from the journal. An invariant test that would not catch the bug it was
+  written for is worth nothing, and that is checkable in a minute.
+
+  **Two of the invariants were wrong as first written, and the tests caught it** — which is the
+  point of running them rather than reasoning about them. "An inert joker moves nothing" is false
+  on a board holding `j_abstract` (+3 Mult per joker) or `j_swashbuckler`: there, adding *any*
+  joker legitimately raises the score just by being in the list. And `Joker Stencil` is a real
+  exception — a joker can be worth less than an empty slot, which is A9's own finding — but not
+  against a strong candidate, whose flat bonus more than covers one lost multiplier. Both are now
+  scoped and pinned in both directions, so the exception stays a tested behaviour rather than an
+  untested excuse. Tests — `tests/test_shop.py::TestИнвариантыКонтрфактума`.
+
 ### Open, ranked — the next work
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
