@@ -38,18 +38,19 @@ uv run balatro-bot autoplay --deck RED --stake WHITE          # managed run: sta
 uv run balatro-bot autoplay --deck RED --all-stakes --runs 20 # batch: 20 runs per stake, WHITE→GOLD, win-rate table (Phase 9.7)
 uv run balatro-bot autoplay --deck RED --stake WHITE --runs 50 --adopt  # adopt the run already in progress, then keep playing
 uv run balatro-bot autoplay --deck RED --runs 20 --log runs/            # write one JSON decision journal per run (E1a) — needed to post-mortem an unattended batch
+                                    # runs/ and logs/ are gitignored — journals stay local
 uv run balatro-bot record NAME      # snapshot live state into tests/golden/ (see Testing Infrastructure)
 # global --host/--port (default 127.0.0.1:12346) go before the subcommand: balatro-bot --port 12346 doctor
 # watch/autoplay also take --no-joker-order / --no-discard / --no-shop (poll-budget escape hatches);
 # autoplay --deck adds --stake (default WHITE) / --seed / --runs / --max-steps (default 2000)
 
-# Test — full suite is ~2 min (the joker-order and discard-search tests dominate);
+# Test — full suite is ~3 min (the joker-order and discard-search tests dominate);
 # scope with -k / a path while iterating, then run the whole suite before finishing
 uv run pytest
 uv run pytest tests/test_scoring.py -v   # single file
 uv run pytest -k scoring                  # by pattern
 uv run pytest "tests/test_scoring.py::TestОснова::test_пара" -v     # a single test (tests live in classes)
-# 827 tests, no CI — ruff + mypy + pytest run locally are the only gate
+# ~1130 tests, no CI — ruff + mypy + pytest run locally are the only gate
 
 # Lint & type-check
 uv run ruff check balatro_bot tests
@@ -136,6 +137,13 @@ entry for a module before changing it: most record a deliberate refusal (a numbe
 project will not guess, a value it will not fold into another) that the code alone doesn't
 explain. Keep it in lockstep with the code the same way `PLAN.md` is kept in lockstep with
 the plan.
+
+The other two documents under `docs/` are narrower and both still normative:
+**[docs/Discard Spec.md](docs/Discard%20Spec.md)** is the Phase 6 spec for `advise_discard`
+— its section 7 is the source of the documented ±15% tolerance that `autopilot.py`'s
+`_DISCARD_EDGE_MARGIN` is calibrated against, so read it before touching discard estimates
+— and **[docs/mac-setup.md](docs/mac-setup.md)** is the manual fallback for the mod stack
+that `balatro-bot install` automates.
 
 ## Key Design Rules
 
