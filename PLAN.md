@@ -11,8 +11,10 @@ the already-computed advice and fills in the decisions that used to be left hone
 human.
 
 Status: phases 0–2 and 4 are closed. Phase 3 — the scoring engine is ready (149 of 150
-jokers), but verifying the numbers against the real game (task 3a) hasn't been done — needs
-a Mac. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
+jokers); the numbers themselves were checked against the game's own source on 2026-09-05
+(§9.8 **A12**), and what task 3a still wants is reference cases captured from a live game as
+an end-to-end check. The old "needs a Mac" label is deliberately gone — §8.3 explains why it
+was wrong six times out of seven. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
 and joker order, blind skip and economy). Phase 9 ("Autopilot") — subtasks 9.1–9.7 are done
 (action loop, skip/shop/pack-opening, vouchers, Planet consumables, boss catalogue and score
 fix, stake stickers, run-runner) plus the section 9.8 improvement roadmap through **C2** and **A21/A22** — that
@@ -342,9 +344,18 @@ section 2).
 
 ### Play or discard (Phase 6)
 
-The expected value of a discard is computed by Monte-Carlo: sample N draws, compute the best
-possible score for each, average. Compare against "play now", taking into account how many
+The expected value of a discard is compared against "play now", taking into account how many
 hands and discards are left before the blind.
+
+**Monte-Carlo was the original design here and was dropped — see §8.3 #9, which records the
+removal.** It was going to sample N draws and average, and the speed estimate (1000 samples ×
+218 options) is what killed it. What replaced it is not a cheaper sample but an exact answer:
+`discard_outcome` enumerates **compositions of equivalence classes** — cards indistinguishable
+by the final score are counted once and weighted by a binomial coefficient — so a five-card
+discard is answered exactly where the raw draw search stalled at two. The cheap general-case
+path (`advise_discard`, `docs/Discard Spec.md`) is not a Monte-Carlo either: it enumerates
+*targets* with a hypergeometric probability and estimates the payoff over a sample of
+representative hands. Nothing in this module samples draws.
 
 **Accuracy depends on the state source**, and this must be shown honestly in the interface:
 
@@ -371,7 +382,10 @@ result. Two cases of very different size:
 - **Tarot cards** — an order of magnitude larger: ~22 different effects, many of which don't
   add a number but transform cards (`Death` — picking a "donor/target" pair of cards, a
   search dimension on top of the existing one). Comparable in scope to implementing new
-  jokers. Not started (improvement C1); `Death` has already turned up in the inventory live.
+  jokers. **Improvement C1, first slice done**: the eight "enhance the selected cards" Tarots
+  are computed exactly, `Hermit`/`Temperance` in dollars, the rest an honest `None`. The second
+  slice — suit conversion, `Strength`, `Death`, `The Hanged Man` — is still open; `Death` has
+  already turned up in the inventory live.
 
 Not tied to a phase number: essentially closer to Phase 4 (affects the current play, not the
 shop), but it surfaced after the phase numbering was already fixed.
@@ -389,11 +403,15 @@ shop), but it surfaced after the phase numbering was already fixed.
   `GameState.hand` is empty), but averaged over `SAMPLE_HANDS = 12` representative hands from
   the deck (`full_deck` in the narrow case, otherwise `standard_deck()` with an honest
   `exact_deck=False` marker). A joker the game doesn't know gets `expected_uplift=None`, not
-  a guess. Vouchers and packs get no estimate at all — a deliberate decision, not a gap: a
-  voucher changes the run's rules wholesale (discounts, slots, odds), not the score of one
-  hand, there's nothing to compare with via a counterfactual; instead of a number — the live
-  effect text from the game itself (`ShopItem.effect`, the same `value.effect` field that
-  gives `JokerCard.current_value` elsewhere). **The economy adjustment (done)** —
+  a guess. **Vouchers and packs got no estimate in this phase** — a deliberate refusal at the
+  time, not a gap: a voucher changes the run's rules wholesale (discounts, slots, odds), not
+  the score of one hand, so there was nothing to compare with via a counterfactual, and instead
+  of a number the live effect text from the game itself was shown (`ShopItem.effect`, the same
+  `value.effect` field that gives `JokerCard.current_value` elsewhere). **That refusal was
+  lifted in Phase 9.3**, which is what the third honesty tier (section 2) exists for:
+  `solver/vouchers.py` values all three tiers and `solver/shop.py`'s `PackPurchaseOffer` values
+  a pack by an expected value over its own mechanic. The effect text is still shown, now
+  alongside a number rather than instead of one. **The economy adjustment (done)** —
   `JokerOffer.interest_lost`: buying a joker also means forgone interest at the end of the
   next round, not only `item.price`. The formula (`solver.shop._interest`) is written out
   from the game's `functions/state_events.lua`, not from memory: `interest_amount *
@@ -402,15 +420,19 @@ shop), but it surfaced after the phase numbering was already fixed.
   same principle as `core/tags.py`) — `interest_lost` is shown next to `expected_uplift`,
   not subtracted from it. Two honestly acknowledged incompletenesses: the figure is only
   about the next round-end, not the whole rest of the run (that needs knowing the number of
-  remaining rounds — already Phase 9 scope, not a shop-screen thing), and it assumes the
-  default $25 cap because `GameState` doesn't store already-redeemed `Seed Money`/`Money
-  Tree` (which raise the cap to $50/$100) — so it's an honest lower bound, not an
-  overestimate. The one explicitly tracked special case is `Green Deck`
+  remaining rounds — already Phase 9 scope, not a shop-screen thing), and — at the time this
+  was written — it assumed the default $25 cap because `GameState` did not store already-redeemed
+  `Seed Money`/`Money Tree` (which raise the cap to $50/$100), making it an honest lower bound
+  rather than an overestimate. **That second one is closed:** Phase 9.3 added
+  `GameState.used_vouchers` (the field was in the mod's schema all along, the bridge just never
+  parsed it) and moved the formula into `core/economy.py`, so the cap is now read, not assumed.
+  The one explicitly tracked special case is `Green Deck`
   (`GameState.deck_type == "GREEN"`), where `game.lua` disables interest outright: there
-  `interest_lost` is a guaranteed zero, not an approximation. **Not verified live on a Mac
-  yet**: over the course of development the game never reached the `SHOP` phase — only
-  `doctor` on an empty shop (not in phase `SHOP`) is confirmed not to crash. Verification
-  against a real joker offer is an open task, not completed work.
+  `interest_lost` is a guaranteed zero, not an approximation. **Verified live**: the sentence
+  here used to read "not verified live on a Mac yet — the game never reached the `SHOP` phase",
+  which stopped being true on 2026-08-21. The shop has since been exercised across dozens of
+  live runs; the deck rotation alone measured 575 shelf offers, and the shop policy is where
+  most of the improvement log comes from (A1–A2, A5–A11, A21/A22, C2).
 
 ### Run strategy (Phase 8)
 
@@ -471,12 +493,22 @@ section above).
 price right now, from the mod's `round` area (`reroll_cost`, the same area as
 `hands_left`/`discards_left` — read live from `tests/fixtures/gamestate.json`, not from
 memory). `ShopAdvice.reroll_cost` shows it next to the evaluation of the current shop offer
-(`solver/shop.py`, `doctor`/`watch`). The bot deliberately goes no further: an honest "is a
-reroll worth it" estimate would require knowing the distribution of what might roll instead
-of the current offer (`joker_rate`, rarity odds from `game.lua`) — a computation over a
-probabilistic model of what doesn't exist yet, rather than over what the game already
-showed, different in spirit and risky in scope compared with the rest of this module. The
-same principle as `solver/skip.py`: laid-out numbers, not a made-up verdict.
+(`solver/shop.py`, `doctor`/`watch`). The bot stopped there at first, and the reason is worth
+keeping: an honest "is a reroll worth it" estimate needs the distribution of what might roll
+instead of the current offer, which looked like a computation over a probabilistic model of
+what doesn't exist yet — different in spirit from the rest of this module, which only ever
+computes over what the game has actually shown.
+
+**That refusal was lifted by improvement A5**, and the distinction that made it possible is the
+one the refusal got wrong: the objection was to *guessing* the odds, and the odds do not have to
+be guessed. `game.lua` states them — the shop's `joker_rate`, and the rarity split — so
+`RerollOutlook` is a Monte-Carlo of the roll *mechanic* with the game's own numbers, over
+`GameState.shop_slots` slots, valuing each hypothetical joker with the same `joker_uplift`
+counterfactual used everywhere else. Three later improvements calibrated the policy on top of
+it — **A8** (an opportunity-cost gate against the shelf plus a per-visit cap), **A21** and
+**A22** (roll only when there is somewhere to put the find, and keep only enough money to buy
+it). What survives from the original reasoning is the narrower rule the module still follows,
+the same as `solver/skip.py`: never invent a number the game can supply.
 
 ### Autopilot (Phase 9)
 
@@ -488,414 +520,80 @@ document), but 9.1 and 9.5 logically come first: without an action loop there's 
 execute decisions with, and without the boss catalogue the autopilot can honestly compute an
 illegal move and get stuck trying to play it.
 
-**9.1. The action loop and honest bridge calls.** `ModBridge` can already assemble
-`game_state()` and formally has client methods `play()`/`discard()`, but nobody calls them
-(see CLAUDE.md). The mod exposes far more actions than are used now — the whole list checked
-against `openrpc.json` (section 2, "Honest actions only"): `select`/`skip` (blind-select
-screen), `play`/`discard` (a play), `buy`/`sell`/`reroll`/`next_round`/`cash_out` (the
-shop), `use` (a consumable, optionally with target cards), `rearrange`
-(hand/joker/consumable order — needed to apply the result of `rank_joker_orders`, which the
-solver already computes but which nobody applies), `start` (a new run with a chosen deck and
-stake). The loop itself is a finite state machine over `GameState.phase`: on each phase a
-concrete decision (from the finished solver, where it's already exact; from the new subtasks
-below, where there used to be an honest refusal) → one RPC call → read state again. The same
-poll-and-compare-states pattern already present in `ui/tui.py` for `watch`, except `watch`
-ends with polling and the autopilot with an action.
+**Where the per-subtask detail lives, and why it is not here.** This section used to carry a
+build record for each subtask — what was implemented, how each policy works, which tests pin
+it. It grew to a quarter of this document while the code moved on underneath it, and that is
+exactly how it came to assert several things the code had stopped doing: that the shop had
+never been reached live, that vouchers and packs got no estimate, that a reroll would never be
+valued. The prose was a second copy of module documentation:
+**[docs/architecture.md](docs/architecture.md)** carries about 70 KB on precisely these modules,
+including 21 KB on `autopilot.py` alone, and it is kept in lockstep with the code. It is the
+place to read *how the action layer works*. What stays here is the plan — what each subtask is
+for, where it stands, and what is deliberately outside it.
 
-This directly implies the switching requirement (section 2): since both modes read state the
-same way and differ only in who pulls the actions, `autoplay` must check a "pause/takeover"
-switch between every action of the loop (not only between runs) and, when paused, behave
-like `watch` — show the same thing, touch nothing — until control is handed back.
+| # | Subtask | State | Where the detail is |
+|---|---|---|---|
+| **9.1** | The action loop and honest bridge calls — a state machine over `GameState.phase`: one decision → one RPC → re-read the state | **done** | `autopilot.py` entry |
+| **9.2** | Closing the decisions the advisor left to the human — blind skip, the shop, opening a Celestial pack | **done** | `autopilot.py`, `solver/skip.py`, `solver/pack.py` |
+| **9.3** | Valuing vouchers and packs across the three honesty tiers (section 2, "Third category") | **done** | `solver/vouchers.py`, `solver/shop.py` |
+| **9.4** | Consumables and hand preparation before a play | **Planet slice done; Tarot first slice done (C1)** | `solver/consumables.py` |
+| **9.5** | Rule-modifying bosses — the 28-boss catalogue, the illegal-play filter, and `The Flint`'s score fix | **done**, closing §8.3 #10 | `core/bosses.py`, `solver/play.py`, `core/scoring.py` |
+| **9.6** | Stakes: cumulativity, and the Eternal/Perishable/Rental stickers | **done** | `solver/shop.py` |
+| **9.7** | The run-runner and win-rate measurement | **done** | `runner.py` |
 
-**Done (`SELECTING_HAND` — play/discard).** `balatro_bot/autopilot.py`:
-`decide_action(state)` at its base takes the top-1 from `solver.actions.rank_actions` (the
-same list the human sees in `advise`/`watch`) and translates the chosen cards into the
-0-based indices the mod's RPC expects (`ModBridge.play`/`.discard`). **A correction added
-after a live run:** `rank_actions` compares plays and discards by expected value, and for a
-discard it's optimistic by construction (`ActionOption.exact = False`), so "discard toward a
-flush" often shows a bigger number than "play this two pair" — even when the pair already
-guarantees clearing the blind. The human sees the "hits the blind" marker and isn't fooled;
-the autopilot, though, traded a certain win for a gamble (live: discarding all four discards
-where the current hand already cleared ante 1). Now `decide_action` first checks
-`advise(state).cheapest_sufficient` — the most economical move whose **lower bound**
-(`Candidate.beats`, not the mean) already covers the remaining requirement — and plays it;
-the top-1 of `rank_actions` (possibly a discard) is taken only when there's no guaranteed
-move. Not a new score computation, but a "certain over probable" priority, the same
-principle as `decide_skip`.
-`ui/tui.py.autoplay()` — the same poll loop as `watch`, plus a "pause/takeover" switch on
-the `p` key (not a separate command — pressed while it's running), checked on every
-iteration, i.e. between every individual action, not only between runs — that same
-requirement above, recorded as mandatory. Real keyboard input is read via `termios`/`tty` in
-cbreak mode (standard library, no new dependencies); if stdin isn't a terminal, the switch
-quietly disables itself instead of crashing, and the autopilot keeps working without it. A
-mod rejection of an honestly computed move (e.g. a boss restriction that `_is_legal_play`
-doesn't cover yet) doesn't bring down the loop — it prints the error and keeps polling with
-the same state.
+**What pins each subtask**, kept here because these are the entry points and the module notes
+name test *files* rather than classes: 9.1 and 9.2 — `tests/test_autopilot.py`
+(`TestDecideSkip`, `TestDecideActionНаВыбореБлайнда`, `TestDecideActionНаRoundEval`,
+`TestDecideActionВМагазине`, `TestDecideActionНаВскрытииПака`) with
+`tests/test_tui.py::TestAutoplay`
+and `tests/test_mod_bridge.py::TestКлиент`/`TestРазборСостояния` for the loop and the client;
+9.3 — `tests/test_pack.py` and `tests/test_shop.py`; 9.5 — `tests/test_bosses.py`,
+`tests/test_solver.py::TestЛегальностьПодБоссом` and `tests/test_scoring.py::TestБоссФлинт`;
+9.7 — `tests/test_runner.py`.
 
-**Done (`BLIND_SELECT` — blind skip, the first slice of 9.2).** `autopilot.decide_skip(advice)`
-— an extremely conservative policy on top of the already-computed `evaluate_skip` numbers,
-not a new computation: skip only if `SkipAdvice.tag_dollars` is known exactly (currently
-only `Investment`/`Economy Tag`) and strictly exceeds `play_reward_min`. Structural tags (a
-free joker/voucher/pack) never trigger a skip on their own — not because they're worthless
-(a common experienced choice is exactly to skip for them), but because valuing them in
-dollars here would mean guessing. When a skip isn't proven by a number (including the case
-where skipping isn't even possible — the Boss Blind is next) — the decision is `select`,
-play. `ModBridge.select()`/`.skip()` — new client methods (parameterless RPC, `openrpc.json`
-confirms: the mod knows which blind is being selected). Tests —
-`tests/test_autopilot.py` (`TestDecideSkip`, `TestDecideActionНаВыбореБлайнда`),
-`tests/test_tui.py::TestAutoplay`, `tests/test_mod_bridge.py::TestКлиент`.
+Everything found after these closed — every policy change, every threshold, every defect a live
+run surfaced — is the improvement roadmap in section 9.8 and the
+**[improvement log](docs/improvements.md)**, not this section. Where the two ever disagree about
+what the code does, `docs/architecture.md` is the copy to trust.
 
-**Done (`SHOP`/`ROUND_EVAL` — the shop, the second slice of 9.2).** Between "won the round"
-and "entered the shop" there's a `ROUND_EVAL` phase ("collect the round reward") — there's
-nothing to decide there, but without an explicit `cash_out` the autopilot would be stuck
-there forever, exactly as without `select`/`skip` on blind-select; `decide_action` calls it
-unconditionally. In the shop the joker-buying policy is as simple and honest as possible:
-buy the best one by uplift (`solver.shop.evaluate_shop`'s `expected_uplift`, already sorted
-descending) if it's known to the engine (`known`), affordable (`affordable`), has a slot
-(`has_slot`), and the uplift is strictly positive — all four flags are already computed in
-`evaluate_shop`, not a new heuristic. `interest_lost` (forgone interest, "Shop and joker
-order" section) deliberately plays no part in the "buy or not" decision — a quantity
-incommensurable with a score uplift (dollars versus points, the same principle as
-`decide_skip`), only shown to the human alongside. A purchase — at most one per
-`decide_action` call: `evaluate_shop`'s counterfactual for a second joker doesn't account
-for the first one just bought (jokers like `Blueprint` depend on neighbours), so it's right
-to recompute after each purchase — the poll loop re-reads state every iteration anyway, the
-next joker's score will be honest on its own. When there's nothing left to buy — the
-decision is `next_round`, leave the shop. Vouchers, packs, and reroll were deliberately
-untouched in this slice of 9.2 — `evaluate_shop` didn't give them a numeric estimate then;
-later the autopilot learned to buy packs and vouchers (improvements A3/A4, paragraph below),
-reroll — still not (A5, section 8 of the plan, "Reroll timing").
-`ModBridge.buy()`/`.next_round()`/`.cash_out()` — new client methods (`buy` multiplexes
-`card`/`voucher`/`pack` per the mod's schema, only `card` used here). Tests —
-`tests/test_autopilot.py` (`TestDecideActionНаRoundEval`, `TestDecideActionВМагазине`),
-`tests/test_tui.py::TestAutoplay`, `tests/test_mod_bridge.py::TestКлиент`.
+**The advisor ⇄ autopilot switch is a plan-level constraint, not an implementation detail.**
+Recorded again here because it constrains 9.1's shape: `autoplay` must check the pause/takeover
+switch **between every action**, not only between runs, and when paused must behave exactly like
+`watch` — show the same thing, touch nothing. Both modes read the same state through the same
+bridge and differ only in who pulls the actions, so this is a requirement about the loop, not a
+feature to bolt on. Section 2 states it as a goal; section 9.1 states it as a decision.
 
-Later (improvements A1–A4, item 9.8) this branch grew: **A2** — the joker-buy threshold
-raised from "> 0" to 3% of the next blind's requirement (`_worth_buying`); **A4** — buying
-vouchers across all three honesty tiers (`_decide_voucher_action`); **A3** — buying a
-Celestial pack from the shop (the same branch as Buffoon); **A1** — sell-replace when slots
-are full (`_decide_replace_action` sells the weakest non-eternal joker under a noticeably
-better offer). The current branch order in `_decide_shop_action`: buy a joker → buy a
-voucher → buy a Buffoon/Celestial pack → sell-replace → leave (`next_round`). Details of all
-four — item 9.8.
+**What each subtask deliberately left open.** These are scope boundaries, not gaps to be
+discovered later:
 
-**Done (`PLANET_PACK` — opening a Celestial/Planet Pack, the third and last slice of 9.2).**
-`solver/pack.py`'s `evaluate_pack(state)` computes the same counterfactual as jokers in the
-shop (`_evaluate_joker_offer`): raise the level of the needed hand type in a copy of
-`GameState.hand_info` (`_level_up`, the step from the already-verified
-`core.hands.PER_LEVEL_VALUES`), recompute `advise()` on representative hands (the same
-sample as in `solver/shop.py` — `GameState.full_deck` if known exactly, otherwise the
-standard deck), take the difference from the old score. `PLANET_HAND_TYPES` — a "planet key
--> hand type" table for all 12 planets, written out from the already-verified effect texts
-in `core/catalogue.py` (`c_pluto`, `c_mercury`, ...), not from memory; coverage (all 12 hand
-types exactly once) is checked by `tests/test_pack.py`. The autopilot's policy
-(`_decide_pack_action`) is simpler than skip/shop: raising a hand level can't by construction
-worsen the best achievable score (it's purely additive chips/mult for one specific type,
-taking nothing from the others) — so there's no "is it worth it" question here at all, only
-"which of the offered cards"; `skip_pack` is only a defensive case when the pack contained
-no recognized planet. Jumbo/mega packs (1 of 5 / up to 2 of 5) needed no separate branch:
-the poll loop re-reads state every iteration anyway, and if the pack stays open after one
-pick, the next pick is recomputed on the already-updated state. The new bridge client method
-is `ModBridge.open_pack(*, card=None, skip=None)` (the mod's RPC method is called `pack`,
-renamed on the client to avoid confusion with `buy(pack=...)` — that's a pack index in the
-shop, a different concept). `GameState.pack` — a new area (`ShopItem`, the same shape as
-`shop`/`shop_vouchers`/`shop_packs`). Rendering — `render_pack_advice`, shown in
-`doctor`/`watch`/`autoplay` unconditionally, like the other kinds of advice. Tests —
-`tests/test_pack.py` (the computation itself),
-`tests/test_autopilot.py::TestDecideActionНаВскрытииПака`, `tests/test_tui.py::TestAutoplay`,
-`tests/test_mod_bridge.py::TestКлиент`/`TestРазборСостояния`.
-
-All four parts (`SELECTING_HAND`/`BLIND_SELECT`/`SHOP`+`ROUND_EVAL`/`PLANET_PACK`) — **not
-verified live on a Mac**, so far only against the fake mod (`tests/fake_mod.py`, which
-simulates neither a real play nor a real transition between phases).
-
-Any phase other than those listed above (opening a Tarot/Spectral/Standard/Buffoon pack,
-`TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK`/`BUFFOON_PACK`) still deliberately returns
-`None` — the decisions there aren't closed yet, the autopilot does nothing on them, exactly
-like `watch`.
-
-**9.2. Closing decisions without a ready verdict — fully closed.** Blind skip, shop joker
-purchasing, and opening a Celestial/Planet Pack are done above. The other pack types
-(Arcana/Tarot, Spectral, Standard, Buffoon) are a separate task, see 9.3/9.4 below: they
-don't reduce to the same simple counterfactual (they transform specific cards or contain RNG
-this pack doesn't have).
-
-**9.3. Valuing vouchers and packs.** The 32 vouchers were analyzed against
-`card.lua`/`game.lua` (`Card:apply_to_run`, the `v_*` table in `game.lua`) into groups by
-how honestly they can be valued — not binary "we compute / we don't", but across three
-tiers, per the new third honesty category above:
-  - **Exact computation, no new assumptions — done (`solver/vouchers.py`).** `Grabber`/
-    `Nacho Tong` (+1 hand per round each, verified against `card.lua`: `config.extra` really
-    is added, doesn't set an absolute value) are valued as the plain average best score
-    (`advise().best.score`) over representative hands — no baseline subtracted, an extra hand
-    creates a wholly new play opportunity rather than improving an existing one. `Paint
-    Brush`/`Palette` (+1 hand size each) — by the same counterfactual as jokers in
-    `solver/shop.py`: one sample of a hand of size `_HAND_SIZE + 1`, the score with it and
-    the score over the first `_HAND_SIZE` cards of the same sample, the difference — so the
-    uplift is measured over the one specific added card, not over two independently sampled
-    hands. `Wasteful`/`Recyclomancy` (+1 discard per round each) — the one case in this
-    group that's honestly **no longer quite "no new assumptions"**: the value is measured
-    only through `rank_single_discards` (the one discard size whose exact search is always
-    cheap), not through the full `rank_discards` up to five cards — that's an order of
-    magnitude more expensive per sample and doesn't fit a shop-visit budget (~1.5 s for 4
-    vouchers in a live measurement). The number is an honest lower bound
-    (`VoucherOffer.note` says so directly), not an overestimate: a real multi-card discard
-    could be worth more.
-
-    **`Hieroglyph`/`Petroglyph` — honestly deferred, not done.** An earlier revision of this
-    plan item assumed that "per-ante blind requirements" were already computed by existing
-    pieces — during implementation it turned out they aren't: nowhere in the project is
-    there a formula for a blind requirement by ante number (`get_blind_amount(ante)` in
-    `functions/misc_functions.lua` — an exact, deterministic table for antes 1–8 and a power
-    formula beyond, but it also depends on the stake and the deck, which aren't accounted
-    for anywhere either). Building it now is noticeably more scope than "just one more
-    voucher", so `Hieroglyph`/`Petroglyph` fall into the same honest `None` with an
-    explanation as tiers two and three below, rather than being silently skipped or given a
-    wrong estimate.
-  - **A dollar formula with an explicit horizon — done (`solver/vouchers.py`).** `Seed
-    Money`/`Money Tree` (`core.economy.interest_cap`) are valued as `(interest at the new
-    cap − interest at the old cap) × horizon`, where the horizon isn't an invented "until
-    the end of the ante" in words but a computed number: how many of this ante's blinds are
-    not yet `DEFEATED` in `GameState.blinds`. The one explicitly flagged assumption is that
-    the money total at each future round-end stays roughly what it is now (it may actually
-    grow or shrink). `Reroll Surplus`/`Reroll Glut` are valued noticeably more narrowly:
-    only the saving on the *next* reroll at the current `GameState.reroll_cost`, not on
-    every reroll to the end of the run — the same partiality that `JokerOffer.interest_lost`
-    already had. `Clearance Sale`/`Liquidation` (`core.economy.discount_percent`) are valued
-    against the goods already shown in this shop visit (`GameState.shop` + `shop_packs`),
-    not against projected future visits — the horizon is again taken from what's shown, not
-    invented; inverting an already-discounted price back to the undiscounted base (needed
-    only if a discount is already partly active) is an approximation of a few dollars
-    because of the `floor()` in the game's own price formula, `VoucherOffer.note` says so
-    directly.
-
-    **A side finding and fix: `GameState.used_vouchers`.** To compute the "current
-    cap"/"current discount" exactly at all rather than by default, we needed to know which
-    vouchers have already been redeemed this run — the field exists in the mod's schema
-    (`openrpc.json`'s `GameState.used_vouchers`), but the bridge never parsed it. Added
-    (`adapters/mod_bridge.py`, `core/economy.py` — the shared interest/discount formula,
-    extracted from `solver/shop.py` so two places with the same logic don't drift). This
-    also closes an earlier honestly acknowledged assumption in `solver/shop.py`'s
-    `JokerOffer.interest_lost`, which used to always assume the default $25 cap precisely
-    because this field wasn't there.
-  - **A heuristic constant — done (`solver/vouchers.py`).** `Hone`/`Glow Up` (edition odds
-    in the shop), `Tarot`/`Planet Merchant`/`Tycoon` (consumable frequency),
-    `Overstock`/`Overstock Plus` (+1 shop slot), `Crystal Ball` (+1 consumable slot),
-    `Antimatter` (+1 joker slot), `Telescope`/`Observatory` (a Celestial pack always
-    contains the needed planet / a mult bonus from planets in the inventory) — all 12 change
-    future RNG or future decisions, there will never be an exact number; they got not
-    silence but an explicitly separate field `VoucherOffer.heuristic_value` (not
-    `expected_uplift` — section 2, "Third category": the inexactness here is of a different
-    kind than an approximate computation, so the field must be structurally different too,
-    not the same one with a flag). The numbers are ranked by the game-sense of the effect,
-    not computed: a joker slot (`Antimatter`) is ranked highest, `Observatory` lowest (it
-    helps only while the needed planet actually sits unused in the inventory);
-    `render_shop_advice` labels them "экспертно", not "прирост", so they don't visually mix
-    with the first two tiers. The run-runner (9.7) will give a measurable win-rate against
-    which these twelve numbers can and should be revised.
-
-    A side finding was also fixed: `v_blank` ("Does nothing?" in the game's own text) — not
-    a heuristic but a fact confirmed against `card.lua` (`Card:apply_to_run` does nothing
-    for it beyond an achievement check), so it got an exact `expected_uplift = 0.0`, not a
-    guess. The other vouchers not even mentioned in this tier's original list
-    (`Director's Cut`/`Retcon` — Boss Blind reroll, `Illusion`/`Magic Trick` — buying
-    playing cards, `Omen Globe` — a Spectral in an Arcana Pack) stay honestly `None`.
-
-  **Packs — Celestial and Buffoon are done.** The shop shows only the type and price; the
-  contents are generated on opening — a counterfactual *before the purchase* is impossible,
-  only an expected value over the pool.
-  - **Opening** (`solver/pack.py`, `evaluate_pack`, phases `PLANET_PACK`/`BUFFOON_PACK`):
-    Celestial/Planet — an exact hand level-up via the existing tables; Buffoon — the jokers
-    are *visible*, no RNG, the same counterfactual as a shop joker (`solver.shop.joker_uplift`,
-    extracted into shared code). A planet can't worsen the score → always take the best one;
-    a bad joker can → take one only on a strictly positive uplift and a free slot, otherwise
-    `skip_pack` (`autopilot._decide_pack_action`).
-  - **Purchasing** (`solver/shop.py`, `PackPurchaseOffer` in `ShopAdvice.packs`): Buffoon
-    only, via an honest expected value of the pack mechanic — `joker_uplift` over
-    `PACK_JOKER_SAMPLE = 24` random implemented jokers (once per shop visit), then a cheap
-    resample `_monte_carlo_pack` "best `choose` of `extra`" by pack size (Normal 2/1, Jumbo
-    4/1, Mega 4/2, from `game.lua`). An early version took a lower bound — the mean uplift of
-    one random joker, always positive, which made the autopilot buy every pack (3 of 4
-    bought live were then skipped); replaced after live run 5.
-    `autopilot._decide_shop_action` buys a Buffoon pack (`Action.kind = "buy_pack"` →
-    `ModBridge.buy(pack=...)`) if there are no jokers worth taking, the estimate is
-    positive, there's a slot, and it's affordable.
-  - `TAROT_PACK`/`SPECTRAL_PACK`/`STANDARD_PACK` — nothing to value them with (they need the
-    consumable/deck-card mechanics, the next item), but the autopilot takes `skip_pack` on
-    them rather than getting stuck.
-  - A Celestial pack *in the shop* (purchasing) is valued — by the same technique as Buffoon
-    (an expected value over the 12 planets, `_planet_uplift_pool` + `_monte_carlo_pack`),
-    improvement A3 (item 9.8).
-
-**9.4. Consumables and hand preparation before a play — the Planet slice is done
-(`solver/consumables.py`).** The "Consumables before a play" section above was marked
-"discovered live, not done" with no phase attached — now it's a direct dependency of the
-autopilot. A new state area `GameState.consumables` (the mod sends it for the whole run, not
-just on one phase like `shop`/`pack`) gives the list of Tarot/Planet/Spectral cards in the
-inventory.
-
-Planet cards turned out even simpler than expected: mechanically it's the same level-up as
-picking a card from a Celestial Pack (`solver.pack.level_up`, now a public function, reused
-rather than duplicated), but here there's a real current hand (`SELECTING_HAND` always
-provides one) — instead of sampling representative hands, as in `solver/pack.py`/
-`solver/shop.py`, an exact `advise()` is computed directly on the real hand cards twice
-(without the level / with the level). This is an honestly incomplete figure: the uplift is
-computed only for *this* hand, not for every future play of this type in the rest of the run
-(the same principle as `JokerOffer.interest_lost` — only the nearest, not the whole
-horizon), so the autopilot's policy doesn't wait for a positive number — it uses any Planet
-card it finds right away, exactly like `_decide_pack_action` in 9.2 (a level-up can't worsen
-the score).
-
-**A side finding: `v_observatory` creates a real but uncomputed trade-off.** This voucher
-(the third honesty tier, `solver/vouchers.py`) gives X1.5 mult per *unused* Planet card in
-the inventory that matches the type of the hand being played — so using the card now may
-cost a repeatable bonus for the sake of a one-time level-up. The bonus itself isn't
-implemented anywhere in the scoring engine (only text in `core/catalogue.py`, not a formula
-in `core/scoring.py`), so there's nothing here to compare "use" against "hold" —
-`PlanetConsumableOffer.note` honestly warns about this if `v_observatory` is redeemed,
-rather than staying silent about a real trade-off. The new bridge client method is
-`ModBridge.use(consumable, *, cards=None)` (`openrpc.json`'s `use`; Planet cards don't use
-`cards` — no targets needed).
-
-**Tarot cards are still untouched** — comparable in scope to implementing new jokers: ~22
-different effects, some of which don't add a number but transform specific cards (`Death` —
-donor/target, a search dimension on top of the existing one).
-
-**9.5. Rule-modifying bosses — catalogue, legality filter, and score fix all done.**
-Assumption #10 (section 8.3) used to be "silently wrong advice" that a human would catch.
-For the autopilot it isn't a minor defect: the bot can honestly compute an illegal move and
-try to play it via `play`, get a mod rejection, and not know what to do next. **The
-catalogue is done** — `core/bosses.py`, all 28 boss blinds (`game.lua`'s `P_BLINDS`, `bl_*`
-keys; `bl_small`/`bl_big` aren't in there, they're ordinary blinds), written out from
-`blind.lua` (`Blind:debuff_hand`/`modify_hand`/`press_play`/`set_blind`/`disable`, dispatched
-on `self.name` — the English identifier from `game.lua`, the same one the mod sends as
-`BlindInfo.name` regardless of interface locale) and `functions/state_events.lua` (an
-addendum for `The Serpent`), not from memory — the same pattern as `core/tags.py`. Coverage
-— `tests/test_bosses.py`, 28 keys exactly once (the same principle as `test_tags.py`).
-
-Of the 28 bosses, only three actually hit the *composition of a specific play*
-(`BossEffect.restricts_legal_plays=True`, flagged in the catalogue): `The Mouth` (only one
-hand type for the whole round), `The Eye` (can't replay an already-played hand type),
-`The Psychic` (can't play fewer than 5 cards). The rest are either already honestly
-reflected by live state fields with no separate code (`The Water`/`The Needle` —
-`discards_left`/`hands_left`; `The Manacle` — the size of the live `GameState.hand`), or the
-generic suit/rank/face debuff case (`Card.debuffed`, already working — the assumption "a
-debuff doesn't affect the hand type" confirmed live, `The Goad`, section 8.3 #4), or purely
-visual (face-down cards for `The Fish`/`The House`/`The Mark`/`The Wheel` — they don't
-change the hand composition the bot sees through the mod), or economic side effects with no
-influence on the score (`The Tooth`: −$1 per card; `The Ox`: zeroing out money; `The Hook`:
-a forced discard of 2 cards after a play) — honestly recorded in `summary`, but they block
-no move.
-
-**`The Flint` — fixed.** The base hand chips and mult are halved during scoring
-(`floor(x*0.5+0.5)`, minimum 1 for mult and 0 for chips — from `blind.lua`'s
-`Blind:modify_hand`) — this was **implemented nowhere in `core/scoring.py`**, i.e. under
-this boss the bot overstated the score by roughly 2x, not merely risked proposing an
-illegal move. Discovered while building the catalogue, wasn't a separate assumption item
-before. Fixed in `core/scoring.py._apply_boss_score_modifier`, step 1.5 of the pipeline
-(section 5) — with one honestly acknowledged incompleteness: in the game The Flint fires
-after hand-level jokers like `Joker` (unconditional / hand-conditional bonuses) but before
-individual card scoring; our pipeline evaluates jokers as the last step for the sake of
-`Blueprint`/`Brainstorm`/`XMult` ordering, and that "before/after" split can't be reproduced
-exactly — with no jokers in play the result is exact, and with any joker the calculation is
-honestly marked `unknown` rather than silently under- or over-counting the real effect.
-Tests — `tests/test_scoring.py::TestБоссФлинт`.
-
-**The illegal-option filter in `solver/play.py` — done.** `rank_plays` now filters out
-options illegal under the current boss (`_is_legal_play`) before they reach the ranked list,
-rather than after the autopilot tries to play one and gets rejected. For `The Mouth`/`The
-Eye` it uses the history of hand types played this round —
-`PokerHandInfo.played_this_round` (already in the state, added for `j_card_sharp`, section
-8.3 #3); for `The Psychic` — just the card-set length (`≥ 5`). The list of three boss names
-is cross-checked by a test against `BossEffect.restricts_legal_plays` in `core/bosses.py` so
-the two can't silently drift. A degenerate case (filtering would leave the list empty — e.g.
-`The Psychic` with a hand shorter than 5 cards) — the filter honestly backs off and returns
-the unfiltered list: staying silent would be worse than showing an option of doubtful
-legality. Tests — `tests/test_solver.py::TestЛегальностьПодБоссом`. Assumption #10 (section
-8.3) is fully closed by this and the previous (`The Flint`) fix.
-
-`The Arm` (permanently lowers a hand type's level on a play) and `The Serpent` (the draw
-after the first move — no more than 3 cards) are also real effects, but informational for
-the advisor (warn about the cost of a move / the future hand size), not about legality and
-not about the scoring of this play itself — out of scope for this item.
-
-**9.6. Stakes — already cumulative, partly already read.** Confirmed from source (`game.lua`:
-`if self.GAME.stake >= K then ... end`, eight conditions in a row) — `GOLD` includes all 8
-modifiers at once, not just its own. Per-ante blind requirements are read live from the mod
-(`BlindInfo.required_score`), not predicted by a formula — so the accelerated requirement
-growth on `GREEN`/`PURPLE` needs no new code, it's already accounted for by the very fact of
-reading the current number. **Stake stickers — done (`solver/shop.py`).** `JokerCard.eternal`
-was parsed before too (the mod sends the field at `BLACK` and above), but `perishable`
-(`ORANGE`+) and `rental` (`GOLD`) weren't, even though the mod sends both in the same
-`modifier` area. Now `adapters/mod_bridge.py` parses them into `ShopItem`
-(`eternal`/`perishable_rounds`/`rental`), and `solver/shop.py`'s `JokerOffer` carries each
-as a separate field modeled on `interest_lost`, not folded into `expected_uplift`:
-`rental_cost_per_round` (`core.economy.RENTAL_RATE`, $3 per round of ownership — written out
-from `game.lua`'s `GAME_MOD.rental_rate`, `card.lua`'s `Card:calculate_rental`; a trap
-because the game force-drops the purchase price to $1, `Card:set_cost`), `perishable_rounds`
-(the residual counter, the mod sends the current value, not the starting `perishable_rounds
-= 5`), `eternal` (can't sell what's bought — a "slot budget on a bad purchase" risk). The
-score estimate on representative hands stays correct for the rounds a perishable joker is
-active — the term is shown alongside as a fact, not subtracted from the estimate (that would
-need a horizon of remaining rounds, the same incompleteness as `interest_lost`).
-**A mechanics clarification (`card.lua`):** a perishable joker at counter zero **doesn't
-disappear** ("a timer until it vanishes for free" in an earlier revision of this item was
-wrong) — the game calls `set_debuff`, the joker stops counting, but the slot stays occupied
-by a non-working card. Rendering (`render_shop_advice`) shows all three markers;
-`autopilot._decide_shop_action` does **not act on them yet** — whether to make
-`rental`/`eternal` a stop factor for an autonomous buy (dollars/term versus points — the
-same incommensurability as `interest_lost`) is a separate, not-yet-taken policy decision,
-exactly like autonomous voucher buying.
-
-**Still open in this item.** `JokerCard` (jokers already in slots, not the shop) got no new
-fields — the ongoing rent drain and the perish countdown on already-bought jokers matter for
-planning future rounds, and that's Phase 9.7 (the run-runner), not the shop screen.
-`GREEN`/`PURPLE` (accelerated requirement growth) and stake cumulativity (`game.lua`:
-`if self.GAME.stake >= K then ... end`, eight conditions in a row — `GOLD` includes all
-eight at once) need no new code: blind requirements are read live from the mod
-(`BlindInfo.required_score`), not predicted by a formula.
-
-**9.7. The run-runner and win-rate measurement — done (`balatro_bot/runner.py`).**
-`balatro-bot autoplay --deck X [--stake Y] [--seed S]` now plays one run with honest actions
-from `ModBridge.start` to a win (`GameState.won`), a loss (`phase == "GAME_OVER"`), or a
-stall, and stops with a report (`RunReport`) and a log of every decision (`DecisionEntry` —
-the same idea as golden tests for scoring, but for a whole run). `--all-stakes`/`--runs N` —
-a batch run: `run_batch` plays N runs on each of the 8 stakes separately in the cumulative
-order `WHITE → RED → GREEN → BLACK → BLUE → PURPLE → ORANGE → GOLD` (checked against
-`game.lua`'s `stake_level` 1..8) and prints a win-rate per stake (`render_batch_summary`).
-Without `--deck` the command works as before — the live `ui/tui.py.autoplay` mode (watch +
-play, pause with `p`).
-
-The `play_run` loop is **not polling**: each bridge action returns the already-settled next
-state, polling (`game_state`) is needed only to wait out an animation phase
-(`HAND_PLAYED`/`DRAW_TO_HAND`/`NEW_ROUND`/`PLAY_TAROT`), where `decide_action` honestly
-returns `None`. On any other phase `None` means an unclosed decision
-(Tarot/Spectral/Standard/Buffoon packs — Phase 9.3/9.4), and the run is honestly recorded as
-"stuck here" with the phase in `RunReport.note`, rather than guessing. A stall also covers
-`stall_limit` (default 3) consecutive steps with no state change, consecutive mod-rejected
-actions, or consecutive empty polls on the same transitional phase (the mod hung on an
-animation), and exceeding `max_steps` (default 2000) — so one hung run doesn't hang the
-whole batch. Any keypress (`key_reader`) aborts the run with the outcome `aborted` and stops
-the batch — since the human stepped in, the following runs don't start (section 2 —
-advisor ⇄ autopilot switching on the fly); `Ctrl+C` in a batch run also doesn't lose what's
-been collected — `run_batch` returns a summary of what it managed. A single managed run
-prints progress one line per decision (`on_step`), so a long run doesn't look hung; a batch
-— one line per run (`on_run`).
-
-Side additions the runner required: `ModBridge.start(deck, stake, seed=None)` and `.menu()`
-(honest mod RPCs the client didn't have before); `GameState.won` (the bridge didn't parse
-the `won` field at all — without it a win can't be told from `GAME_OVER`);
-`autopilot.dispatch_action` (the shared `Action.kind` → RPC-method translation, extracted
-from the `ui/tui.py` loop, now shared with the runner) and `autopilot.describe_action` (the
-log line, also extracted from `tui`).
-
-**What's deliberately NOT in this scope.** An unattended 24/7 mode (a watchdog for hangs,
-auto-restart, time limits) — a separate layer on top of the already-working managed loop
-(section 2). The runner doesn't try to pull a run out of an unclosed phase (opening a
-non-Celestial pack, etc.) — it honestly stops there, and that's a signal to close the
-corresponding decision in `autopilot`, not a job for the runner itself. `run_batch` with a
-fixed `--seed` gives N identical runs (useful for regression, not for win-rate) — for an
-honest measurement the seed is not set.
+- **9.3** — `Hieroglyph`/`Petroglyph` are not valued even in the first tier: their "−1 Ante" side
+  needs a blind-requirement-by-ante formula, which exists nowhere in this project (the game has
+  `get_blind_amount(ante)` in `functions/misc_functions.lua` — exact for antes 1–8 and a power
+  formula beyond — but it also depends on stake and deck, which nothing here models).
+  `Director's Cut`/`Retcon`/`Illusion`/`Magic Trick`/`Omen Globe` stay an honest `None`.
+  Arcana/Tarot, Spectral and Standard **packs** (`TAROT_PACK`, `SPECTRAL_PACK`,
+  `STANDARD_PACK` before Steamodded collapsed them into `SMODS_BOOSTER_OPENED`) have nothing to
+  value them with — they need the consumable and deck-card mechanics — so they are skipped
+  rather than stalled on.
+- **9.4** — the Tarot second slice: suit conversion, `Strength`, `Death`, `The Hanged Man`.
+  `Death` picks a donor/target pair, which is a search dimension the solver does not have.
+  Separately, `v_observatory` creates a real but uncomputed trade-off — using a Planet now can
+  cost a repeatable X1.5 bonus the scoring engine does not implement — so
+  `PlanetConsumableOffer.note` warns instead of pretending to compare.
+- **9.5** — `The Arm` (permanently lowers a hand type's level) and `The Serpent` (caps the draw
+  after the first move) are real effects but informational: they are about the cost of a move and
+  the future hand size, not about this play's legality or its score.
+- **9.6** — `JokerCard` (jokers already in slots, as opposed to shop offers) got no new fields,
+  so the ongoing rent drain and the perish countdown on jokers already owned are not modelled;
+  and the autopilot does not treat `rental`/`eternal` as a stop factor when buying, which is an
+  open policy question (dollars and terms against points — the same incommensurability as
+  `interest_lost`), not an oversight.
+- **9.7** — the unattended 24/7 mode: a watchdog for hangs, auto-restart and time limits is a
+  separate layer on top of the working managed loop. The first half of it is done (the runner can
+  adopt a run already in progress); the watchdog half is not started. The runner also does not
+  try to pull a run out of a phase whose decision is unclosed — it stops there honestly, and that
+  is a signal to close the decision in `autopilot`, not a job for the runner. A fixed `--seed`
+  gives N identical runs, useful for regression and useless for a win-rate.
 
 ### 9.8. An improvement roadmap from the live runs
 
@@ -949,18 +647,23 @@ label.
 Everything in the index above is done. What follows is not, and is ordered by what the
 16-run batch showed.
 
-- **What actually kills runs — measured, and it reorders everything below.** Across 24 lost runs
-  of the deck rotation:
+- **What actually kills runs — measured, and it reorders everything below.**
+
+  **The corpus, stated once so every later measurement can name its own slice.** "The deck
+  rotation" is the batch in `runs/decks`: **35 runs across 15 decks — 30 lost, 3 won, 2 ended in
+  `error`**. Entries written while it was still filling quote smaller slices (24, 32 and 33 runs
+  appear in the log) and are left as they were, since they record what was measured at the moment
+  a decision was taken. The table below is re-derived from all 30 losses.
 
   | | |
   |---|---|
-  | median share of the requirement reached | **56 %** |
-  | lost having reached ≥ 80 % | 4 (17 %) |
-  | **lost without reaching half** | **10 (42 %)** |
+  | median share of the requirement reached | **58 %** |
+  | lost having reached ≥ 80 % | 5 (17 %) |
+  | **lost without reaching half** | **11 (37 %)** |
   | discards left at the moment of loss (median) | 1 |
   | money left (median) | $15 |
 
-  The bot does not lose narrowly. In 42 % of losses it fails to reach half the requirement, which
+  The bot does not lose narrowly. In 37 % of losses it fails to reach half the requirement, which
   is not bad luck on a final hand — it is a board too weak to matter. Narrow losses are the
   minority.
 
@@ -970,18 +673,22 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   board, and no longer refuses to roll when the bot is poor with a slot free). What is left in that
   class is **C3**, which forfeits blind rewards for pack tags that then reach nothing. By the same
   measurement **D2** and the discard-threshold questions of **B3** are tactical detail and can wait
-  — a pendulum costing 0.8 % of steps, or three unspent discards, do not close a 44 % gap.
+  — a pendulum costing 0.8 % of steps, or three unspent discards, do not close a 42 % gap.
 
   **The measurement above is the pre-C2 baseline and should be re-taken, not reused.** It describes
   runs played by a bot that could not buy a Planet and burned $887 rolling into full boards; whether
-  the 42 %-without-half figure survives those two changes is exactly what the next batch is for —
+  the 37 %-without-half figure survives those two changes is exactly what the next batch is for —
   and until it runs, nothing below is ranked on current evidence.
 
-  One caveat kept: 8 of 24 losses still ended with all discards unspent, which remains a lot. It
-  is simply not the thing that decided those runs.
+  One caveat kept, restated with its definition — the earlier phrasing ("8 of 24 losses ended
+  with all discards unspent") never said what it counted, and could not be reproduced from the
+  journals. Counting losses whose **final round spent no discard at all**: **12 of 30 (40 %)**.
+  Still a lot. Still not the thing that decided those runs.
 
 - **C3. The bot skips blinds to buy pack tags and then does not collect the pack.** Found from a
-  run that ended in `error` during the second rotation, then measured across all 33 journals.
+  run that ended in `error` during the second rotation, then measured across the journals present
+  at the time — 33 of the rotation's eventual 35 (corpus above). The counts below were not
+  re-derived when the last two runs landed.
 
   `solver/skip.py` prices the pack-opening tags (A14's `_SCORE_TAGS`) by the uplift of the pack
   they grant, and the bot acts on it: **15 skips for a Meteor/Buffoon/Charm tag**, at claimed
@@ -1343,7 +1050,7 @@ external risk, while blocking no one until Phase 5.
 | **3a. Collecting golden cases** | the game at hand | **Manual human work:** record ~20 real situations (hand, jokers, levels, blind) and the score the game showed | The cases are in `tests/golden/`, Phase 3 can be closed |
 | **4. Solver + manual input** | 3 | Subset search, ranked output, CLI. **First practical use (v0.1)** | I type a hand, jokers, and a blind — I get a list of moves with scores and a "meets it / doesn't" answer |
 | **5. Auto-connection** | 1, 4 | The bridge to the mod, the TUI refreshes itself during play | I play without touching the bot — advice appears on its own |
-| **6. Discard and EV** | 5 | Monte-Carlo over the deck, tracking cards that are out. With manual input — the assumption mode (section 6). **v1 is closed here** | The bot says "discard these 3", explains with numbers, and honestly marks whether the estimate is exact or approximate |
+| **6. Discard and EV** | 5 | Exact EV over the deck (Monte-Carlo was the original design and was dropped — §8.3 #9), tracking cards that are out. With manual input — the assumption mode (section 6). **v1 is closed here** | The bot says "discard these 3", explains with numbers, and honestly marks whether the estimate is exact or approximate |
 | **7. Shop and jokers** | 3, 5 | Coverage of the remaining jokers, purchase and order advice (v2) | The bot recommends a joker rearrange with a score uplift; the share of "unknown jokers" has dropped to zero |
 | **8. Run strategy** | 7 | Blind skips, tags, economy, run simulation (v3) | Policy evaluation on mass runs |
 | **9. Autopilot** | 4–8 | An action loop through the mod's honest RPC, vouchers/packs, opening packs, consumables before a play, the rule-modifying boss catalogue, Perishable/Rental jokers, the run-runner (v4) — section 6, "Autopilot" | A stable win-rate over N runs on each of the 8 stakes separately (section 2, the success criterion) |
@@ -1376,8 +1083,9 @@ Recorded so the gap between the document and the code doesn't pile up silently.
   and look".
 - **Part of Phase 5 was done before Phase 1**, though the plan required the reverse order.
   The reason is that the mod client turned out to be fully testable against a fake server
-  built to the mod's spec. This doesn't remove the risk Phase 1 stood first for: the stack
-  itself on macOS still hasn't been launched by anyone.
+  built to the mod's spec. The risk Phase 1 stood first for — that the stack would not come up
+  on macOS at all — was carried until 2026-08-21, when it did: the spike passed, and the stack
+  has since held live runs for whole antes at a time.
 - **`extract_game_data.py` was replaced with `generate_catalogue.py`** using a different
   data source (see section 5).
 - **`ui/tui.py` is written without `textual`/`rich`**, contrary to the stack in section 7:
@@ -1545,7 +1253,8 @@ those numbers:
   the joker had been registered as an honest zero on the opposite belief. The chance point is
   raised at the top of `_run_once`, where the picker exists and the base has not yet been read, and
   `score_play` enumerates it like any other. Test — `tests/test_scoring.py::TestSpaceJoker`.
-- **`Blueprint` ⇄ `Brainstorm` — settled, and nothing had to change** (§8.3 #8)**.** The game caps copy recursion
+- **`Blueprint` ⇄ `Brainstorm` — settled, and nothing had to change** (§8.3 #8)**.** The game caps
+  copy recursion
   by *depth*, `_Copycat` by "already in this chain". The arrangements agree, for a reason worth
   recording: our rule is stricter or equal, and the difference is only in how many **idle** steps
   precede stopping. An idle step contributes nothing — the effect comes from whichever non-copycat
@@ -1576,13 +1285,16 @@ had sat in §8.3 for the whole project, three of them marked "needs a Mac":
   `tests/test_hands.py::TestЗначенияРук::test_таблицы_совпадают_с_game_lua` now pins them
   (transcribed with the source cited, the same discipline as `_JOKER_RARITY`), so a future
   "correction from memory" fails a test instead of silently skewing every score.
-- **The scoring step order was never checked against the game** (§8.3 #2)**.** `G.FUNCS.evaluate_play` in
+- **The scoring step order was never checked against the game** (§8.3 #2)**.**
+  `G.FUNCS.evaluate_play` in
   `functions/state_events.lua` runs: base values → `blind:modify_hand` → played cards left to
   right with retriggers → cards held in hand → jokers left to right (edition first, then the
   effect). That is `core/scoring.py::_run_once` step for step, including edition-before-effect.
-- **`Photograph` triggers again on a retrigger** (§8.3 #6) — correct. Its per-card hook sits inside the
+- **`Photograph` triggers again on a retrigger** (§8.3 #6) — correct. Its per-card hook sits
+  inside the
   `for j=1,#reps do` retrigger loop, so each repetition fires it.
-- **A royal flush is scored as a plain straight flush** (§8.3 #7) — correct. `state_events.lua` leaves
+- **A royal flush is scored as a plain straight flush** (§8.3 #7) — correct. `state_events.lua`
+  leaves
   the scoring `text` as `'Straight Flush'` and only sets `disp_text = 'Royal Flush'`; the
   distinction is display-only and never reaches a number.
 

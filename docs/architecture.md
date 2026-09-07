@@ -1059,7 +1059,8 @@ next state, so `game_state()` is only re-polled to wait out an animation phase
 returning `None` is not a stall. `None` on any other phase means an unclosed decision
 (Tarot/Spectral/Standard/Buffoon packs) — the run stops as `"stuck"` with that phase in
 `RunReport.note`, rather than guessing. `"stuck"` also covers `stall_limit` (default 3) consecutive
-no-progress steps or mod rejections, and `max_steps` (default 2000). Any keypress via `key_reader`
+no-progress steps or mod rejections, and `max_steps` (default 2000). A single managed run prints one line per decision via the `on_step`
+callback and a batch one line per run via `on_run`, so a long run never looks hung. Any keypress via `key_reader`
 ends the run `"aborted"` and stops the batch — the human took the wheel. `RunReport` carries the
 outcome, how far it got (ante/round), and a `DecisionEntry` log (the golden-test idea, but for a
 whole run). `play_run(..., adopt=True)` skips the `menu()`/`start()` pair when the game is already
