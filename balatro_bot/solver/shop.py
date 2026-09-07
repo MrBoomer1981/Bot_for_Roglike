@@ -36,7 +36,7 @@ PLAN.md, 9.3, для оставшихся двух уровней. Buffoon- и C
 витрине получают оценку (`PackPurchaseOffer`, `_evaluate_pack_purchase`) —
 Монте-Карло самого механизма пака: для Buffoon — `joker_uplift` по выборке
 случайных реализованных джокеров, для Celestial (улучшение A3) — прирост от
-подъёма уровня каждого из 12 типов руки (`_planet_uplift_pool`, общий
+подъёма уровня каждого из 12 типов руки (`planet_uplift_pool`, общий
 `solver.pack.level_up`); затем в обоих случаях дешёвый пересэмплинг «лучшие
 `choose` из `extra`» по размеру пака (`_monte_carlo_pack`). Контрфактум «до
 покупки» тут невозможен (содержимое ещё не сгенерировано), но смоделировать
@@ -93,7 +93,7 @@ Arcana/Spectral/Standard-паки — по-прежнему `None` (нужен �
 величины, которые реролл действительно меняет: `button_callbacks.lua`'s
 `G.FUNCS.reroll_shop` заменяет **только карты витрины**, не трогая ни
 ваучеры, ни паки, ни джокеров в слотах. Поэтому `random_joker_uplifts`,
-`_planet_uplift_pool`, `joker_contributions` и прирост каждого конкретного
+`planet_uplifts`, `joker_contributions` и прирост каждого конкретного
 джокера витрины (по паре «ключ, издание») кешируются в `_SampleCache` —
 одной записи на заход хватает, заходов одновременно не бывает. Ключ
 (`_sample_cache_key`) — всё состояние, кроме витрины, цены ролла и (когда в
@@ -124,6 +124,7 @@ Arcana/Spectral/Standard-паки — по-прежнему `None` (нужен �
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from typing import Final
 
@@ -138,6 +139,8 @@ from balatro_bot.solver.play import advise
 from balatro_bot.solver.vouchers import VoucherOffer, evaluate_vouchers
 
 __all__ = [
+    "TYPICAL_JOKER_PRICE",
+    "ConsumableOffer",
     "HeldJoker",
     "JokerOffer",
     "PackPurchaseOffer",
@@ -241,10 +244,15 @@ _RESTRICTING_BOSS_NAMES: Final[frozenset[str]] = frozenset(
 )
 
 
-#: Типичная цена джокера в витрине — нужна только там, где кандидат
-#: случайный и своей цены не имеет (пулы для Buffoon-пака и реролла).
-#: Общий джокер стоит $4–6 (`game.lua`, поле `cost`); берём середину.
-_TYPICAL_JOKER_PRICE: Final[int] = 5
+#: Типичная цена джокера в витрине. Нужна там, где кандидат случайный и
+#: своей цены не имеет (пулы для Buffoon-пака и реролла), и — с улучшения
+#: A21 — как денежный запас реролла: «оставить ровно столько, чтобы купить
+#: то, ради чего крутили».
+#:
+#: Общий джокер стоит $4–6 (`game.lua`, поле `cost`); берём середину, и
+#: замер это подтверждает: по 575 офферам ротации из 35 ранов медиана цены
+#: ровно $5, квартили $4–$6, 90-й перцентиль $7.
+TYPICAL_JOKER_PRICE: Final[int] = 5
 
 
 def sell_value_of(price: int) -> int:
@@ -316,7 +324,11 @@ class _SampleCache:
     def __init__(self) -> None:
         self._key: tuple[GameState, int] | None = None
         self.random_joker_uplifts: list[float] | None = None
-        self.planet_uplifts: list[float] | None = None
+        #: Прирост от подъёма уровня типа руки на один — заполняется по мере
+        #: надобности, а не целиком (улучшение C2): Celestial-паку нужны все
+        #: 12 типов, планете с полки — только её собственный. Один словарь на
+        #: оба случая намеренно: два кеша одной и той же величины разошлись бы.
+        self.planet_uplifts: dict[HandType, float] = {}
         self.contributions: tuple[float, ...] | None = None
         self.joker_uplifts: dict[tuple[str, Edition, int], float] = {}
 
@@ -328,7 +340,7 @@ class _SampleCache:
 
     def clear(self) -> None:
         self.random_joker_uplifts = None
-        self.planet_uplifts = None
+        self.planet_uplifts = {}
         self.contributions = None
         self.joker_uplifts = {}
 
@@ -667,6 +679,51 @@ class PackPurchaseOffer:
 
 
 @dataclass(frozen=True, slots=True)
+class ConsumableOffer:
+    """Расходник (Таро/Планета/Спектр) на полке магазина — улучшение C2.
+
+    До C2 `evaluate_shop` фильтровала витрину по `item.kind == "JOKER"`, и
+    расходники не доходили до решения вовсе: за ротацию по 15 колодам полки
+    держали 275 таких предложений, 271 из них по карману, куплено ноль. Это
+    оказался не просто пропущенный канал закупки, а корень проигрышной
+    картины: планеты приходили только из паков (~1.3 за ран), уровни рук
+    оставались 1–2, а на таких уровнях контрфактум **верно** предпочитает
+    аддитивных джокеров — борд заполнялся ими и переставал держать темп
+    требования ровно на анте 4–5, где раны и умирают.
+
+    Оценивается **только планета**: её эффект детерминирован (level-up типа
+    руки), уже реализован в движке и считается тем же `level_up`, что для
+    Celestial-пака — одна величина, один источник. Таро и Спектр получают
+    честный `None` с причиной: цена их оценки измерена и неподъёмна
+    (`evaluate_tarot_consumables` — 9 с на одной карте при пяти джокерах, а
+    с экрана магазина руки нет вовсе, её пришлось бы сэмплировать, то есть
+    ×5). Молчания тут мало: автопилот его прочитать не может, в отличие от
+    человека, — тот же довод, что у третьего уровня ваучеров."""
+
+    item: ShopItem
+    hand_type: HandType | None
+    """Тип руки, который поднимает эта планета (`PLANET_HAND_TYPES`); `None`
+    у Таро/Спектра, то есть у всего, что здесь не оценивается."""
+
+    affordable: bool
+    has_slot: bool
+    """Есть ли свободный слот расходника (`GameState.consumable_slots`).
+    Игра не даст купить в полный инвентарь, и без этой проверки бот получал
+    бы отказ мода вместо решения."""
+
+    expected_uplift: float | None
+    """Средний прирост лучшего счёта от подъёма уровня на выборке
+    представительных рук. Честно неполон и **занижен по построению**:
+    измерен на руках, сдаваемых сейчас, тогда как level-up действует до
+    конца рана. Именно поэтому политика автопилота судит это число шумовым
+    порогом, а не порогом силы (см. `autopilot._decide_consumable_buy_action`)."""
+
+    exact_deck: bool
+    samples: int
+    note: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class RerollOutlook:
     """Стоит ли рероллить витрину — улучшение A5. В отличие от всего
     остального в этом модуле, здесь оценивается не то, что игра уже
@@ -726,6 +783,21 @@ class ShopAdvice:
     Монте-Карло механизма пака, см. `PackPurchaseOffer`."""
 
     money: int
+
+    consumables: tuple[ConsumableOffer, ...] = ()
+    """Расходники с полки (улучшение C2) — отсортированы по приросту по
+    убыванию, неоценённые (Таро/Спектр) в конце, тем же приёмом, что
+    `jokers`. Лежат в той же области `GameState.shop`, что и джокеры, и
+    покупаются тем же `buy(card=…)`, поэтому индекс берётся оттуда же."""
+
+    replace_candidate: ReplaceCandidate | None = None
+    """Слабейший невечный джокер в слотах — кого пришлось бы продать, чтобы
+    освободить место, когда слоты полны (`None` при свободном слоте или если
+    все джокеры вечные). То же самое, что прикрепляется к оценённым офферам
+    как `JokerOffer.replaces`, но выставленное **отдельно** (улучшение A22):
+    вентилю реролла порог размена нужен и тогда, когда на полке нет ни одного
+    оценённого оффера, — а это ровно тот случай, ради которого реролл и
+    существует."""
 
     held: tuple[HeldJoker, ...] = ()
     """Джокеры в слотах с измеренным вкладом (улучшение A9), в порядке
@@ -811,6 +883,7 @@ def evaluate_shop(
     # со свободным слотом менять не на что, покупают просто так.
     slots_full = state.joker_slots is not None and len(state.jokers) >= state.joker_slots
     sellable = [entry for entry in held if not entry.eternal]
+    candidate: ReplaceCandidate | None = None
     if slots_full and sellable:
         weakest = min(sellable, key=lambda entry: entry.contribution)
         candidate = ReplaceCandidate(
@@ -847,7 +920,7 @@ def evaluate_shop(
             random_joker_uplifts = [
                 joker_uplift(
                     state,
-                    JokerCard(key=key, sell_value=sell_value_of(_TYPICAL_JOKER_PRICE)),
+                    JokerCard(key=key, sell_value=sell_value_of(TYPICAL_JOKER_PRICE)),
                     deck_source,
                     PACK_SAMPLE_HANDS,
                 )
@@ -856,28 +929,74 @@ def evaluate_shop(
             if cache is not None:
                 cache.random_joker_uplifts = random_joker_uplifts
 
-    # То же самое для Celestial-паков — прирост от подъёма уровня каждого из
-    # 12 типов руки на общей выборке рук (один baseline, 12 «прокачанных»).
-    planet_uplifts: list[float] | None = None
-    if (
-        any(p.key.startswith(_CELESTIAL_PACK_PREFIX) for p in state.shop_packs)
-        and len(deck_source) >= HAND_SIZE
-    ):
-        if cache is not None and cache.planet_uplifts is not None:
-            planet_uplifts = cache.planet_uplifts
-        else:
-            planet_uplifts = planet_uplift_pool(state, deck_source)
-            if cache is not None:
-                cache.planet_uplifts = planet_uplifts
+    # Прирост от подъёма уровня типа руки нужен двоим: Celestial-паку — по
+    # всем 12 типам (какая карта выпадет, заранее неизвестно), и планете,
+    # уже лежащей на полке, — только по её собственному (улучшение C2).
+    # Спрашиваем **одним** вызовом на весь недостающий набор: базовый счёт
+    # выборки в нём общий, и он же — половина цены расчёта. Кеш один на оба
+    # случая: два хранилища одной величины разошлись бы.
+    from balatro_bot.solver.pack import PLANET_HAND_TYPES
+
+    # Дополнение к фильтру джокеров выше, а не свой список видов: так каждый
+    # предмет полки попадает ровно в один из двух наборов, и незнакомый вид
+    # (Спектр, что-то новое в моде) станет честно неоценённым оффером, а не
+    # исчезнет из совета молча.
+    shelf_consumables = tuple(item for item in state.shop if item.kind != "JOKER")
+    needs_pool = any(p.key.startswith(_CELESTIAL_PACK_PREFIX) for p in state.shop_packs)
+    deck_big_enough = len(deck_source) >= HAND_SIZE
+
+    wanted: list[HandType] = []
+    if deck_big_enough:
+        shelf_types = {
+            hand_type
+            for item in shelf_consumables
+            if (hand_type := PLANET_HAND_TYPES.get(item.key)) is not None
+        }
+        wanted = [
+            hand_type
+            for hand_type in PLANET_HAND_TYPES.values()
+            if needs_pool or hand_type in shelf_types
+        ]
+
+    known_uplifts: dict[HandType, float] = dict(cache.planet_uplifts) if cache is not None else {}
+    missing = [hand_type for hand_type in wanted if hand_type not in known_uplifts]
+    if missing:
+        fresh = planet_uplifts(state, missing, deck_source)
+        known_uplifts.update(fresh)
+        if cache is not None:
+            cache.planet_uplifts.update(fresh)
+
+    planet_pool: list[float] | None = None
+    if needs_pool and deck_big_enough:
+        planet_pool = [known_uplifts[hand_type] for hand_type in PLANET_HAND_TYPES.values()]
+
+    consumable_offers = []
+    for item in shelf_consumables:
+        hand_type = PLANET_HAND_TYPES.get(item.key)
+        uplift = known_uplifts.get(hand_type) if hand_type is not None else None
+        consumable_offers.append(
+            _evaluate_consumable_offer(state, item, hand_type, uplift, exact_deck)
+        )
+    # Тот же приём, что у джокеров: неоценённые последними парным ключом, а
+    # не сентинелом, который мог бы обойти настоящее число.
+    consumable_offers.sort(
+        key=lambda offer: (
+            offer.expected_uplift is not None,
+            offer.expected_uplift if offer.expected_uplift is not None else 0.0,
+        ),
+        reverse=True,
+    )
 
     return ShopAdvice(
         jokers=tuple(offers),
         vouchers=evaluate_vouchers(state, samples),
         packs=tuple(
-            _evaluate_pack_purchase(state, item, exact_deck, random_joker_uplifts, planet_uplifts)
+            _evaluate_pack_purchase(state, item, exact_deck, random_joker_uplifts, planet_pool)
             for item in state.shop_packs
         ),
         money=state.money,
+        consumables=tuple(consumable_offers),
+        replace_candidate=candidate,
         held=held,
         reroll=_evaluate_reroll(state, random_joker_uplifts, exact_deck),
     )
@@ -894,7 +1013,7 @@ def random_joker_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) ->
     return [
         joker_uplift(
             state,
-            JokerCard(key=key, sell_value=sell_value_of(_TYPICAL_JOKER_PRICE)),
+            JokerCard(key=key, sell_value=sell_value_of(TYPICAL_JOKER_PRICE)),
             deck_source,
             PACK_SAMPLE_HANDS,
         )
@@ -902,28 +1021,51 @@ def random_joker_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) ->
     ]
 
 
-def planet_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list[float]:
-    """Прирост лучшего счёта от подъёма уровня каждого из 12 типов руки на
+def planet_uplifts(
+    state: GameState, hand_types: Sequence[HandType], deck_source: tuple[Card, ...]
+) -> dict[HandType, float]:
+    """Прирост лучшего счёта от подъёма уровня каждого из `hand_types` на
     один — по `PACK_SAMPLE_HANDS` представительным рукам. Базовый счёт
-    считается один раз, затем по разу на каждый прокачанный тип. Нужен для
-    Монте-Карло покупки Celestial-пака (`_evaluate_pack_purchase`)."""
+    считается **один раз на весь запрошенный набор**, затем по разу на каждый
+    прокачанный тип; поэтому спрашивать надо сразу всё, что нужно, а не по
+    типу за вызов.
+
+    Набор — параметр, а не все 12 всегда (улучшение C2): Celestial-паку
+    нужны все двенадцать (какая карта выпадет, заранее неизвестно), а
+    планете, уже лежащей на полке, — ровно её собственный тип. Замер на
+    тяжёлом стеке из пяти джокеров: 807 мс на один тип, 1198 мс на два,
+    5174 мс на все двенадцать. Экономия не косметическая — это цена одного
+    опроса в магазине."""
     # shop <-> pack — обоюдный цикл (pack берёт отсюда `joker_uplift`),
     # поэтому импорт отложенный, на месте.
-    from balatro_bot.solver.pack import PLANET_HAND_TYPES, level_up
+    from balatro_bot.solver.pack import level_up
 
+    if not hand_types:
+        return {}
     rng = random.Random(SAMPLE_SEED)
     pool = list(deck_source)
     hands = [tuple(rng.sample(pool, HAND_SIZE)) for _ in range(PACK_SAMPLE_HANDS)]
     baselines = [advise(replace(state, hand=hand), limit=1).best.score for hand in hands]
-    uplifts: list[float] = []
-    for hand_type in PLANET_HAND_TYPES.values():
+    result: dict[HandType, float] = {}
+    for hand_type in hand_types:
         leveled = level_up(state, hand_type)
         delta = sum(
             advise(replace(leveled, hand=hand), limit=1).best.score - base
             for hand, base in zip(hands, baselines, strict=True)
         )
-        uplifts.append(delta / len(hands))
-    return uplifts
+        result[hand_type] = delta / len(hands)
+    return result
+
+
+def planet_uplift_pool(state: GameState, deck_source: tuple[Card, ...]) -> list[float]:
+    """Те же приросты, что `planet_uplifts`, но по всем 12 типам руки и в
+    порядке `PLANET_HAND_TYPES.values()` — форма, которую ждёт Монте-Карло
+    покупки Celestial-пака (`_evaluate_pack_purchase`, `monte_carlo_pack`)."""
+    from balatro_bot.solver.pack import PLANET_HAND_TYPES
+
+    order = list(PLANET_HAND_TYPES.values())
+    computed = planet_uplifts(state, order, deck_source)
+    return [computed[hand_type] for hand_type in order]
 
 
 def _pack_size(key: str, sizes: dict[str, tuple[int, int]]) -> tuple[int, int]:
@@ -1012,17 +1154,56 @@ def _evaluate_reroll(
     )
 
 
+def _evaluate_consumable_offer(
+    state: GameState,
+    item: ShopItem,
+    hand_type: HandType | None,
+    uplift: float | None,
+    exact_deck: bool,
+) -> ConsumableOffer:
+    """Собрать оффер по одному расходнику с полки (улучшение C2). Сам расчёт
+    прироста идёт пакетом в `evaluate_shop` — здесь только обвязка: цена,
+    слот и честная причина там, где числа нет."""
+    affordable = state.money >= item.price
+    has_slot = state.consumable_slots is None or len(state.consumables) < state.consumable_slots
+    if hand_type is None:
+        return ConsumableOffer(
+            item,
+            None,
+            affordable,
+            has_slot,
+            None,
+            exact_deck,
+            0,
+            "оценивается только планета — Таро/Спектру нужна рука, которой в магазине нет",
+        )
+    if uplift is None:
+        return ConsumableOffer(
+            item, hand_type, affordable, has_slot, None, exact_deck, 0, "колода для выборки мала"
+        )
+    return ConsumableOffer(
+        item,
+        hand_type,
+        affordable,
+        has_slot,
+        uplift,
+        exact_deck,
+        PACK_SAMPLE_HANDS,
+        f"уровень «{hand_type.value}» +1, прирост по {PACK_SAMPLE_HANDS} рукам выборки",
+    )
+
+
 def _evaluate_pack_purchase(
     state: GameState,
     item: ShopItem,
     exact_deck: bool,
     buffoon_uplifts: list[float] | None,
-    planet_uplifts: list[float] | None,
+    planet_pool: list[float] | None,
 ) -> PackPurchaseOffer:
     """Оценить покупку одного пака из витрины — Монте-Карло механизма пака
     (лучшие `choose` из `extra` случайных карт, `PACK_SIM_TRIALS` розыгрышей).
     Работает для Buffoon (джокеры, `buffoon_uplifts`) и Celestial (планеты,
-    `planet_uplifts`) — обе выборки `evaluate_shop` считает по разу на заход.
+    `planet_pool`) — обе выборки `evaluate_shop` считает по разу на заход.
     Прочие типы (Arcana/Spectral/Standard) — честный `None`."""
     affordable = state.money >= item.price
     # Планеты из пака используются сразу, слот консумабля им не нужен —
@@ -1049,15 +1230,15 @@ def _evaluate_pack_purchase(
         return _offer(uplift, len(buffoon_uplifts), note)
 
     if item.key.startswith(_CELESTIAL_PACK_PREFIX):
-        if planet_uplifts is None:
+        if planet_pool is None:
             return _offer(None, 0, "колода для выборки неизвестна")
         extra, choose = _pack_size(item.key, CELESTIAL_PACK_SIZES)
-        uplift = monte_carlo_pack(planet_uplifts, extra, choose)
-        shown = min(extra, len(planet_uplifts))
+        uplift = monte_carlo_pack(planet_pool, extra, choose)
+        shown = min(extra, len(planet_pool))
         note = f"оценка: лучшие {choose} из {shown} случайных планет (из 12)"
         if choose > 1:
             note += "; сумма верхних без учёта их взаимодействия"
-        return _offer(uplift, len(planet_uplifts), note)
+        return _offer(uplift, len(planet_pool), note)
 
     return _offer(None, 0, "оценивается только Buffoon/Celestial — прочим нужен пласт консумаблов")
 

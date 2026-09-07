@@ -125,6 +125,18 @@ class TestРазборСостояния:
     def test_без_области_shop_вместимость_none(self) -> None:
         assert parse_game_state(sample_state()).shop_slots is None
 
+    def test_вместимость_расходников_из_limit(self) -> None:
+        # Улучшение C2: без этого числа бот пытался бы купить расходник в
+        # полный инвентарь и получал бы отказ мода вместо решения.
+        raw = sample_state()
+        raw["consumables"] = {"count": 1, "limit": 2, "cards": []}
+        assert parse_game_state(raw).consumable_slots == 2
+
+    def test_без_области_consumables_вместимость_none(self) -> None:
+        raw = sample_state()
+        raw.pop("consumables", None)
+        assert parse_game_state(raw).consumable_slots is None
+
     def test_магазин_разбирает_стикеры_ставок(self) -> None:
         raw = sample_state()
         raw["shop"] = {

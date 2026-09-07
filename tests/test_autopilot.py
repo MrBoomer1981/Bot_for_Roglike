@@ -10,6 +10,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Final
 
 import pytest
 
@@ -17,6 +18,8 @@ from balatro_bot.adapters.manual import build_state
 from balatro_bot.adapters.mod_bridge import ModBridge
 from balatro_bot.autopilot import (
     _BLIND_DONE_STATUSES,
+    _MIN_BUY_REQ_FRACTION,
+    _REPLACE_UPLIFT_RATIO,
     Action,
     _discard_edge_is_noise,
     _heuristic_tag_bar,
@@ -25,6 +28,7 @@ from balatro_bot.autopilot import (
     _on_pace_without_discard,
     _pace_projection,
     _reorder_indices,
+    _reroll_target_bar,
     decide_action,
     decide_skip,
     describe_action,
@@ -861,8 +865,17 @@ class TestDecideActionРеролМагазина:
         assert _без_повода(decide_action(self._junk_shop())) == Action(kind="reroll")
 
     def test_не_рероллит_без_денежного_запаса(self) -> None:
-        # $15 − $5 = $10 < _REROLL_MONEY_RESERVE (12).
-        assert _без_повода(decide_action(self._junk_shop(money=15))) == Action(kind="next_round")
+        # $8 − $5 = $3 < _REROLL_MONEY_RESERVE. Тест переписан вместе с
+        # политикой (улучшение A21): запас стал типичной ценой джокера ($5)
+        # вместо $12, и на прежних $15 бот теперь крутит — правильно, это и
+        # был дефект. Проверяется то же правило, на новом числе.
+        assert _без_повода(decide_action(self._junk_shop(money=8))) == Action(kind="next_round")
+
+    def test_рероллит_на_прежде_запрещавшей_сумме(self) -> None:
+        # Случай A21 целиком: свободный слот, $15 на руках — старый запас
+        # $12 это запрещал, и из 87 таких заходов ротации покрутить могли бы
+        # три. Контроль к тесту выше: граница сдвинулась, а не исчезла.
+        assert _без_повода(decide_action(self._junk_shop(money=15))) == Action(kind="reroll")
 
     def test_не_рероллит_без_известного_требования_блайнда(self) -> None:
         assert _без_повода(decide_action(self._junk_shop(blinds={}))) == Action(kind="next_round")
@@ -1792,3 +1805,236 @@ class TestСнимкаВитрины:
 
     def test_вне_магазина_витрины_нет(self) -> None:
         assert decide_action(GameState(phase="ROUND_EVAL")).shelf == ()  # type: ignore[union-attr]
+
+
+class TestПокупкаПланетыВМагазине:
+    """Улучшение C2. До него `evaluate_shop` фильтровала витрину по
+    `item.kind == "JOKER"`, а у ветки магазина не было ни одной строки про
+    расходники: за ротацию по 15 колодам полки держали 275 предложений
+    расходников, 271 из них по карману, куплено ноль. Это оказался не
+    пропущенный канал закупки, а корень проигрышной картины — планеты
+    приходили только из паков (~1.3 за ран), уровни рук оставались 1–2, а на
+    таких уровнях борд заполняется аддитивными джокерами и перестаёт держать
+    темп требования ровно на анте 4–5."""
+
+    ПЛАНЕТА: Final = ShopItem("c_mercury", "Mercury", "PLANET", 3)
+    ТАРОТ: Final = ShopItem("c_magician", "The Magician", "TAROT", 3)
+
+    def _shop(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": 5,
+            "shop_slots": 2,
+            "consumable_slots": 2,
+            "full_deck": _ПАРА_ТУЗОВ,
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 300)},
+            "shop": (self.ПЛАНЕТА,),
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_покупает_планету_взявшую_порог(self) -> None:
+        action = decide_action(self._shop())
+        assert action is not None
+        assert action.kind == "buy"
+        assert action.label == "Mercury"
+        assert action.item_index == 0
+
+    def test_повод_называет_порог_и_цену(self) -> None:
+        # Журналу нужно не «купил», а «купил, потому что», иначе чужой ран
+        # не разобрать (E1a).
+        action = decide_action(self._shop())
+        assert action is not None
+        assert "планета" in action.reason
+        assert "шумового порога" in action.reason
+
+    def test_не_покупает_при_полном_инвентаре(self) -> None:
+        # В полный инвентарь игра купить не даст, и отказ мода — не решение.
+        action = decide_action(self._shop(consumables=(self.ПЛАНЕТА, self.ПЛАНЕТА)))
+        assert action is not None
+        assert action.kind != "buy"
+
+    def test_не_покупает_без_денег(self) -> None:
+        action = decide_action(self._shop(money=1))
+        assert action is not None
+        assert action.kind != "buy"
+
+    def test_не_съедает_последние_деньги(self) -> None:
+        # Тот же запас, что у пака и реролла: при $14 после покупки осталось
+        # бы $11, меньше запаса.
+        богатый = decide_action(self._shop(money=25))
+        бедный = decide_action(self._shop(money=14))
+        assert богатый is not None and богатый.kind == "buy"
+        assert бедный is not None and бедный.kind != "buy"
+
+    def test_не_покупает_ниже_шумового_порога(self) -> None:
+        # Требование 100000 -> порог 500; прирост одного уровня пары на
+        # пустой доске столько не даёт.
+        action = decide_action(self._shop(blinds={"small": _blind("SMALL", "UPCOMING", 100_000)}))
+        assert action is not None
+        assert action.kind != "buy"
+
+    def test_порог_ниже_джокерного(self) -> None:
+        # Существенная часть C2: порог A2 (3 %) срабатывал бы на 22 замеренных
+        # случаях пять раз и ни разу после анте 4 — то есть ровно там, где
+        # раны и умирают. Требование подобрано так, что планету берёт только
+        # шумовой порог.
+        state = self._shop(blinds={"small": _blind("SMALL", "UPCOMING", 8_000)})
+        advice = evaluate_shop(state)
+        assert advice is not None
+        прирост = advice.consumables[0].expected_uplift
+        assert прирост is not None
+        assert 0.005 * 8_000 <= прирост < 0.03 * 8_000
+        action = decide_action(state)
+        assert action is not None and action.kind == "buy"
+
+    def test_джокер_взявший_свой_порог_идёт_первым(self) -> None:
+        # Джокер претендует на постоянный слот и уже откалиброван; планета за
+        # $3 его вытеснять не должна.
+        action = decide_action(
+            self._shop(shop=(self.ПЛАНЕТА, ShopItem("j_joker", "Joker", "JOKER", 3, "+4 Mult")))
+        )
+        assert action is not None
+        assert action.kind == "buy"
+        assert action.label == "Joker"
+
+    def test_планета_решается_до_пака(self) -> None:
+        # Celestial-пак — хеджированная версия того же канала, а конкретная
+        # планета на полке уже известна: информации больше, цена вдвое ниже.
+        action = decide_action(
+            self._shop(
+                shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),)
+            )
+        )
+        assert action is not None
+        assert action.kind == "buy"
+        assert action.label == "Mercury"
+
+    def test_тарот_не_покупается(self) -> None:
+        # Оценки у него нет вовсе (замер: 9 с на одну карту при пяти
+        # джокерах, а с экрана магазина руки нет), значит и покупки нет.
+        action = decide_action(self._shop(shop=(self.ТАРОТ,)))
+        assert action is not None
+        assert action.kind != "buy"
+
+    def test_повод_ухода_называет_планету(self) -> None:
+        # Дефект A13 в новой одежде: «на витрине нет оценённых джокеров» при
+        # лежащем там Меркурии за $3 буквально верно и практически ложно.
+        action = decide_action(self._shop(money=14))
+        assert action is not None
+        assert action.kind == "next_round"
+        assert "планета Mercury" in action.reason
+        assert "запас" in action.reason
+
+    def test_повод_ухода_считает_неоценённые(self) -> None:
+        action = decide_action(
+            self._shop(shop=(self.ТАРОТ,), blinds={"small": _blind("SMALL", "UPCOMING", 100_000)})
+        )
+        assert action is not None
+        assert action.kind == "next_round"
+        assert "неоценённых расходников на полке: 1" in action.reason
+
+
+class TestРероллКудаКластьНаходку:
+    """Улучшение A22. `_decide_reroll_action` — последняя ветка магазина, до
+    неё доходят только после отказа покупки, ваучера, планеты, размена и
+    продажи балласта, то есть ровно тогда, когда борд полон и таким
+    остаётся. Замер по ротации из 35 ранов: **167 из 216 роллов (77 %)
+    сделаны при полном борде**, $887 из $1141 ушло туда, и все 16 случаев,
+    где бот ушёл, видя оффер дороже 200, читали «слоты полны». Ролл находил
+    заказанное, а находка была непригодна."""
+
+    #: Витрина из одного неизвестного движку джокера: покупка его пропустит,
+    #: оценённых офферов не будет, дело дойдёт до реролла.
+    МУСОР: Final = (ShopItem("j_совсем_новый", "???", "JOKER", 5),)
+
+    def _shop(self, ключи: tuple[str, ...], **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "phase": "SHOP",
+            "money": 25,
+            "joker_slots": len(ключи),
+            "shop_slots": 2,
+            "reroll_cost": 5,
+            "full_deck": _ПАРА_ТУЗОВ,
+            "jokers": tuple(
+                JokerCard(key=k, label=f"{k}{i}", sell_value=2) for i, k in enumerate(ключи)
+            ),
+            "blinds": {"small": _blind("SMALL", "UPCOMING", 2000)},
+            "shop": self.МУСОР,
+        }
+        return GameState(**{**base, **overrides})  # type: ignore[arg-type]
+
+    def test_не_крутит_когда_находке_некуда_деться(self) -> None:
+        # Пять одинаковых джокеров с заметным вкладом: чтобы находка
+        # пригодилась, она должна пройти порог размена (кратность к вкладу
+        # слабейшего), а ожидание ролла столько не обещает.
+        state = self._shop(("j_joker",) * 5)
+        advice = evaluate_shop(state)
+        assert advice is not None and advice.replace_candidate is not None
+        assert advice.reroll is not None
+        порог = _REPLACE_UPLIFT_RATIO * advice.replace_candidate.contribution
+        assert (advice.reroll.expected_best_uplift or 0.0) < порог
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
+
+    def test_крутит_когда_слабейший_балласт(self) -> None:
+        # Тот же полный борд, но слабейший — мёртвый груз: размен возьмёт
+        # любой оффер, который его превосходит, и ролл снова имеет смысл.
+        state = self._shop(("j_joker", "j_rough_gem", "j_rough_gem", "j_rough_gem", "j_rough_gem"))
+        assert _без_повода(decide_action(state)) == Action(kind="reroll")
+
+    def test_не_крутит_когда_продать_некого(self) -> None:
+        # Слоты полны, все джокеры вечные — освободить место нечем ни при
+        # каком результате ролла.
+        вечные = tuple(
+            JokerCard(key="j_joker", label=f"Joker{i}", sell_value=2, eternal=True)
+            for i in range(5)
+        )
+        state = self._shop(("j_joker",) * 5, jokers=вечные)
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert _reroll_target_bar(state, advice, 2000) is None
+        assert _без_повода(decide_action(state)) == Action(kind="next_round")
+
+    def test_при_свободном_слоте_порог_прежний(self) -> None:
+        # Половина A22, которая меняться не должна: со свободным слотом
+        # находка покупается обычным порядком, порог — тот же `_worth_buying`.
+        state = self._shop(("j_joker",) * 2, joker_slots=5)
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert _reroll_target_bar(state, advice, 2000) == _MIN_BUY_REQ_FRACTION * 2000
+        assert _без_повода(decide_action(state)) == Action(kind="reroll")
+
+    def test_повод_называет_порог_и_то_чем_брать(self) -> None:
+        action = decide_action(self._shop(("j_joker",) * 2, joker_slots=5))
+        assert action is not None and action.kind == "reroll"
+        assert "порога" in action.reason
+        assert "покупка в слот" in action.reason
+
+    def test_повод_ухода_называет_отказ_ролла(self) -> None:
+        # Без этой строки в журнале «ушёл из магазина» не отличить «не крутил,
+        # потому что некуда класть» от «не крутил, потому что нет денег» —
+        # ровно та неразличимость, на которой A13 сделал неверный вывод.
+        action = decide_action(self._shop(("j_joker",) * 5))
+        assert action is not None and action.kind == "next_round"
+        assert "ролл обещает" in action.reason
+        assert "размена" in action.reason
+
+    def test_повод_ухода_называет_нехватку_запаса(self) -> None:
+        action = decide_action(self._shop(("j_joker",) * 2, joker_slots=5, money=8))
+        assert action is not None and action.kind == "next_round"
+        assert "не оставляет запас" in action.reason
+
+    def test_выручка_от_продажи_жертвы_считается_деньгами(self) -> None:
+        # A11 в миниатюре: при полных слотах покупке предшествует продажа, и
+        # её выручка — часть денег, которыми находка будет оплачена. Борд из
+        # балласта, чтобы вентиль A22 роллу не мешал; $8 + $3 − $5 = $6 ≥ $5.
+        балласт = tuple(
+            JokerCard(key="j_rough_gem", label=f"Gem{i}", sell_value=3) for i in range(5)
+        )
+        with_refund = self._shop(("j_rough_gem",) * 5, jokers=балласт, money=8)
+        without = replace(
+            with_refund,
+            jokers=tuple(replace(j, sell_value=0) for j in балласт),
+        )
+        assert _без_повода(decide_action(with_refund)) == Action(kind="reroll")
+        assert _без_повода(decide_action(without)) == Action(kind="next_round")

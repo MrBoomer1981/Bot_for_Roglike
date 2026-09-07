@@ -6,6 +6,7 @@ import pytest
 
 from balatro_bot.adapters.manual import build_state
 from balatro_bot.core.cards import Card, Edition, Enhancement, Rank, Seal, Suit, parse_cards
+from balatro_bot.core.hands import HandType
 from balatro_bot.core.state import ShopItem
 from balatro_bot.core.tags import TAGS
 from balatro_bot.solver.actions import ActionOption
@@ -13,6 +14,7 @@ from balatro_bot.solver.consumables import TarotConsumableOffer
 from balatro_bot.solver.discard import DiscardOutcome
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import (
+    ConsumableOffer,
     HeldJoker,
     JokerOffer,
     PackPurchaseOffer,
@@ -269,6 +271,75 @@ class TestРендерСоветаПоСкипу:
         render_skip_advice(advice)
         out = capsys.readouterr().out
         assert "не опознан" in out
+
+
+class TestРендерРасходниковМагазина:
+    """Улучшение C2. Показывается по той же причине, по которой появилось в
+    расчёте: до C2 расходников на полке для бота не существовало, и по
+    выводу этого было не видно — цифры просто не было."""
+
+    def _advice(self, *consumables: ConsumableOffer) -> ShopAdvice:
+        return ShopAdvice(
+            jokers=(), vouchers=(), packs=(), money=10, consumables=consumables, reroll=None
+        )
+
+    def test_планета_показывает_прирост(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render_shop_advice(
+            self._advice(
+                ConsumableOffer(
+                    item=ShopItem("c_mercury", "Mercury", "PLANET", 3),
+                    hand_type=HandType.PAIR,
+                    affordable=True,
+                    has_slot=True,
+                    expected_uplift=67.0,
+                    exact_deck=True,
+                    samples=5,
+                    note="уровень «pair» +1",
+                )
+            )
+        )
+        out = capsys.readouterr().out
+        assert "расходники:" in out
+        assert "Mercury" in out
+        assert "67" in out
+
+    def test_тарот_показывает_причину_вместо_числа(
+        self, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        render_shop_advice(
+            self._advice(
+                ConsumableOffer(
+                    item=ShopItem("c_magician", "The Magician", "TAROT", 3),
+                    hand_type=None,
+                    affordable=True,
+                    has_slot=True,
+                    expected_uplift=None,
+                    exact_deck=True,
+                    samples=0,
+                    note="оценивается только планета",
+                )
+            )
+        )
+        out = capsys.readouterr().out
+        assert "оценивается только планета" in out
+
+    def test_нет_слота_и_денег_помечены(self, capsys: pytest.CaptureFixture[str]) -> None:
+        render_shop_advice(
+            self._advice(
+                ConsumableOffer(
+                    item=ShopItem("c_mercury", "Mercury", "PLANET", 3),
+                    hand_type=HandType.PAIR,
+                    affordable=False,
+                    has_slot=False,
+                    expected_uplift=67.0,
+                    exact_deck=True,
+                    samples=5,
+                )
+            )
+        )
+        out = capsys.readouterr().out
+        assert "нет слота" in out
+        assert "не хватает денег" in out
 
 
 class TestРендерСоветаПоМагазину:

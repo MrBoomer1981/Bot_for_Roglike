@@ -15,13 +15,19 @@ jokers), but verifying the numbers against the real game (task 3a) hasn't been d
 a Mac. Phase 5 is confirmed live on real macOS; phases 6–8 are done (exact discard EV, shop
 and joker order, blind skip and economy). Phase 9 ("Autopilot") — subtasks 9.1–9.7 are done
 (action loop, skip/shop/pack-opening, vouchers, Planet consumables, boss catalogue and score
-fix, stake stickers, run-runner) plus improvements A1–A10, B1, C1, D1 and F1–F3 from section 9.8 — see
-section 6, "Autopilot" subsection. Run 7 (RED/WHITE, 2026-09-01) is the **first autopilot
+fix, stake stickers, run-runner) plus the section 9.8 improvement roadmap through **C2** and **A21/A22** — that
+section, not this paragraph, is where done-versus-open is tracked, so it is named rather than
+copied here. See also section 6, "Autopilot" subsection. Run 7 (RED/WHITE, 2026-09-01) is the **first autopilot
 win** — beat Ante 8, 168 steps, zero mod rejections/timeouts/stalls, with A5/A6/A7/B1/D1/F1
 all exercised live; it also surfaced the reroll churn A8/F2 (the bot burned ~$75 on 21
-rerolls and visibly hung in the shop while re-evaluating). What's left: fix A8/F2 and re-run
-the shakedown, Tarot consumables (C1), Arcana/Spectral/Standard packs, an unattended 24/7
-mode, and the mass win-rate measurement itself (E1). The current state of
+rerolls and visibly hung in the shop while re-evaluating). The 35-run deck rotation
+(2026-09-06) then measured why runs are lost — median 58 % of the requirement, 11 of 30 losses
+short of half — and named the cause: the bot could not buy a consumable at all, so hand levels
+never rose. That is **C2**, now closed, together with **A21 + A22** — the reroll policy that both
+rolled into a full board ($887 of $1141) and refused to roll when the bot was poor with a slot
+free. What's left, ranked in 9.8: **C3** (blinds skipped for pack tags that never arrive), the
+Tarot half of the consumable channel, Arcana/Spectral/Standard packs, an unattended 24/7 mode,
+and the mass win-rate measurement itself (E1). The current state of
 each phase and what's left — section 8.1; the improvement roadmap — section 9.8.
 Development and gameplay platform: macOS (Apple Silicon / Intel), the Steam version of
 Balatro.
@@ -1791,6 +1797,256 @@ The planned order (letter labels are working ones, not from the general phase nu
   scoped and pinned in both directions, so the exception stays a tested behaviour rather than an
   untested excuse. Tests — `tests/test_shop.py::TestИнвариантыКонтрфактума`.
 
+- **C2. The bot could not buy consumables at all, and that was the root of the loss pattern — done.**
+  The whole chain
+  below was measured over the full 15-deck rotation (32 runs) by following the question "why do
+  boards stop scaling at ante 4?", not by looking for this entry's confirmation. Three hypotheses
+  formed along the way were falsified by the next measurement and are kept at the end, because each
+  would otherwise look plausible enough to try again.
+
+  1. **The shelf offers consumables constantly and the bot buys none.** Across the rotation the
+     shelves held **489 jokers, 123 Tarots and 120 Planets**; of the 243 consumables, **239 (98 %)
+     were affordable at the moment they were offered**. The bot bought zero: `evaluate_shop`
+     filtered `state.shop` to `item.kind == "JOKER"`, and `_shop_action` had branches for jokers,
+     vouchers and packs and **no branch for a consumable at all**.
+  2. **Packs cannot make up the difference.** The bot does buy Celestial packs (45 of 55 packs
+     bought) and does take Planets from them, but that yields **43 Planets across 32 runs — ~1.3
+     per run**, scattered over hand types (Mercury 16, Earth 7, Uranus 6, Pluto 5, Venus/Saturn/
+     Jupiter 3 each). A Planet raises **one** hand type by **one** level, so hand levels stay at
+     1–2 for an entire run.
+  3. **At levels 1–3 the counterfactual correctly prefers additive jokers.** Sweeping hand level on
+     one fixed board, the ratio of the best multiplicative candidate's uplift to the best additive
+     one's is **0.42× at level 1, 0.74× at 3, 1.05× at 5, 1.52× at 8, 2.13× at 12** — monotone,
+     crossing over around level 5. The valuation is not biased; it answers correctly for the hand
+     levels it is given.
+  4. **So the boards fill with additive jokers.** On full boards the median count of multiplicative
+     jokers is **0 at antes 3, 4 and 5**, and **56 %, 54 % and 54 %** of those boards hold none.
+  5. **And an additive board cannot track the blind.** Median board contribution grows **×5.05** at
+     ante 3 against a requirement growing ×2.50, then **×2.17 vs ×2.50** at ante 4, **×1.69 vs
+     ×2.20** at ante 5, **×1.30 vs ×1.75** at ante 7 — the stall lands exactly where the runs die
+     (mean ante 4.6, median 56 % of requirement reached).
+
+  Plugging in the shop branch is therefore not "one more acquisition path" — it is the input the
+  whole joker economy was starved of, and it explains the otherwise confusing observation that
+  **joker valuation looks correct in isolation while producing losing boards**. That combination is
+  what made this hard to see from the code.
+
+  **What shipped.** `ShopAdvice.consumables` carries a `ConsumableOffer` per shelf consumable;
+  `autopilot._decide_consumable_buy_action` buys the best qualifying Planet, ordered after the
+  joker and voucher buys and before the strong replace, packs and reroll. `GameState.consumable_slots`
+  (the mod's `consumables` area `limit`) was added so a purchase into a full inventory is refused by
+  the bot rather than by the mod. `render_shop_advice` prints the shelf's consumables, because a
+  number the human cannot see is how this defect survived twelve runs.
+
+  **Only Planets are priced, and the refusal is measured rather than assumed.**
+  `evaluate_tarot_consumables` costs **334 ms on an empty board and 8 977 ms on five jokers** for a
+  single card against a real hand; the shop screen has no hand, so a shelf valuation would have to
+  sample hands — about 45 s per shop visit. The same number rules out the cheaper idea of buying a
+  Tarot speculatively and deciding at use time: making Tarots reachable at all would put that
+  nine-second stall on every hand of the run. Tarot/Spectral therefore get an honest `None` with the
+  reason attached, which the autopilot can read and silence would not give it.
+
+  **The Planet number comes from the same place the Celestial pack's does** — `solver.pack.level_up`
+  over `PACK_SAMPLE_HANDS = 5` representative hands — and a test pins the shelf figure to the pool's
+  entry for that hand type, so two routes to one quantity cannot drift. The sampling was split, not
+  duplicated: `planet_uplifts(state, hand_types, deck_source)` computes one shared baseline for the
+  set it is asked for, and `planet_uplift_pool` is now a wrapper over all twelve. The set is a
+  parameter because the cost is real — **807 ms for one hand type, 1 198 ms for two, 5 174 ms for
+  all twelve** on a five-joker board — and a Planet on the shelf needs exactly one of the twelve.
+
+  **The bar is deliberately not A2's, and both candidates were measured before choosing.** A2 asks
+  "is this worth a permanent slot"; a Planet takes no permanent slot, and its uplift is measured on
+  hands dealt now while the level-up lasts the run, so the figure is a known under-estimate —
+  applying a bar calibrated for a complete measurement on top of an incomplete one doubles the
+  error. `_CONSUMABLE_NOISE_FRACTION` is assigned from `_DEAD_WEIGHT_REQ_FRACTION` (0.5 %) as the
+  same object, for the same reason `_PACK_MONEY_RESERVE` is assigned from `_REROLL_MONEY_RESERVE`.
+  Replaying 22 shelf-Planet decisions out of the journals:
+
+  | bar | fires | latest ante it fires at |
+  |---|---|---|
+  | A2, 3 % of requirement | 5 of 22 | ante 4 |
+  | noise guard, 0.5 % | 9 of 22 | ante 7 |
+
+  A2 would have left the behaviour unchanged at exactly the antes where the runs die, which is the
+  outcome worth avoiding: a fix that measurement says will not fire.
+
+  **Honest limits, recorded rather than papered over.**
+
+  1. The uplift is measured on hands sampled **now** while a level-up is permanent, so the number is
+     a lower bound. That is *why* the bar is a noise guard rather than a strength judgement, not a
+     detail beside it.
+  2. The strategic effect this entry itself identified — higher levels make multiplicative jokers
+     worth buying — is **not modelled**. The branch repairs the acquisition channel, not the
+     valuation of its delayed consequence.
+  3. A Planet whose hand type does not appear in the five sampled hands reads exactly 0 and is
+     refused. Correct now; not necessarily correct over the run's horizon.
+  4. **The $12 reserve is not free, and it costs the most where the purchase is worth the most.**
+     Replaying all **135** shelf-Planet decisions from the rotation end-to-end: 67 clear the bar,
+     **35 are bought, and the reserve blocks 32 — 48 % of everything the bar admits.** By ante:
+
+     | ante | clears the bar | blocked by the reserve | bought |
+     |---|---|---|---|
+     | 1 | 11 | **10** | 1 |
+     | 2 | 19 | **12** | 7 |
+     | 3 | 12 | 5 | 7 |
+     | 4 | 16 | 5 | 11 |
+     | 5–7 | 9 | 0 | 9 |
+
+     The blocking is concentrated in antes 1–2, where the bot is poorest — and a level bought at
+     ante 1 is the one that compounds over the whole run, so this is the opposite of where a
+     reserve should bite. The reserve itself is not wrong: run 4 died to a policy without one, and
+     that reasoning is about *rerolls*, which need money afterwards to buy what they find, whereas
+     a $3 Planet is complete in itself and costs at most $1 of interest. Reusing
+     `_PACK_MONEY_RESERVE` was chosen deliberately to avoid a second constant with one
+     justification, and this table is the price of that choice, recorded so the trade is visible.
+     **Open question for the next batch**, not a defect to fix blind: whether a smaller reserve for
+     an item this cheap wins more than it loses.
+
+  **Three hypotheses falsified on the way here**, kept so they are not re-tried:
+
+  - *"The bot starts slowly and never builds a board."* No — slots are full by ante 3 (median joker
+    count 1 → 4 → 5) and stay full for the rest of every run.
+  - *"The board locks in early and never turns over."* No — 60 % of the first full board survives to
+    the end, with a median of 3 new jokers arriving after the slots first fill; only 3 of 23 runs
+    never changed composition.
+  - *"The counterfactual is biased against multiplicative jokers."* No — sweeping **board size** 0→4
+    jokers, the multiplicative/additive ratio is **flat at 0.42×**. Added chips are multiplied by the
+    board's mult just as XMult is, so both sides scale together. The variable is hand **level**, not
+    board strength; an earlier single-pair result (Cavendish overtaking Gros Michel on a stronger
+    board) was a property of that pair and I over-read it.
+
+  **Caveats on the measurement itself.** The ante ≥ 6 rows of the growth table are survivors — only
+  3 runs reach ante 8 — so only the ante 1–5 portion carries weight; that is the portion the argument
+  uses. The crossover sweep is one board and one hand, so "level ≈ 5" is the shape of the curve, not
+  a constant to hard-code.
+
+  **What this leaves open.** `The Fool` and the rest of C1's Tarot valuation are still unreachable —
+  the Tarot half of the channel is a separate slice, and it needs a cheap valuation before it needs a
+  branch. Whether the branch actually moves hand levels, and win rate, is a live-batch question, not
+  a test question: the tests pin the policy, only a run can price it.
+
+  **Tests** — `tests/test_shop.py::TestОценкаРасходников`,
+  `tests/test_autopilot.py::TestПокупкаПланетыВМагазине`,
+  `tests/test_render.py::TestРендерРасходниковМагазина`, and the two `consumable_slots` cases in
+  `tests/test_mod_bridge.py`.
+
+- **A21 + A22. The reroll policy was wrong in both directions at once — done.**
+  PLAN.md had been calling these a contradiction inside one policy without writing A21 down at
+  all; it exists now because the two only make sense together. Both halves were re-measured on
+  the full 35-run rotation (`runs/decks`) rather than carried over from the earlier note.
+
+  **A22 — the bot rolled when a find had nowhere to go.** `_decide_reroll_action` is the last
+  shop branch, reached only after buy, voucher, Planet, replace and dead-weight sell have all
+  declined — which is precisely when the board is full and staying full. Measured: **167 of 216
+  rerolls (77 %) were made with a full board, and $887 of $1 141 went there.** Of the 16 shop
+  exits holding an offer worth more than 200, **all 16 read «слоты полны» and not one read
+  «дорого»**:
+
+  ```
+  ante 5  $13  Splash     uplift 4089  price $3  NO SLOT
+  ante 6  $25  Arrowhead  uplift 4740  price $7  NO SLOT
+  ante 7  $29  Odd Todd   uplift 4571  price $4  NO SLOT
+  ```
+
+  The roll found exactly what it was asked for — thousands of uplift, trivial prices, money in
+  hand — and the find was unusable. The bot paid $5 to search a shelf it had just established it
+  could not buy from.
+
+  **My first reading of these numbers was wrong** and is kept because the correction is the
+  useful part. I suspected the estimate: `RerollOutlook.expected_best_uplift` is stationary,
+  drawn from a fixed pool of 24 random jokers, so "the roll over-promises" was the natural
+  suspicion. E1e added the shelf to the journal and the shelf said otherwise — comparing before
+  and after each roll, the best offer improved in 5 of 9 early pairs, mean best going 88 → 263.
+  The roll does its job; the *policy around it* did not.
+
+  **The fix asks a question the policy never asked: what would a find have to clear to be
+  usable?** `_reroll_target_bar` answers it from the state, not from a new rule — with a free
+  slot, `_worth_buying` exactly as before; with full slots, the bar `_decide_replace_action`
+  itself applies (strictly above the victim's contribution, and either the victim is dead weight
+  or the offer is `_REPLACE_UPLIFT_RATIO`× stronger); with full slots and nothing sellable,
+  `None`, meaning no outcome could help. The replace rule is *read from the same constants*
+  rather than restated, because a gate that drifted from it would license rolls the replace then
+  refuses — this defect, back again.
+
+  **Replaying the journals through the real gate: 123 of 167 full-board rolls blocked (74 %),
+  about $657.** The 44 that survive are the ones whose expectation really could displace the
+  weakest joker. A typical blocked case is roll expectation 908 against a weakest contribution
+  of 1 368: no result could have been used, and $5 was paid to look.
+
+  Improvement C2 (shelf Planets) covers only **25 of those 167**, so it does not overlap this.
+
+  **A21 — the bot could not roll when it would have helped.** The same rotation shows **87 shop
+  exits with a free joker slot and no purchase; 84 of them (97 %) with under $17**, median $11,
+  and **63 of the 84 at antes 1–2**, where the board is laid down. Under the $12 reserve, 3 of
+  87 could have rolled.
+
+  **The root is one number answering three questions.** `_PACK_MONEY_RESERVE` was assigned from
+  `_REROLL_MONEY_RESERVE` with a comment arguing the justification was word-for-word identical
+  and two constants would drift. The argument was wrong on its premise: a reroll is the only
+  purchase whose money is needed **afterwards** — it buys nothing, it only reveals what could be
+  bought — while a pack or a Planet is complete in itself. Calibrated for the pack's question,
+  the shared number then refused the roll in exactly the situation the roll was for.
+
+  So the reserves are now separate, each with its own question:
+
+  | constant | question it answers | value |
+  |---|---|---|
+  | `_REROLL_MONEY_RESERVE` | will there be enough to buy what the roll finds? | `TYPICAL_JOKER_PRICE` = $5 |
+  | `_PACK_MONEY_RESERVE` | will this empty the pocket? (A13, run 12) | $12 |
+  | `_CASH_RICH_RESERVE` | is the bot wealthy enough for a structural upgrade? (A7) | $12 |
+
+  $5 is not a guess: over the rotation's **575 shelf joker offers the median price is exactly
+  $5** (quartiles $4–$6, 90th percentile $7), which is what "enough to buy what the roll was
+  for" means. Replayed through the real reserve, **48 of the 87 exits (55 %) can now roll.** When
+  slots are full the victim's `sell_value` counts toward available money — not counting it would
+  compare the two sides in different states, the mistake improvement A11 was written to close.
+
+  **This does not restore run 4's drain to $0.** Then the reserve was the only brake on a
+  streak; since A8 the streak is bounded by `_MAX_REROLLS_PER_SHOP = 2`, and the "reserve remains
+  after paying" condition makes the money floor constructive — the till cannot go below the
+  reserve. The honest edge stays the one A8 already recorded: `economy.rerolls_done` derives the
+  roll count from the price, and a Reroll tag or Chaos the Clown temporarily lowers that price,
+  so in those cases the count under-estimates and errs toward allowing a roll.
+
+  **A third consumer surfaced during implementation, and how it surfaced is the point.**
+  `_heuristic_voucher_bar` (A7) also read `_REROLL_MONEY_RESERVE` — for a *third* question, "is
+  the bot cash-rich" — so lowering the reroll reserve would have silently moved A7's wealth test
+  from $12 to $5. The plan for this work named three consumers and missed that one; the existing
+  test `test_a7_при_нехватке_денег_порог_overstock_базовый` caught it on the first run. A7 now
+  has `_CASH_RICH_RESERVE` and its behaviour is byte-identical. That a shared constant had spread
+  to a fourth meaning without anyone noticing is the strongest evidence for the split itself.
+
+  **The journal must name the refusal.** `_reroll_block_reason` appends to `_shop_nothing_reason`
+  the same way `_consumable_block_reason` does, and for the same reason: without it a
+  «ушёл из магазина» line cannot separate "did not roll because the find had nowhere to go" from
+  "did not roll because money was short". That indistinguishability is what let A13 draw a wrong
+  conclusion, and what let this defect sit unnoticed for twelve runs.
+
+  **One test was rewritten on purpose, which is worth flagging rather than hiding.**
+  `test_не_рероллит_без_денежного_запаса` encoded the old $12 (money = $15). It now checks the
+  same rule at the new number ($8 − $5 = $3 < $5), and a companion test pins that $15 *does* now
+  roll — the boundary moved, it did not disappear. Changing a test alongside a deliberate policy
+  change is legitimate; changing one to make a red suite green is not, and the difference is that
+  the new behaviour was predicted and measured before the test was touched.
+
+  **Honest limits.**
+
+  1. The full-slots bar checks only the *uplift* a find would need, never its price —
+     `RerollOutlook` describes a card that has not been drawn, so no price exists. The sell
+     refund compensates partly; it is not an exact account.
+  2. `expected_best_uplift` is still stationary (24 sampled jokers, blind to the shelf). This
+     work changed the **bar**, not the estimate; whatever bias the estimate carries, it carries.
+  3. The $5 reserve is the *median* joker price, so roughly half the time a find will still be
+     unaffordable. That skew toward looking is deliberate: A21 is a run that died because the bot
+     did not look.
+  4. The "123 of 167" figure takes the weakest board joker without knowing whether it is eternal
+     — `BoardEntry` does not record that — so a few boards with an eternal weakest may count
+     slightly differently. Too few to move the figure.
+
+  **Tests** — `tests/test_autopilot.py::TestРероллКудаКластьНаходку`,
+  `tests/test_shop.py::TestКандидатНаРазмен`, plus the rewritten reserve pair in
+  `TestDecideActionРеролМагазина`.
+
 ### Open, ranked — the next work
 
 Everything above is done. What follows is not, and is ordered by what the 16-run batch showed.
@@ -1811,113 +2067,20 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   minority.
 
   **So the items that deserve priority are the ones that affect board strength**, not the ones
-  that shave a hand: **C2** (Planets, which raise a hand level permanently, are never bought),
-  **A22** ($603 of $800 spent rolling into a full board), **A21** (early antes where the bot cannot
-  buy a joker at all). By the same measurement **D2** and the discard-threshold questions of **B3**
-  are tactical detail and can wait — a pendulum costing 0.8 % of steps, or three unspent discards,
-  do not close a 44 % gap.
+  that shave a hand. Three of them are now done — **C2** (Planets on the shelf are bought, the input
+  hand levels were starved of) and **A21 + A22** (the reroll policy no longer rolls into a full
+  board, and no longer refuses to roll when the bot is poor with a slot free). What is left in that
+  class is **C3**, which forfeits blind rewards for pack tags that then reach nothing. By the same
+  measurement **D2** and the discard-threshold questions of **B3** are tactical detail and can wait
+  — a pendulum costing 0.8 % of steps, or three unspent discards, do not close a 44 % gap.
+
+  **The measurement above is the pre-C2 baseline and should be re-taken, not reused.** It describes
+  runs played by a bot that could not buy a Planet and burned $887 rolling into full boards; whether
+  the 42 %-without-half figure survives those two changes is exactly what the next batch is for —
+  and until it runs, nothing below is ranked on current evidence.
 
   One caveat kept: 8 of 24 losses still ended with all discards unspent, which remains a lot. It
   is simply not the thing that decided those runs.
-
-- **C2. The Tarot valuation is nearly unreachable — the bot cannot acquire the cards.** Found
-  while checking the user's repeated report that `The Fool` is never used. The report was right,
-  and the cause is larger than one card: across the 12-run deck rotation the bot **took 27
-  consumables and used 0**.
-
-  Tracing every way a consumable could reach the inventory:
-
-  - **Planets from Celestial packs** are applied by the game on pick and never enter the
-    inventory — correct behaviour, already documented, but it means pack picks are not a source;
-  - **Arcana packs**, the game's main Tarot source, are skipped — `solver/pack.py` returns nothing
-    for them, so `_decide_pack_action` falls through to `skip_pack`;
-  - **Tarots on the shop shelf are never bought**: `evaluate_shop` filters `state.shop` to
-    `item.kind == "JOKER"`, and `_decide_shop_action` has branches for jokers, vouchers and packs
-    and **no branch for a consumable at all**;
-  - what remains is a deck's *starting* inventory — `MAGIC`'s two `The Fool`, which is exactly the
-    case the user reported.
-
-  So C1's two slices — the eight enhance-Tarots, the four suit conversions, `Strength`, `Death`,
-  `The Hanged Man`, the reachability filter, three honesty tiers — evaluate cards the bot has
-  almost no way to hold. The valuation is not wrong; it is disconnected. That is why the same
-  report ("the bot never uses The Fool") came back twice: the second time it was not about `The
-  Fool`.
-
-  **Ranked above `The Fool` itself**, which is one card inside a channel that is not plugged in.
-  The cheapest connection is a shop branch: the shelf's Tarot/Planet items already arrive in
-  `GameState.shop` with `kind`, `evaluate_tarot_consumables` already prices what a Tarot is worth
-  on the current hand, and `_worth_buying` already exists as the bar. The harder half is that a
-  shop-screen valuation has no hand to evaluate against — the same problem `solver/shop.py` solves
-  by sampling representative hands, so the shape exists.
-
-  **Confirmed by observation once E1e recorded the shelf**, not just inferred from the code.
-  Over the first two decks that ran with shelf logging: 39 shop decisions, **22 consumables
-  sitting on the shelves** (13 Planets, 9 Tarots), a consumable was **affordable in 21 of those
-  decisions**, and in **9** of them the bot left the shop with nothing. One journal line shows
-  it plainly — `$4, jokers 0, «на витрине нет оценённых джокеров»` with a `Saturn` at $3 on the
-  shelf. A Planet raises a hand level permanently, which is the effect this bot rates highest
-  when it picks one out of a Celestial pack; on the shelf it does not see it at all.
-
-  That also makes the exit reason misleading in the A13 sense: «на витрине нет оценённых
-  джокеров» is literally true and practically false — there *is* something to buy, the bot just
-  only looks at jokers. Whatever fixes the branch should fix the sentence.
-
-  **C2 is not a missing feature — it is the root of the loss pattern.** Measured over the full
-  15-deck rotation (32 runs), by following the question "why do boards stop scaling at ante 4?"
-  rather than by looking for this entry's confirmation. Every link below is measured; three
-  hypotheses I formed along the way were falsified by the next measurement and are recorded with
-  the rest, because each one would otherwise look plausible enough to try again.
-
-  1. **The shelf offers consumables constantly and the bot buys none.** Across the rotation the
-     shelves held **489 jokers, 123 Tarots and 120 Planets**; of the 243 consumables, **239 (98 %)
-     were affordable at the moment they were offered**. The bot bought zero — `evaluate_shop`
-     filters to `item.kind == "JOKER"`, as this entry already says.
-  2. **Packs cannot make up the difference.** The bot does buy Celestial packs (45 of 55 packs
-     bought) and does take Planets from them, but that yields **43 Planets across 32 runs — ~1.3
-     per run**, scattered over hand types (Mercury 16, Earth 7, Uranus 6, Pluto 5, Venus/Saturn/
-     Jupiter 3 each). A Planet raises **one** hand type by **one** level, so hand levels stay
-     at 1–2 for an entire run.
-  3. **At levels 1–3 the counterfactual correctly prefers additive jokers.** Sweeping hand level
-     on one fixed board, the ratio of the best multiplicative candidate's uplift to the best
-     additive one's is **0.42× at level 1, 0.74× at 3, 1.05× at 5, 1.52× at 8, 2.13× at 12** —
-     monotone, crossing over around level 5. The valuation is not biased; it is answering
-     correctly for the hand levels it is given.
-  4. **So the boards fill with additive jokers.** On full boards the median count of
-     multiplicative jokers is **0 at antes 3, 4 and 5**, and **56 %, 54 % and 54 %** of those
-     boards hold none at all.
-  5. **And an additive board cannot track the blind.** Median board contribution grows **×5.05**
-     at ante 3 against a requirement growing ×2.50, then **×2.17 vs ×2.50** at ante 4, **×1.69 vs
-     ×2.20** at ante 5, **×1.30 vs ×1.75** at ante 7 — the stall lands exactly where the runs die
-     (mean ante 4.6, median 56 % of requirement reached).
-
-  **What this reframes.** C2 was ranked high as an unreachable-valuation defect: C1's work was
-  disconnected from the game. That is still true, but it understates it. The Planet channel is
-  what moves hand levels, hand levels are what decide whether multiplicative jokers are worth
-  buying, and multiplicative jokers are what let a board keep pace with a ×2.5-per-ante
-  requirement. Plugging in the shop branch is therefore not "one more acquisition path" — it is
-  the input the whole joker economy is currently starved of, and it explains the otherwise
-  confusing observation that **joker valuation looks correct in isolation while producing losing
-  boards**. That combination is what made this hard to see from the code.
-
-  **Three hypotheses falsified on the way here**, kept so they are not re-tried:
-
-  - *"The bot starts slowly and never builds a board."* No — slots are full by ante 3 (median
-    joker count 1 → 4 → 5) and stay full for the rest of every run.
-  - *"The board locks in early and never turns over."* No — 60 % of the first full board survives
-    to the end, with a median of 3 new jokers arriving after the slots first fill; only 3 of 23
-    runs never changed composition.
-  - *"The counterfactual is biased against multiplicative jokers."* No — sweeping **board size**
-    0→4 jokers, the multiplicative/additive ratio is **flat at 0.42×**. Added chips are multiplied
-    by the board's mult just as XMult is, so both sides scale together. The variable is hand
-    **level**, not board strength; an earlier single-pair result (Cavendish overtaking Gros Michel
-    on a stronger board) was a property of that pair and I over-read it.
-
-  **Caveats.** The ante ≥ 6 rows of the growth table are survivors — only 3 runs reach ante 8 — so
-  only the ante 1–5 portion carries weight; that is the portion the argument uses. The crossover
-  sweep is one board and one hand, so "level ≈ 5" is the shape of the curve, not a constant to
-  hard-code. And buying a Planet does spend money a joker would otherwise take, so a shop branch
-  is a real trade-off rather than free value — but 239 affordable offers and 0 purchases is an
-  absent option, not a trade-off being made.
 
 - **C3. The bot skips blinds to buy pack tags and then does not collect the pack.** Found from a
   run that ended in `error` during the second rotation, then measured across all 33 journals.
@@ -2005,49 +2168,6 @@ Everything above is done. What follows is not, and is ordered by what the 16-run
   each pack/tag decision is taken from — `state.pack` and `state.tags` — per decision entry, in
   the E1 instrumentation pattern already used for `board`, `outlook` and `shelf`. Until that runs,
   any fix here would be guessing at a mechanism the data does not name.
-
-- **A22. The bot rerolls when it has nowhere to put the result — open, cause now identified.**
-  First measured over the 13-run rotation: **86 rerolls, $460 spent, 7 (8 %) led to a purchase, 42
-  (49 %) were followed by leaving that same shop empty-handed**, with a mean claimed
-  `expected_best_uplift` of 2 997 against a mean best shelf offer of 771.
-
-  **My first reading of those numbers was wrong** and is recorded here because the correction is
-  the useful part. I suspected the estimate: `RerollOutlook.expected_best_uplift` is stationary,
-  drawn from a fixed pool of 24 random jokers, so "the roll over-promises" was the natural
-  suspicion. E1e added the shelf to the journal, and the shelf says otherwise.
-
-  **The roll does its job.** Comparing the shelf before and after each roll: the best offer
-  improved in 5 of 9 early pairs, mean best going 88 → 263. And of the 16 cases where the bot left
-  a shop holding an offer worth more than 200, **all 16 read «слоты полны» and not one read
-  «дорого»**:
-
-  ```
-  ante 5  $13  Splash     uplift 4089  price $3  NO SLOT
-  ante 6  $25  Arrowhead  uplift 4740  price $7  NO SLOT
-  ante 7  $29  Odd Todd   uplift 4571  price $4  NO SLOT
-  ```
-
-  So the roll finds exactly what it was asked for — thousands of uplift against a bar in the
-  hundreds, at trivial prices, with money in hand — and the find is unusable because every joker
-  slot is taken.
-
-  **The defect is that `_decide_reroll_action` never asks whether there is anywhere to put a
-  find.** It is the last branch, reached only after replace and dead-weight selling have both
-  declined, which is precisely when the board is full and staying full. The bot pays $5 to search a
-  shelf it has already established it cannot buy from.
-
-  **Cost, measured across the rotation:** of 151 rerolls, **113 (75 %) were made with the board
-  already full**, costing **$603** of the $800 spent on rolling. So three quarters of the
-  money spent searching goes to searches whose result cannot be used. Set that against A21,
-  where a run died at ante 1 because $12 of reserve blocked a roll that paid seven times over:
-  the same policy refuses to roll when it would help and rolls freely when it cannot benefit.
-  (The 75 % counts boards of five or more jokers; `BLACK` grants a sixth slot, so its two runs
-  are slightly overcounted — too few to move the figure.)
-
-  **Fifth instance of the class this session** — after B3, D2, A21 and the A21/A22 contradiction:
-  a rule that is correct in isolation ("the roll's expectation beats the current shelf") and
-  meaningless in context ("...and the result has nowhere to go"). Worth fixing as a class rather
-  than one branch at a time.
 
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part

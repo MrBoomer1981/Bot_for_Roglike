@@ -187,10 +187,10 @@ def render_skip_advice(advice: SkipAdvice) -> None:
 
 
 def render_shop_advice(advice: ShopAdvice) -> None:
-    """Показать, что предлагает магазин: джокеры и часть ваучеров — с
-    оценкой прироста счёта, остальные ваучеры и паки — текстом как есть
-    (раздел `solver/shop.py`/`solver/vouchers.py`: части из них не с чем
-    сравнить контрфактум)."""
+    """Показать, что предлагает магазин: джокеры, планеты с полки и часть
+    ваучеров — с оценкой прироста счёта, остальные ваучеры, паки и Таро —
+    текстом как есть (раздел `solver/shop.py`/`solver/vouchers.py`: части из
+    них не с чем сравнить контрфактум)."""
     print(f"\nмагазин: денег ${advice.money}")
     if advice.reroll is not None:
         reroll = advice.reroll
@@ -269,6 +269,28 @@ def render_shop_advice(advice: ShopAdvice) -> None:
             else:
                 оценка = voucher.note or item.effect
             print(f"  {item.label:<{ширина_в}}  ${item.price:<4} {оценка}")
+
+    if advice.consumables:
+        # Улучшение C2. Показывается по той же причине, по которой появилось
+        # в расчёте: до C2 расходников на полке для бота не существовало
+        # вовсе, и по выводу этого было не видно — цифры просто не было.
+        print("\nрасходники:")
+        ширина_р = max(len(offer.item.label) for offer in advice.consumables)
+        for consumable in advice.consumables:
+            пометки = []
+            if not consumable.affordable:
+                пометки.append("не хватает денег")
+            if not consumable.has_slot:
+                пометки.append("нет слота")
+            хвост = f"  ({', '.join(пометки)})" if пометки else ""
+            if consumable.expected_uplift is None:
+                оценка = consumable.note or "не оценено"
+            else:
+                примерно = "" if consumable.exact_deck else ", колода приближена"
+                прирост = format_number(consumable.expected_uplift)
+                оценка = f"прирост ~{прирост}{примерно} ({consumable.note})"
+            item = consumable.item
+            print(f"  {item.label:<{ширина_р}}  ${item.price:<4} {оценка}{хвост}")
 
     if advice.packs:
         print("\nпаки:")

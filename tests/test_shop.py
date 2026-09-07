@@ -19,6 +19,7 @@ from balatro_bot.core.jokers import implemented_keys
 from balatro_bot.core.scoring import score_play
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInfo, ShopItem
 from balatro_bot.solver import shop as shop_module
+from balatro_bot.solver.pack import PLANET_HAND_TYPES
 from balatro_bot.solver.play import advise
 from balatro_bot.solver.shop import (
     _CARD_SHARP_REPEAT_RATE,
@@ -1150,3 +1151,185 @@ class TestИнвариантыКонтрфактума:
             jokers=(*state.jokers, JokerCard(key=ключ, label=ключ, sell_value=sell_value_of(5))),
         )
         assert advise(с_кандидатом, limit=1).best.outcome.exact
+
+
+class TestОценкаРасходников:
+    """Улучшение C2: расходники с полки доходят до совета — планета с
+    посчитанным приростом, Таро с честной причиной вместо числа.
+
+    До C2 `evaluate_shop` фильтровала витрину по `item.kind == "JOKER"`, и
+    расходников для бота не существовало: за ротацию по 15 колодам полки
+    держали 275 таких предложений, 271 из них по карману, куплено ноль."""
+
+    ПЛАНЕТА: Final = ShopItem("c_pluto", "Pluto", "PLANET", 3)
+    ТАРОТ: Final = ShopItem("c_magician", "The Magician", "TAROT", 3)
+
+    def _state(self, **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "money": 25,
+            "consumable_slots": 2,
+            "shop": (self.ПЛАНЕТА, self.ТАРОТ),
+        }
+        return _shop_state(**{**base, **overrides})
+
+    def _считать_приросты(self, monkeypatch: pytest.MonkeyPatch) -> list[list[HandType]]:
+        """Подменить `planet_uplifts` считающей обёрткой — так «какие типы
+        руки пересчитали» проверяется прямо, а не по времени; тот же приём,
+        что у `TestКешВыборок._count_uplifts`."""
+        считано: list[list[HandType]] = []
+        настоящий = shop_module.planet_uplifts
+
+        def counting(state: GameState, hand_types: object, deck: object) -> dict[HandType, float]:
+            типы = list(hand_types)  # type: ignore[call-overload]
+            считано.append(типы)
+            return настоящий(state, типы, deck)  # type: ignore[arg-type]
+
+        monkeypatch.setattr(shop_module, "planet_uplifts", counting)
+        return считано
+
+    def test_планета_получает_оценку_и_свой_тип_руки(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state())
+        assert advice is not None
+        планета = next(o for o in advice.consumables if o.item.key == "c_pluto")
+        assert планета.hand_type is HandType.HIGH_CARD
+        assert планета.expected_uplift is not None
+        assert планета.expected_uplift > 0
+
+    def test_прирост_совпадает_с_пулом_для_того_же_типа(self) -> None:
+        # Одна величина — один источник: и Celestial-пак, и планета с полки
+        # обязаны получать ровно то же число, иначе два пути к одному
+        # уровню руки со временем разъедутся.
+        state = self._state()
+        clear_shop_cache()
+        advice = evaluate_shop(state)
+        assert advice is not None
+        планета = next(o for o in advice.consumables if o.item.key == "c_pluto")
+
+        пул = shop_module.planet_uplift_pool(state, standard_deck())
+        порядок = list(PLANET_HAND_TYPES.values())
+        assert планета.expected_uplift == пул[порядок.index(HandType.HIGH_CARD)]
+
+    def test_тарот_получает_none_с_причиной(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state())
+        assert advice is not None
+        тарот = next(o for o in advice.consumables if o.item.key == "c_magician")
+        assert тарот.expected_uplift is None
+        assert тарот.hand_type is None
+        assert "рука" in тарот.note  # молчания автопилот прочитать не может
+
+    def test_неоценённые_идут_последними(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(_shop_state(money=25, shop=(self.ТАРОТ, self.ПЛАНЕТА)))
+        assert advice is not None
+        assert [o.item.key for o in advice.consumables] == ["c_pluto", "c_magician"]
+
+    def test_полный_инвентарь_снимает_слот(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(consumables=(self.ПЛАНЕТА, self.ПЛАНЕТА)))
+        assert advice is not None
+        assert all(not o.has_slot for o in advice.consumables)
+
+    def test_неизвестная_вместимость_не_блокирует(self) -> None:
+        # Ручной ввод не присылает `limit`; отсутствие числа — не «слотов
+        # нет», а «не знаем», и запрещать по нему нельзя.
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(consumable_slots=None, consumables=(self.ПЛАНЕТА,) * 5))
+        assert advice is not None
+        assert all(o.has_slot for o in advice.consumables)
+
+    def test_нехватка_денег_видна_в_оффере(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(money=1))
+        assert advice is not None
+        assert all(not o.affordable for o in advice.consumables)
+
+    def test_витрина_без_расходников_даёт_пусто(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(shop=(ShopItem("j_joker", "Joker", "JOKER", 3),)))
+        assert advice is not None
+        assert advice.consumables == ()
+
+    def test_повторный_опрос_берёт_прирост_из_кеша(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        state = self._state()
+        clear_shop_cache()
+        evaluate_shop(state)
+
+        считано = self._считать_приросты(monkeypatch)
+        evaluate_shop(state)
+        assert считано == []
+
+    def test_без_celestial_пака_считается_только_тип_с_полки(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Цена вопроса замерена: 807 мс на один тип руки против 5174 мс на
+        # все двенадцать (тяжёлый стек из пяти джокеров). Считать пул, когда
+        # нужен один тип, — это восемь лишних секунд на заход в магазин.
+        считано = self._считать_приросты(monkeypatch)
+        clear_shop_cache()
+        evaluate_shop(self._state())
+        assert считано == [[HandType.HIGH_CARD]]
+
+    def test_с_celestial_паком_считается_весь_пул(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        считано = self._считать_приросты(monkeypatch)
+        clear_shop_cache()
+        evaluate_shop(
+            self._state(
+                shop_packs=(ShopItem("p_celestial_normal_1", "Celestial Pack", "BOOSTER", 4),)
+            )
+        )
+        assert считано == [list(PLANET_HAND_TYPES.values())]
+
+
+class TestКандидатНаРазмен:
+    """Улучшение A22: слабейший невечный джокер выставлен на `ShopAdvice`
+    отдельно, а не только приклеен к оценённым офферам — вентилю реролла
+    порог размена нужен именно тогда, когда оценённых офферов нет вовсе."""
+
+    def _state(self, ключи: tuple[str, ...], **overrides: object) -> GameState:
+        base: dict[str, object] = {
+            "joker_slots": len(ключи),
+            "jokers": tuple(JokerCard(key=k, label=k, sell_value=2) for k in ключи),
+            "shop": (ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+            "money": 25,
+        }
+        return _shop_state(**{**base, **overrides})
+
+    def test_при_полных_слотах_кандидат_есть_без_оценённых_офферов(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(("j_joker", "j_droll")))
+        assert advice is not None
+        # Витрина — один неизвестный движку джокер: оценённых офферов нет.
+        assert all(offer.expected_uplift is None for offer in advice.jokers)
+        assert advice.replace_candidate is not None
+        assert advice.replace_candidate.label in {"j_joker", "j_droll"}
+
+    def test_кандидат_это_слабейший(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(("j_joker", "j_rough_gem")))
+        assert advice is not None and advice.replace_candidate is not None
+        слабейший = min(advice.held, key=lambda entry: entry.contribution)
+        assert advice.replace_candidate.index == слабейший.index
+        assert advice.replace_candidate.contribution == слабейший.contribution
+
+    def test_при_свободном_слоте_кандидата_нет(self) -> None:
+        clear_shop_cache()
+        advice = evaluate_shop(self._state(("j_joker",), joker_slots=5))
+        assert advice is not None
+        assert advice.replace_candidate is None
+
+    def test_вечных_джокеров_продать_нельзя(self) -> None:
+        clear_shop_cache()
+        state = _shop_state(
+            joker_slots=2,
+            jokers=(
+                JokerCard(key="j_joker", label="Joker", sell_value=2, eternal=True),
+                JokerCard(key="j_droll", label="Droll", sell_value=2, eternal=True),
+            ),
+            shop=(ShopItem("j_совсем_новый", "???", "JOKER", 5),),
+            money=25,
+        )
+        advice = evaluate_shop(state)
+        assert advice is not None
+        assert advice.replace_candidate is None

@@ -416,6 +416,10 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
     joker_slots = jokers_area.get("limit") if isinstance(jokers_area, Mapping) else None
     shop_area = payload.get("shop")
     shop_slots = shop_area.get("limit") if isinstance(shop_area, Mapping) else None
+    consumables_area = payload.get("consumables")
+    consumable_slots = (
+        consumables_area.get("limit") if isinstance(consumables_area, Mapping) else None
+    )
     round_info = payload.get("round") or {}
 
     #: Область `cards` — это буквально оставшаяся колода, а не весь деск:
@@ -462,7 +466,8 @@ def parse_game_state(payload: Mapping[str, Any]) -> GameState:
         shop_vouchers=_parse_shop_area(payload.get("vouchers"), unknown),
         shop_packs=_parse_shop_area(payload.get("packs"), unknown),
         pack=_parse_shop_area(payload.get("pack"), unknown),
-        consumables=_parse_shop_area(payload.get("consumables"), unknown),
+        consumables=_parse_shop_area(consumables_area, unknown),
+        consumable_slots=int(consumable_slots) if consumable_slots is not None else None,
         deck_type=str(payload["deck"]) if payload.get("deck") else None,
         deck=deck,
         full_deck=full_deck,
