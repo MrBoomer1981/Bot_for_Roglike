@@ -27,12 +27,34 @@ rerolls and visibly hung in the shop while re-evaluating). The 35-run deck rotat
 short of half — and named the cause: the bot could not buy a consumable at all, so hand levels
 never rose. That is **C2**, now closed, together with **A21 + A22** — the reroll policy that both
 rolled into a full board ($887 of $1141) and refused to roll when the bot was poor with a slot
-free. What's left, ranked in 9.8: **C3** (blinds skipped for pack tags that never arrive), the
-Tarot half of the consumable channel, Arcana/Spectral/Standard packs, an unattended 24/7 mode,
-and the mass win-rate measurement itself (E1). The current state of
-each phase and what's left — section 8.1; the improvement roadmap — section 9.8.
+free. **C3** was then diagnosed and half-closed on 2026-09-09 by reading the game's own source
+rather than by another batch: pack tags fire on the skip itself, one per blind-choice screen, and
+the pack a tag opens but nobody collects is where the bot's foreign pack contents came from — one
+defect, not two. The re-poll fix shipped; whether it is enough is the first thing the next batch
+must answer. What's left, ranked in 9.8: the rest of C3, the Tarot half of the consumable channel,
+Arcana/Spectral/Standard packs, an unattended 24/7 mode, and the mass win-rate measurement itself
+(E1). **Nothing below C3 is ranked on current evidence** — the loss table above predates C2 and
+must be re-taken, which is what the next batch is for
+([docs/measuring-runs.md](docs/measuring-runs.md), "The next batch"). The current state of
+each phase and what's left — section 8.1; the improvement roadmap — item 9.8.
 Development and gameplay platform: macOS (Apple Silicon / Intel), the Steam version of
 Balatro.
+
+### How this document is numbered — read this before chasing a cross-reference
+
+`N.M` means **two different things here**, and mixing them up costs a search every time:
+
+- **Section numbers** — the `##` headings, 1…11. Only section 8 has real subsections, `8.1`–`8.4`
+  ("Where we are now", "Deviations", "Open assumptions", "Fixed defects"). These are cited from
+  the code as `§8.3 №5`.
+- **Phase numbers** — the roadmap's phases 0–9, described inside **section 6**. Phase 9
+  ("Autopilot") has items `9.1`–`9.8`, and those are what the code means by
+  `раздел 6, «Автопилот», п. 9.5`. **Item 9.8 is the improvement roadmap**, cited as `§9.8 A12`.
+
+So `9.8` is a *phase item*, not a section, which is why it sits inside section 6 rather than after
+section 9 — that is correct, not a mis-ordering. Section 9 is "Risks" and has nothing to do with
+Phase 9. Prefer citing a phase item as "section 6, Autopilot, item 9.5" rather than bare "9.5";
+several places in the code already do, and those are the ones that never need a second look.
 
 ---
 
@@ -595,7 +617,10 @@ discovered later:
   is a signal to close the decision in `autopilot`, not a job for the runner. A fixed `--seed`
   gives N identical runs, useful for regression and useless for a win-rate.
 
-### 9.8. An improvement roadmap from the live runs
+### Phase 9, item 9.8 — an improvement roadmap from the live runs
+
+(Cited everywhere as `§9.8`. It is a **Phase 9 item**, which is why it lives here inside section 6
+and not after section 9 — see "How this document is numbered" at the top.)
 
 Letter labels are working ones, not from the general phase numbering. Every item here came out
 of a run against the real game rather than out of review, and they keep the same shape: the bot
@@ -642,7 +667,7 @@ label.
 | **C2** | [The bot could not buy consumables at all, and that was the root of the loss pattern — done.](docs/improvements.md#c2-the-bot-could-not-buy-consumables-at-all-and-that-was-the-root-of-the-loss-pattern--done) |
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](docs/improvements.md#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
 
-### Open, ranked — the next work
+#### Open, ranked — the next work
 
 Everything in the index above is done. What follows is not, and is ordered by what the
 16-run batch showed.
@@ -687,8 +712,7 @@ Everything in the index above is done. What follows is not, and is ordered by wh
 
 - **C3. The bot skips blinds to buy pack tags and then does not collect the pack.** Found from a
   run that ended in `error` during the second rotation, then measured across the journals present
-  at the time — 33 of the rotation's eventual 35 (corpus above). The counts below were not
-  re-derived when the last two runs landed.
+  at the time — 33 of the rotation's eventual 35 (corpus above).
 
   `solver/skip.py` prices the pack-opening tags (A14's `_SCORE_TAGS`) by the uplift of the pack
   they grant, and the bot acts on it: **15 skips for a Meteor/Buffoon/Charm tag**, at claimed
@@ -696,6 +720,14 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   pack then reached the bot **4 times**; it took a card in 3 of those. Of the remaining 11, **9
   went on to reach a shop** — several of them 10 to 17 shop decisions later — **and no pack ever
   opened**; exactly 1 is explained by the run ending before any shop.
+
+  The 15 skips **were** re-derived over the full 35 and hold exactly, splitting 9 Buffoon / 6
+  Meteor / 0 Charm. The arrival counts were not, and deliberately so: a `SMODS_BOOSTER_OPENED`
+  entry does not say *which* pack it belongs to, so "the tag's pack reached the bot" cannot be
+  separated from "a pack the bot bought was opened" by any query over the present journal — the
+  naive widening of the window returns 7, which counts bought packs and means nothing. That
+  ambiguity is a property of the data, not of the query, and `DecisionEntry.pack` (E1f) is what
+  removes it.
 
   **One of them failed hard**, which is how this was found. Three consecutive decisions:
 
@@ -754,11 +786,25 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   three of them never produce an `Action` at all. `offered_tag` is documented in the code as *not*
   a substitute for the owned-tag list. Tests — `tests/test_runner.py::TestСнимкаПакаВЖурнале`.
 
-  **What is still open here is now a fix, not a diagnostic.** The mechanism is known: after a skip
-  the game may already be in the booster state, so deciding from the pre-skip snapshot is what
-  burns the illegal `select`. Whether the right change is a forced re-poll after `skip` or
-  something narrower is a policy question, and it should be decided with the pack contents now in
-  the journal rather than ahead of them.
+  **The fix — done 2026-09-09, and not yet confirmed live.** `runner._RESETTLE_AFTER` names the
+  three action kinds after which the state the mod returns is not taken as the basis of the next
+  decision — `skip` and `next_round`, because those are the two `new_blind_choice` dispatch sites
+  the bot reaches, and `buy_pack`, whose cards may not have populated yet. After one of them
+  `_resettle` pauses `_TRANSIENT_POLL_INTERVAL` and re-polls, falling back to the returned state if
+  the poll fails. The pause is the same one A19 uses before retrying a refusal and the transient-
+  phase wait uses before re-polling: all three are the same situation, "the game is still finishing
+  a transition". Only `runner.play_run` needed it — `ui/tui.py.autoplay` already re-polls at the top
+  of every loop and uses the dispatched state only for display, which is also why every instance of
+  this defect in the corpus comes from a `--log` batch. Tests —
+  `tests/test_runner.py::TestПереспросПослеСкипа`, including that a *non*-listed action does not pay
+  for an extra poll and that a failed re-poll does not end the run.
+
+  **What this does not do**, stated because the temptation to call it closed is exactly how A22 was
+  misdiagnosed: it has never run against the real game. The unit tests pin the runner's behaviour
+  against a scripted bridge, not the game's timing, and if the abandoned tag pack turns out to
+  persist in `G.pack_cards` rather than merely lag, a re-poll returns the same stale contents and
+  this fix does nothing for the type disagreement — only for the illegal `select`. `DecisionEntry.pack`
+  is what will say which, and that is the first thing to read out of the next batch.
 
   **Ranked below C2's shop branch and above D2/B3.** It is the same Planet channel C2 identified
   as the bottleneck — Meteor Tag grants a Celestial Pack — so it compounds the same shortage,
@@ -777,15 +823,17 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   third time this session that a confident claim outran the data, after the A22 misdiagnosis.
 
   **Every mod refusal in the corpus is in pack handling**, which is the strongest evidence that
-  this area — not the poll loop in general — is what is broken. Across **2 958 decisions in 33
-  runs there are exactly 4 refusals (0.1 %)**, and all four are packs; three of them in
-  `SMODS_BOOSTER_OPENED`:
+  this area — not the poll loop in general — is what is broken. Re-derived over the full rotation
+  on 2026-09-09 (the earlier figure read "4 refusals in 2 958 decisions in 33 runs" and was taken
+  before the last two runs landed): across **3 121 decisions in 35 runs there are 6 failed
+  actions (0.19 %)**, and all six are pack handling; four of them in `SMODS_BOOSTER_OPENED`:
 
   ```
-  1  Method 'select' requires one of these states: BLIND_SELECT
+  2  Method 'select' requires one of these states: BLIND_SELECT
   1  No pack is currently open
   1  Card index out of range. Index: 3, Available cards: 0
   1  Card index out of range. Index: 2, Available cards: 2
+  1  (no reply within 90 s on «pack» — a timeout, not a refusal)
   ```
 
   The two index refusals show the bot's view of a pack disagreeing with the game's, **by card
@@ -796,21 +844,40 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   recovered on the next decision and took a correct card, so the cost is a wasted step rather than
   a lost pack — but the disagreement is real.
 
-  **Two explanations were checked and both are wrong**, so neither should be tried again:
+  **Where the foreign cards came from — settled 2026-09-09, and this is the same defect as C3
+  rather than a neighbour of it.** In both runs the foreign card's type is exactly the pack type
+  granted by an earlier **pack tag the bot skipped a blind for and never collected**:
 
-  - *Stale contents from the previously opened pack.* No — in the Celestial case that was the
-    **first** pack of the run, and in the Buffoon case the only earlier pack was also a Buffoon.
-    In both runs the bot saw a card type that no pack it had opened could have contained.
-  - *The shop shelf leaking into `state.pack`.* No — the E1e shelf snapshots for the surrounding
-    decisions hold `['Jolly Joker', 'Business Card']` and `['Rough Gem', 'Earth']`; neither
-    `Smiley Face` nor `Uranus` was ever on the shelf.
+  | run | tag skipped | pack the tag grants | pack later bought | card the bot reached for | game replied |
+  |---|---|---|---|---|---|
+  | `211850-erratic` | step 17, **Buffoon Tag** | Mega Buffoon (4 cards) | step 23, Celestial | step 24, `Smiley Face` (joker), index **3** | `Available cards: 0` |
+  | `212230-erratic` | step 22, **Meteor Tag** | Mega Celestial (5 cards) | step 57, Buffoon (2 cards) | step 58, `Uranus` (planet), index **2** | `Available cards: 2` |
 
-  **The journal could not settle where they came from, because it did not record `state.pack` —
-  and now it does (E1f, above).** Each entry carries the pack's contents with each card's `kind`,
-  which is the half that matters: the disagreement was by card *type*, so a list of labels would
-  not have named it. This one still needs a run to produce data; unlike C3's timing question, no
-  amount of source reading answers where the bot's view of the pack came from, because the
-  disagreement is between two live observations rather than in a game rule.
+  Three things agree at once, which is why this is stated rather than floated. The **type** matches
+  the tag's pack and nothing else the run contains — run `212230` never opened a Celestial pack at
+  all, so a planet in `state.pack` has exactly one possible source. The **index** the bot chose is
+  in range for the tag's pack and out of range for the real one: `tag.lua` grants `p_buffoon_mega_1`
+  and `p_celestial_mega_`, which `game.lua` (lines 679, 696) sizes at 4 and 5 cards, while the real
+  Buffoon Pack holds 2 — the number the game reported back. And between the skip and the refusal
+  the journal shows **no `SMODS_BOOSTER_OPENED` decision at all**, i.e. the tag's pack opened and
+  was never observed, which is precisely C3's 15-skips-4-arrivals pattern seen from the other end.
+
+  **So the earlier rejection of the stale-contents explanation was wrong, and instructively so.**
+  It read: "in the Celestial case that was the first pack of the run, and in the Buffoon case the
+  only earlier pack was also a Buffoon." Both halves are true and the conclusion does not follow —
+  it counted only packs the bot **bought and opened**, and a tag-granted pack is neither. The
+  shop-shelf explanation stays correctly rejected. This makes the "wrong mechanism" tally in this
+  entry four, and every one of them came from reasoning over the journal instead of reading the
+  source or widening the query.
+
+  **What is still genuinely open is the persistence, not the origin.** Whether `G.pack_cards` keeps
+  the uncollected tag pack alive indefinitely, or the newly bought pack merely has not populated it
+  yet when the mod answers the `buy`, the journal cannot separate — both fit `Available cards: 0`
+  followed by a correct pick one decision later. `DecisionEntry.pack` (E1f) is what separates them,
+  and that needs a run. The re-poll shipped above covers the lag variant; if it is persistence, the
+  re-poll will not help and the bot will need to refuse a `state.pack` whose contents contradict the
+  pack it just bought. Which of the two it is decides that, so it is the first question to put to
+  the next batch.
 
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part
@@ -824,12 +891,17 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   moments earlier.** One RED run made 13 reorders, all 13 of them reversals, swinging
   `Droll ↔ Odd Todd` back and forth across forty steps.
 
-  The comment on `_MIN_REORDER_GAIN_FRAC` claims the threshold "не даёт этому вылиться в дёрганье
+  The comment on `_MIN_REORDER_GAIN_FRAC` claimed the threshold "не даёт этому вылиться в дёрганье
   туда-сюда". It does not, and cannot: **the best order is genuinely different for different
   hands.** With `Brainstorm` on the board the leftmost joker is the one it copies, so a flush hand
   wants `Droll` first and an odd-heavy hand wants `Odd Todd` first. Every individual reorder is
-  correct; the sequence is a pendulum. That comment is now false and should be corrected along with
-  the behaviour.
+  correct; the sequence is a pendulum.
+
+  **The comment was corrected on 2026-09-09, ahead of the behaviour and deliberately so.** Both
+  sites now say what the threshold does (cuts search noise) and what it cannot do (damp oscillation
+  between hands), and `_decide_rearrange_action`'s docstring carries the measurement. Leaving a
+  known-false claim in the code until the fix arrives is how the next reader re-derives the wrong
+  model — the behaviour is still open below.
 
   **Cost is small** — 0.8 % of all steps, and a rearrange consumes neither a hand nor a discard,
   only a poll. This is not why runs are lost, which is why it is recorded rather than fixed
@@ -1437,7 +1509,7 @@ flag, off by default — it's up to you where the line between a helper and a ch
 | A rule-modifying boss isn't in the catalogue (Phase 9, item 9.5) → the autopilot tries an illegal move | **Removed**: the 28-boss catalogue is written out from source, not from memory (`core/bosses.py`, the same principle as `core/tags.py`), the illegal-move filter is in `solver/play.py`, assumption #10 is fully closed |
 | The heuristic estimate (tier-3 vouchers, item 9.3) turns out to be a bad policy | Not presented as fact — a separate, explicitly flagged category (section 2, "Third category"); the run-runner (item 9.7) gives a measurable win-rate against which the heuristics can and should be revised |
 
-## 9.1. Decisions made
+## 10. Decisions made
 
 Recorded; from here on we proceed from this:
 
@@ -1466,7 +1538,7 @@ Recorded; from here on we proceed from this:
 
 ---
 
-## 10. The practical side
+## 11. The practical side
 
 Balatro is a single-player offline game with no anti-cheat and no competitive multiplayer.
 An external helper spoils no one's game and breaks nothing. The only real side effect is the

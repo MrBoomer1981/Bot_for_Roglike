@@ -19,7 +19,7 @@ deck / White stake): it beat Ante 8 in 168 steps with no mod rejections, timeout
 The first win-rate number: **1 win in 16 runs (6 %), mean ante 4.2** on Red/White. Read it as a
 first measurement, not a result — it is 16 runs, and a batch of improvements landed together, so
 it measures the combination. Finishing that batch is the current work; the ranked list of what
-comes next is [PLAN.md](PLAN.md) section 9.8.
+comes next is [PLAN.md](PLAN.md) item 9.8.
 
 You can run the numbers right now, without the game:
 

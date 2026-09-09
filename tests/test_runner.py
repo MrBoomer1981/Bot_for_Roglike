@@ -14,7 +14,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from pathlib import Path
 
@@ -963,3 +963,78 @@ class TestСнимкаПакаВЖурнале:
         шаг = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
         assert шаг["pack"] == [{"label": "Uranus", "kind": "PLANET"}]
         assert шаг["offered_tag"] == ""
+
+
+class TestПереспросПослеСкипа:
+    """C3: после `skip`/`next_round`/`buy_pack` состояние из ответа мода
+    брать нельзя — игра в этот момент может открывать пак сама. Раньше
+    именно оно становилось основанием следующего решения, и бот решал по
+    снимку, которого в игре уже не было."""
+
+    def _decide(self, seen: list[int]) -> Callable[..., Action]:
+        def решение(state: GameState, *, include_discards: bool = True) -> Action:
+            seen.append(state.ante)
+            return Action(kind="skip" if state.phase == "BLIND_SELECT" else "play")
+
+        return решение
+
+    def _dispatch(self, bridge: ModBridge, action: Action) -> GameState:
+        assert isinstance(bridge, ScriptedBridge)
+        bridge.actions.append(action)
+        return bridge._advance()
+
+    def test_после_скипа_состояние_перечитывается(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[int] = []
+        monkeypatch.setattr(runner, "decide_action", self._decide(seen))
+        monkeypatch.setattr(runner, "dispatch_action", self._dispatch)
+        bridge = ScriptedBridge(
+            [
+                _state("BLIND_SELECT"),
+                _state("SELECTING_HAND", ante=2),  # ответ мода на сам скип
+                _state("SELECTING_HAND", ante=3),  # что игра отдаёт, когда устаканилась
+                _state("GAME_OVER"),
+            ]
+        )
+        паузы: list[float] = []
+        play_run(bridge, deck="RED", stake="WHITE", sleep=паузы.append)
+
+        # Решение после скипа принято по перечитанному состоянию (3), а не
+        # по тому, что вернул сам вызов (2).
+        assert 3 in seen, seen
+        assert 2 not in seen, seen
+        assert паузы, "переспрос должен идти после паузы, иначе он попадёт в ту же анимацию"
+
+    def test_после_обычного_хода_не_перечитывается(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Переспрос стоит целого опроса мода: вешать его на каждый ход
+        # значило бы удвоить бюджет опросов там, где пак открыться не может.
+        seen: list[int] = []
+        monkeypatch.setattr(runner, "decide_action", self._decide(seen))
+        monkeypatch.setattr(runner, "dispatch_action", self._dispatch)
+        bridge = ScriptedBridge(
+            [
+                _state("SELECTING_HAND"),
+                _state("SELECTING_HAND", ante=2),
+                _state("SELECTING_HAND", ante=3),
+                _state("GAME_OVER"),
+            ]
+        )
+        play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+        assert 2 in seen, seen
+
+    def test_неудавшийся_переспрос_не_ломает_ран(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        seen: list[int] = []
+
+        class МостБезОпроса(ScriptedBridge):
+            def game_state(self) -> GameState:
+                raise ModBridgeError("мод занят анимацией")
+
+        monkeypatch.setattr(runner, "decide_action", self._decide(seen))
+        monkeypatch.setattr(runner, "dispatch_action", self._dispatch)
+        bridge = МостБезОпроса(
+            [_state("BLIND_SELECT"), _state("SELECTING_HAND", ante=2), _state("GAME_OVER")]
+        )
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        # Опрос не удался — работаем по тому, что вернул сам вызов.
+        assert report.outcome == "lost"
+        assert seen == [1, 2], seen

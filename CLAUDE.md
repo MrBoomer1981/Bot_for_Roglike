@@ -6,7 +6,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **balatro-bot** — advisory bot for the roguelike deck-builder Balatro. It reads the current game state and ranks all possible card plays with exact score breakdowns. Brute-forces all 218 hand subsets (~20ms), never uses ML/heuristics. Code comments, docstrings, and test names are in Russian; prose documentation is in English — see **Language** below.
 
-`PLAN.md` is the authoritative design doc: game-choice rationale, the exact score-computation order to replicate, the phased roadmap, the numbered assumptions/defects (sections 8.3/8.4) and the improvement roadmap (section 9.8, whose closed write-ups live in `docs/improvements.md`). Check it before making architectural changes. Note the file is not in numeric order: **section 9.8 sits between sections 6 and 7**, far above sections 8 and 9 — search for the heading rather than scrolling to the end.
+`PLAN.md` is the authoritative design doc: game-choice rationale, the exact score-computation order to replicate, the phased roadmap, the numbered assumptions/defects (sections 8.3/8.4) and the improvement roadmap (item 9.8, whose closed write-ups live in `docs/improvements.md`). Check it before making architectural changes.
+
+**`N.M` in PLAN.md means one of two things**, and the file's own "How this document is numbered" note at the top is the authority. Sections are the `##` headings 1–11, and only section 8 has real subsections (`8.1`–`8.4`, cited from code as `§8.3 №5`). Phases 0–9 are described *inside section 6*, and Phase 9 has items `9.1`–`9.8` — so **`9.8` is a phase item, not a section**, which is why it appears between sections 6 and 7 rather than after section 9 (section 9 is "Risks" and is unrelated). Cite a phase item as "section 6, Autopilot, item 9.5", the way `core/bosses.py` does; a bare "9.1" is ambiguous on sight.
 
 ## Language
 
@@ -123,7 +125,7 @@ One line per module; the deep prose for each is in [docs/architecture.md](docs/a
   belongs in the plan, not after it (see how F1 and F2 were done).
 - `PLAN.md` is the authoritative design doc and is kept in lockstep with the code — check it before any architectural change.
 - **Phases are the unit of work.** The current per-phase status is `PLAN.md` section 8.1
-  ("Where we are now") and the lettered improvement roadmap is section 9.8 — read them there,
+  ("Where we are now") and the lettered improvement roadmap is item 9.8 — read them there,
   don't restate them here: a second copy of the status drifts silently.
 - **Section 8.3** = the numbered assumptions/defects, ranked by impact; **section 8.4** = the
   write-ups of the closed ones, each with a regression test. Closing one means writing it up in
@@ -131,7 +133,7 @@ One line per module; the deep prose for each is in [docs/architecture.md](docs/a
   reused**, because the code cites them (`§8.3 №5`). Deleting closed rows renumbered the
   survivors once already, which left all six cited numbers either dangling or resolving to the
   wrong row. Every open assumption is also flagged inline in the code where it is taken.
-- **Section 9.8** = the lettered improvement roadmap from live-run findings (A*, B*, C*, D*, E*,
+- **Item 9.8** (Phase 9, inside section 6) = the lettered improvement roadmap from live-run findings (A*, B*, C*, D*, E*,
   F*). It holds the intro, an index of every closed label, and the ranked open list; the full
   write-ups live in **[docs/improvements.md](docs/improvements.md)**. Closing an item means
   appending its write-up there and adding a row to the 9.8 index — that index is what keeps a
@@ -139,6 +141,16 @@ One line per module; the deep prose for each is in [docs/architecture.md](docs/a
 - **Work lands directly on `main`.** Commit on `main` and `git push origin main` — no
   `phase-*` branches, no pull requests (the older branch-per-phase convention is retired).
   Pushing still happens only when the user asks for it.
+- **End every reply with a short review of the step just taken.** A few lines, last thing in
+  the message, separating three things that this project keeps conflating: what actually
+  changed, what of it is **verified** (and by what — a test, a source file, a re-derived
+  count) versus merely **plausible**, and what could still be wrong. It is a self-review, not
+  a summary: if the step rests on an inference, name the inference; if a claim is one live
+  observation generalised, say so. The whole §9.8 log exists because confident claims outran
+  the data four times in one entry — this is the standing guard against a fifth.
+- **Ask one concrete question, or none.** When a decision is genuinely the user's, state it as
+  a decision with named options and a recommendation — not "скажешь — сделаю". When it isn't,
+  proceed and report. Vague sign-offs cost a round trip and are how a session stalls.
 
 ### Module notes
 
@@ -151,10 +163,14 @@ the plan.
 
 The rest of `docs/`, all still normative:
 
-- **[docs/improvements.md](docs/improvements.md)** — the completed half of PLAN.md section 9.8:
+- **[docs/improvements.md](docs/improvements.md)** — the completed half of PLAN.md item 9.8:
   every defect a live run found, what was measured, what changed, which tests pin it.
 - **[docs/measuring-runs.md](docs/measuring-runs.md)** — how a batch is run and post-mortemed,
   and what the run journal holds. This is the loop that produced almost everything in the log.
+  Its "The next batch" section states, in reading order, what the pending batch has to answer —
+  written before the run so the questions can't be invented afterwards to fit the result. Start
+  there when a session opens on "let's run the tests". **Never launch a batch unprompted:** it is
+  hours of a real machine playing a real game, and the deck, stake and mode are the user's call.
 - **[docs/adding-a-joker.md](docs/adding-a-joker.md)** — the full procedure summarised in
   "Adding a Joker" below.
 - **[docs/Discard Spec.md](docs/Discard%20Spec.md)** — the Phase 6 spec for `advise_discard`; its

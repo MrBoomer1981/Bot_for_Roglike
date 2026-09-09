@@ -1,7 +1,7 @@
 # Improvement log
 
 Every improvement this project made after a live run: what was measured, what changed, and
-which tests pin it. This is the *completed* half of [PLAN.md](../PLAN.md) section 9.8 — the
+which tests pin it. This is the *completed* half of [PLAN.md](../PLAN.md) item 9.8 — the
 open half, and the ranking of what to do next, stay there.
 
 **Why it is a separate file.** These entries were 85 KB of PLAN.md's 227 KB — 37 % of the
@@ -12,9 +12,9 @@ plan; this is the record.
 were assigned as items were *found*, so A3 predates A2 and F3 sits between A10 and C1. Read it
 top to bottom and it is the project's history; search it by label and it is a reference.
 
-**How to add one.** An open item lives in PLAN.md section 9.8 under "Open, ranked". When it
+**How to add one.** An open item lives in PLAN.md item 9.8 under "Open, ranked". When it
 closes, append its write-up here in chronological order and add a row to the index table in
-section 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
+item 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 
 **Labels that are not entries here**, so a search for them does not come up empty:
 
@@ -22,7 +22,7 @@ section 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 |---|---|
 | A17 | PLAN.md section 8.4 — it closed three §8.3 rows, so it is written up as a defect fix |
 | A18 | inside [A20](#a20-the-suite-now-refuses-the-impossible--done) — it is one of the four defects A20's invariants were built from |
-| E1a | PLAN.md section 9.8, inside the still-open **E1** item — the journal it added is what the open batch work runs on |
+| E1a | PLAN.md item 9.8, inside the still-open **E1** item — the journal it added is what the open batch work runs on |
 
 ## Index
 

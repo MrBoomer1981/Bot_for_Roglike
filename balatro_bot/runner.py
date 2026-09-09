@@ -144,6 +144,30 @@ _RECONNECT_DEADLINE: Final[float] = 30.0
 _RECONNECT_FIRST_DELAY: Final[float] = 0.5
 _RECONNECT_MAX_DELAY: Final[float] = 4.0
 
+#: Действия, после которых состояние из ответа мода нельзя брать основанием
+#: следующего решения: игра в этот момент открывает пак, и `G.pack_cards`
+#: не обязан ещё соответствовать тому паку, который бот считает открытым.
+#:
+#: Список не на глаз, а по исходнику игры. Все пять пак-тегов заведены с
+#: `config.type = 'new_blind_choice'` (`game.lua`, строки 233–240), а этот
+#: контекст рассылается из двух мест, до которых бот дотягивается сам:
+#: кнопки скипа (`functions/button_callbacks.lua:2776`, в том же событии,
+#: что и `add_tag`) и входа в состояние выбора блайнда (`Game:update_blind_select`,
+#: `game.lua:3294`). Второй путь прослежен до конца, а не предположен:
+#: `next_round` мода — это `G.FUNCS.toggle_shop` (`endpoints/next_round.lua:28`),
+#: который ставит `G.STATE = G.STATES.BLIND_SELECT` (`button_callbacks.lua:2505`).
+#: Третьего пути в это состояние нет — остаётся только `prep_stage` при
+#: старте/загрузке рана (`game.lua:2024`), где тегов ещё не бывает.
+#: То есть после `skip` и `next_round` пак может открыться сам, без всякой
+#: покупки. `buy_pack` — обратный случай: пак заказан ботом, но его карты
+#: могут ещё не доехать.
+#:
+#: Чем это кончалось без переопроса: бот решал по до-скиповому снимку и
+#: получал `Method 'select' requires ... BLIND_SELECT`, а из пака, который
+#: тег открыл и никто не забрал, тянул карту чужого типа — `Smiley Face`
+#: из «Celestial»-пака и `Uranus` из «Buffoon». Разбор — C3 в PLAN.md.
+_RESETTLE_AFTER: Final[frozenset[str]] = frozenset({"skip", "buy_pack", "next_round"})
+
 
 @dataclass(frozen=True, slots=True)
 class PackCard:
@@ -582,6 +606,9 @@ def _play_run(
         if on_step is not None:
             on_step(state, entry)
 
+        if action.kind in _RESETTLE_AFTER:
+            new_state = _resettle(bridge, new_state, sleep=sleep)
+
         stall = stall + 1 if new_state == state else 0
         state = new_state
         if stall >= stall_limit:
@@ -680,6 +707,23 @@ def _bridge_alive(bridge: ModBridge) -> bool:
     except ModBridgeError:
         return False
     return True
+
+
+def _resettle(bridge: ModBridge, state: GameState, *, sleep: Callable[[float], None]) -> GameState:
+    """Переспросить состояние после действия из `_RESETTLE_AFTER`.
+
+    Пауза та же, что у ожидания переходной фазы и у повтора после отказа
+    (A19): все три — один и тот же случай «игра ещё доигрывает переход».
+    Опрос не удался — возвращаем то, что было: следующий круг решит по
+    нему, а мёртвый мост поймает общая ветка обрыва.
+
+    Живой режим (`ui/tui.py.autoplay`) в этом не нуждается и не трогается:
+    он и так опрашивает мод заново в начале каждого круга, а состояние из
+    ответа на действие использует только для показа."""
+    sleep(_TRANSIENT_POLL_INTERVAL)
+    with contextlib.suppress(ModBridgeError):
+        return bridge.game_state()
+    return state
 
 
 def _entry(

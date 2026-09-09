@@ -56,11 +56,23 @@ Each decision entry holds:
 | `outlook` | `best_play` / `best_discard` / `discards_left` — why a play beat a discard (**B2**) |
 | `shelf` | every shop offer with `label`, `kind`, `price`, `uplift`, `affordable`, `has_slot` (**E1e**) |
 | `board` | every held joker with its measured `contribution` and `sell_value` (**E1b**) |
+| `pack` | the open pack's cards, each with `label` **and** `kind` (**E1f**) |
+| `offered_tag` | the tag on offer for skipping the selectable blind (**E1f**) |
 
-Those last three exist because a question could not be answered without them. `outlook` was
+Those last five exist because a question could not be answered without them. `outlook` was
 added when a run stopped discarding and the journal could not say whether the discard had been
 rejected or never considered. `board` and `shelf` were added when two separate items needed the
 same missing numbers — what the bot held, and what it was offered.
+
+`pack` and `offered_tag` differ from the three above in where they are filled, and it matters
+when reading them. `outlook`/`shelf`/`board` are computed valuations attached to the `Action`, so
+they exist only on the branch that computes them; `pack` and `offered_tag` are raw `GameState`
+read in `_entry`, so they appear on **every** entry — including entries where the mod refused and
+no `Action` survived. That is the point: every failed action in the deck rotation is pack
+handling. Two cautions. `pack` carries `kind` because the defect it exists for is a disagreement
+by card *type*, not by count. And **`offered_tag` is not the list of tags the run holds** — the
+mod reports only what each blind offers (`G.GAME.round_resets.blind_tags`), never `G.GAME.tags`,
+so tag *ownership* is not observable through this API at all.
 
 `Action.reason` is filled at each `return` site, not once at the end, and that is deliberate:
 the shop branch alone has eight exits, several inside helpers, and a field filled in one place
@@ -99,6 +111,36 @@ Two habits are worth copying. Measure the *cost* of the behaviour, not just its 
 predicted to fire N times, re-run the count through the real code path afterwards: C2 was
 predicted at 9 of 22 and fired 5, because the money reserve blocked four of them, and that gap
 was the next finding rather than something to quietly re-calibrate.
+
+## The next batch — what it has to answer
+
+Written down on 2026-09-09, before the run, so that the questions are not invented afterwards to
+fit whatever came out. The batch is the **deck rotation again** (the same shape as `runs/decks`,
+35 runs across 15 decks), because that is the corpus behind the loss table that ranks every open
+item, and PLAN.md item 9.8 says in as many words that the table is a pre-C2 baseline to be
+re-taken rather than reused. The deck and mode are the user's call and the user will say when.
+
+Three changes have landed since that corpus, so **this batch measures the combination, not any
+one of them** — C2 (Planets are bought off the shelf), A21/A22 (the reroll policy), and the
+pack-path re-poll below. Read the results in this order:
+
+1. **Did the pack re-poll work?** Count failed actions. In the pre-fix rotation there were 6 in
+   3 121 decisions and *all six were pack handling*. If the class is gone, `_RESETTLE_AFTER` did
+   its job; if the two "Card index out of range" refusals survive, see question 2.
+2. **Does an abandoned tag pack persist, or did it merely lag?** This is the one question the old
+   journal could not answer and `pack` now can. Find each decision where `pack` holds a card whose
+   `kind` does not match the pack the bot just bought, and check whether it survives the re-poll.
+   Persistence means the re-poll cannot help and the bot must instead refuse contradictory
+   contents; lag means the fix is complete. **Do not skip to a fix before this is counted.**
+3. **Re-take the loss table** — median share of the requirement reached, share of losses under
+   half, discards and money left at the loss. That is the measurement that re-ranks everything
+   below C3, and until it exists nothing in the open list is ranked on current evidence.
+4. **B3, now that `outlook` carries `best_play`/`best_discard`.** Per discard: what it gave up
+   against what it got. Per zero-discard round: whether a discard was available and which guard
+   rejected it. No discard threshold moves before this count exists.
+5. **C3's arrival rate**, which needed `pack` to be countable at all: a `SMODS_BOOSTER_OPENED`
+   entry alone never said *which* pack it belonged to, so "the tag's pack reached the bot" could
+   not be separated from "a bought pack was opened".
 
 ## Honest limits
 

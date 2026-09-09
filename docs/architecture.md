@@ -1053,10 +1053,20 @@ with the last known state rather than crashing or retrying the same call forever
 Phase 9.7, the run-runner. `play_run(bridge, *, deck, stake, seed=None, …)` drives one whole run:
 `ModBridge.menu()` then `.start(deck, stake)`, then a loop of `decide_action` → `dispatch_action` →
 next state until a terminal state — `GameState.won` (outcome `"won"`), `phase == "GAME_OVER"`
-(`"lost"`), or a stall (`"stuck"`). It is *not* a polling loop: every action RPC returns the settled
-next state, so `game_state()` is only re-polled to wait out an animation phase
+(`"lost"`), or a stall (`"stuck"`). It is *mostly* not a polling loop: an action RPC usually returns
+the settled next state, so `game_state()` is re-polled only to wait out an animation phase
 (`HAND_PLAYED`/`DRAW_TO_HAND`/`NEW_ROUND`/`PLAY_TAROT`), the only phases where `decide_action`
-returning `None` is not a stall. `None` on any other phase means an unclosed decision
+returning `None` is not a stall — **and after the three actions in `_RESETTLE_AFTER`, where the
+returned state provably is not settled.** That exception was paid for: `skip` and `next_round` are
+the two sites where the game dispatches `new_blind_choice` and a held pack tag opens a booster
+nobody asked for (`game.lua:3294`, `functions/button_callbacks.lua:2776`), and `buy_pack` opens one
+the bot did ask for whose cards may not be in `G.pack_cards` yet. Deciding from the returned state
+across those transitions is what produced every failed action in the deck rotation — an illegal
+`select` from a pre-skip snapshot, and picks of the wrong card type out of a pack the bot was not
+actually looking at. `_resettle` waits `_TRANSIENT_POLL_INTERVAL` and re-polls, keeping the returned
+state if the poll fails. The list is deliberately three kinds and not "every action": a re-poll
+costs a whole round trip, and on the other twelve kinds no pack can open. Note this is a
+runner-only concern — `ui/tui.py.autoplay` re-polls at the top of each loop anyway. `None` on any other phase means an unclosed decision
 (Tarot/Spectral/Standard/Buffoon packs) — the run stops as `"stuck"` with that phase in
 `RunReport.note`, rather than guessing. `"stuck"` also covers `stall_limit` (default 3) consecutive
 no-progress steps or mod rejections, and `max_steps` (default 2000). A single managed run prints one line per decision via the `on_step`
