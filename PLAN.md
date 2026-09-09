@@ -713,22 +713,59 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   So the wasted `select` after a pack-tag skip is systematic; whether the pack is still there
   afterwards is not.
 
-  **The firing moment is not consistent in the data, and I do not claim one.** Over 15 pack-tag
-  skips the pack opened **before any shop in 2**, **after a shop in 2**, and **never in 11**.
-  Neither "it fires on the skip" nor "it fires at the next shop" survives that spread; the journal
-  does not record enough to say.
+  **The firing moment was settled from the game's own source on 2026-09-09, and the journal never
+  could have settled it.** All five pack tags — `tag_charm`, `tag_meteor`, `tag_buffoon`,
+  `tag_ethereal`, `tag_standard` — carry `config = {type = 'new_blind_choice'}` in `game.lua`
+  (lines 233–240), and `tag.lua`'s `new_blind_choice` branch is what creates the booster and opens
+  it immediately via `G.FUNCS.use_card`. That context is dispatched at exactly three sites: the
+  skip button itself (`functions/button_callbacks.lua:2776`, in the *same* event that runs
+  `add_tag`), the blind-select UI construction (`game.lua:3294`), and the boss reroll
+  (`button_callbacks.lua:2848`).
 
-  **Cause not yet determined**, and it is one of two: the tag never fires at all, or it fires and
-  the pack is missed in the poll gap. The diagnostic that settles it is small — the mod reports
-  the run's owned tags, so recording `state.tags` on every decision (the E1 instrumentation
-  pattern) shows directly whether the tag is still held after the shop. That is the next step
-  here, not a fix: fixing the poll loop before knowing which of the two it is would be guessing.
+  **So the tag fires on the skip, synchronously** — which is exactly what the hard failure above
+  shows: the bot's `select` at decision 50 was refused because the game had already left
+  `BLIND_SELECT` for the booster state that the skip itself opened.
+
+  **And the 2/2/11 spread is explained rather than contradicted**, by one word in the dispatch
+  loop: `if G.GAME.tags[i]:apply_to_run({type = 'new_blind_choice'}) then break end`. The `break`
+  means **only one tag fires per blind-choice screen**. A pack tag held behind another
+  `new_blind_choice` tag waits for the next such screen — which arrives an ante later, after an
+  intervening shop. "Before any shop" and "after a shop" are therefore the same mechanism at
+  different queue depths, not two competing timings.
+
+  **The diagnostic this entry proposed is impossible, and that claim is withdrawn.** It said "the
+  mod reports the run's owned tags, so recording `state.tags` on every decision shows directly
+  whether the tag is still held after the shop." The mod does not report them. Its
+  `src/lua/utils/gamestate.lua` reads tags only from `G.GAME.round_resets.blind_tags` — the tag
+  *offered* by each of Small/Big — and never touches `G.GAME.tags`, which is where the game keeps
+  the ones actually held. There is no field to record, so the queue depth that explains the spread
+  is not observable through this API at all. **This is the fourth confident claim in this entry's
+  history to outrun the data**, after the too-short measurement window and the "fires at the next
+  shop" mechanism, and it is the one that would have cost the most: it aimed a batch at a field
+  that does not exist.
+
+  **What was recorded instead — E1f, done 2026-09-09.** `DecisionEntry` gains `pack` (the open
+  pack's contents as the bot saw them, label *and* kind) and `offered_tag` (the `tag_name` of
+  whichever of Small/Big has status `SELECT`). Both are read from `GameState` in `_entry`, not
+  attached to `Action` the way `board`/`shelf`/`outlook` are, and that difference is deliberate:
+  those three carry *computed* valuations that exist only on their own branch, whereas these two
+  are raw state, so reading them in `_entry` puts them on **every** entry — including the rejected
+  ones, which is the whole point, since all four mod refusals in the corpus are pack handling and
+  three of them never produce an `Action` at all. `offered_tag` is documented in the code as *not*
+  a substitute for the owned-tag list. Tests — `tests/test_runner.py::TestСнимкаПакаВЖурнале`.
+
+  **What is still open here is now a fix, not a diagnostic.** The mechanism is known: after a skip
+  the game may already be in the booster state, so deciding from the pre-skip snapshot is what
+  burns the illegal `select`. Whether the right change is a forced re-poll after `skip` or
+  something narrower is a policy question, and it should be decided with the pack contents now in
+  the journal rather than ahead of them.
 
   **Ranked below C2's shop branch and above D2/B3.** It is the same Planet channel C2 identified
   as the bottleneck — Meteor Tag grants a Celestial Pack — so it compounds the same shortage,
   and unlike C2 the bot is *paying* for the benefit here, in forfeited blind rewards, before
   losing it. But C2's branch is a certain fix on a larger channel (239 affordable shelf offers),
-  while this one still needs a diagnostic first.
+  while this one waited on a diagnostic — which the source has now supplied, so what remains is
+  a policy decision on the skip path rather than an unknown mechanism.
 
   **Two corrections kept, because the mistakes are instructive.** First, my initial measurement
   looked only 4 decisions past each skip and reported "17 pack-tag skips, 0 takes"; since packs do
@@ -768,11 +805,12 @@ Everything in the index above is done. What follows is not, and is ordered by wh
     decisions hold `['Jolly Joker', 'Business Card']` and `['Rough Gem', 'Earth']`; neither
     `Smiley Face` nor `Uranus` was ever on the shelf.
 
-  **The journal cannot settle where they came from, because it does not record `state.pack`.**
-  That is the same gap as C3's open question, and one change closes both: record the raw fields
-  each pack/tag decision is taken from — `state.pack` and `state.tags` — per decision entry, in
-  the E1 instrumentation pattern already used for `board`, `outlook` and `shelf`. Until that runs,
-  any fix here would be guessing at a mechanism the data does not name.
+  **The journal could not settle where they came from, because it did not record `state.pack` —
+  and now it does (E1f, above).** Each entry carries the pack's contents with each card's `kind`,
+  which is the half that matters: the disagreement was by card *type*, so a list of labels would
+  not have named it. This one still needs a run to produce data; unlike C3's timing question, no
+  amount of source reading answers where the bot's view of the pack came from, because the
+  disagreement is between two live observations rather than in a game rule.
 
 - **D2. Joker reordering oscillates — open, cheap, and the same reasoning error as B3.** Raised by
   the user asking whether jokers end up arranged identically. They do, almost always, and that part

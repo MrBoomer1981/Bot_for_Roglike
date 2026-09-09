@@ -23,8 +23,15 @@ import pytest
 from balatro_bot import runner
 from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
 from balatro_bot.autopilot import Action, BoardEntry, HandOutlook
-from balatro_bot.core.state import BlindInfo, GameState, JokerCard
-from balatro_bot.runner import DecisionEntry, RunReport, StakeSummary, play_run, run_batch
+from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
+from balatro_bot.runner import (
+    DecisionEntry,
+    PackCard,
+    RunReport,
+    StakeSummary,
+    play_run,
+    run_batch,
+)
 
 
 def _state(phase: str, *, ante: int = 1, round_number: int = 1, won: bool = False) -> GameState:
@@ -860,3 +867,99 @@ class TestПаузаПередПовтором:
         report = play_run(bridge, deck="RED", stake="WHITE", stall_limit=3, sleep=lambda _: None)
         assert report.outcome == "stuck"
         assert "отказал" in report.note
+
+
+@pytest.mark.usefixtures("patch_engine")
+class TestСнимкаПакаВЖурнале:
+    """Улучшение E1f: содержимое открытого пака и предлагаемый тег.
+
+    Оба поля читаются из состояния, а не привозятся на `Action`, — и
+    проверяется здесь именно это: снимок обязан быть и на записи, до
+    которой `Action` не доживает (отказ мода). Все четыре отказа корпуса —
+    в паках, ради них поле и заводилось."""
+
+    def _пак(self, *карты: tuple[str, str]) -> GameState:
+        return replace(
+            _state("SMODS_BOOSTER_OPENED"),
+            pack=tuple(
+                ShopItem(key=f"c_{label}", label=label, kind=kind, price=0) for label, kind in карты
+            ),
+        )
+
+    def test_содержимое_пака_попадает_в_запись(self) -> None:
+        bridge = ScriptedBridge([self._пак(("Uranus", "PLANET")), _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE")
+        assert report.decisions[0].pack == (PackCard(label="Uranus", kind="PLANET"),)
+
+    def test_снимок_есть_и_на_отказе_мода(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Ровно тот случай, ради которого поле читается из состояния:
+        # решения нет, а знать, что бот видел в паке, необходимо.
+        def refuse(*_a: object, **_k: object) -> GameState:
+            raise ModBridgeError("Card index out of range. Index: 3, Available cards: 0")
+
+        monkeypatch.setattr(runner, "dispatch_action", refuse)
+        bridge = ScriptedBridge([self._пак(("Smiley Face", "JOKER"))])
+        report = play_run(bridge, deck="RED", stake="WHITE", stall_limit=2, sleep=lambda _: None)
+        отказ = report.decisions[0]
+        assert отказ.rejected
+        assert отказ.pack == (PackCard(label="Smiley Face", kind="JOKER"),)
+
+    def test_пак_пуст_вне_вскрытия(self) -> None:
+        bridge = ScriptedBridge([_state("SELECTING_HAND"), _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE")
+        assert report.decisions[0].pack == ()
+
+    def test_тег_берётся_у_выбираемого_блайнда(self) -> None:
+        state = replace(
+            _state("BLIND_SELECT"),
+            blinds={
+                "small": BlindInfo(
+                    kind="SMALL",
+                    name="Small Blind",
+                    effect="",
+                    required_score=300,
+                    status="SKIPPED",
+                    tag_name="D6 Tag",
+                ),
+                "big": BlindInfo(
+                    kind="BIG",
+                    name="Big Blind",
+                    effect="",
+                    required_score=450,
+                    status="SELECT",
+                    tag_name="Meteor Tag",
+                ),
+            },
+        )
+        bridge = ScriptedBridge([state, _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE")
+        # Скипнутый Small уже не предлагается — берётся тег того, кто SELECT.
+        assert report.decisions[0].offered_tag == "Meteor Tag"
+
+    def test_у_босса_тега_не_бывает(self) -> None:
+        # У боссового блайнда `SELECT` значит «играть», а не «можно скипнуть»:
+        # тот же отказ, что в `solver.skip.evaluate_skip`.
+        state = replace(
+            _state("BLIND_SELECT"),
+            blinds={
+                "boss": BlindInfo(
+                    kind="BOSS",
+                    name="The Wall",
+                    effect="",
+                    required_score=900,
+                    status="SELECT",
+                    tag_name="Meteor Tag",
+                )
+            },
+        )
+        bridge = ScriptedBridge([state, _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE")
+        assert report.decisions[0].offered_tag == ""
+
+    def test_оба_поля_доезжают_до_файла(self, tmp_path: Path) -> None:
+        bridge = ScriptedBridge([self._пак(("Uranus", "PLANET")), _state("GAME_OVER")])
+        play_run(bridge, deck="RED", stake="WHITE", log_dir=tmp_path)
+        (файл,) = list(tmp_path.glob("*.json"))
+        шаг = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
+        assert шаг["pack"] == [{"label": "Uranus", "kind": "PLANET"}]
+        assert шаг["offered_tag"] == ""

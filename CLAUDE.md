@@ -6,13 +6,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **balatro-bot** — advisory bot for the roguelike deck-builder Balatro. It reads the current game state and ranks all possible card plays with exact score breakdowns. Brute-forces all 218 hand subsets (~20ms), never uses ML/heuristics. Code comments, docstrings, and test names are in Russian; prose documentation is in English — see **Language** below.
 
-`PLAN.md` is the authoritative design doc: game-choice rationale, the exact score-computation order to replicate, the phased roadmap, the numbered assumptions/defects (sections 8.3/8.4) and the improvement roadmap (section 9.8, whose closed write-ups live in `docs/improvements.md`). Check it before making architectural changes.
+`PLAN.md` is the authoritative design doc: game-choice rationale, the exact score-computation order to replicate, the phased roadmap, the numbered assumptions/defects (sections 8.3/8.4) and the improvement roadmap (section 9.8, whose closed write-ups live in `docs/improvements.md`). Check it before making architectural changes. Note the file is not in numeric order: **section 9.8 sits between sections 6 and 7**, far above sections 8 and 9 — search for the heading rather than scrolling to the end.
 
 ## Language
 
 - **Talk to the user in Russian.** Every chat response in this repo — explanations, status updates, answers — is written in Russian.
 - **Prose documentation is in English.** `CLAUDE.md`, `PLAN.md`, `README.md`, and `docs/*.md` were fully translated 2026-08-31; keep them English.
-- **Keep code in Russian.** Comments, docstrings, and test names stay Russian; the ruff config that supports this (`RUF001/002/003` ignored, `pep8-naming` `ignore-names` for `test_*`) exists for that reason and must not be "cleaned up." Verbatim CLI-output samples quoted inside the docs also stay Russian (they mirror what `ui/render.py` actually prints).
+- **Keep code in Russian.** Comments, docstrings, and test names stay Russian; the ruff config that supports this (`RUF001/002/003` ignored, `pep8-naming` `ignore-names` for `test_*` and `Test*`) exists for that reason and must not be "cleaned up." Verbatim CLI-output samples quoted inside the docs also stay Russian (they mirror what `ui/render.py` actually prints).
 
 ## Commands
 
@@ -167,7 +167,8 @@ The rest of `docs/`, all still normative:
 
 - **Zero production dependencies** — `pyproject.toml` has none; keep it that way.
 - **Strict mypy** — all code in `balatro_bot/` and `tests/` must pass strict type-checking.
-- **Ruff line-length 100** — except `catalogue.py` (auto-generated, excluded).
+- **Ruff line-length 100** — `catalogue.py` is per-file-exempt from `E501` only (its long lines are
+  verbatim game text); every other rule still applies to it.
 - **Ruff ignores RUF001/002/003** — suppresses false positives on Russian text; do not remove.
 - **Frozen dataclasses** — all core types are immutable.
 - **Honest accuracy** — when a joker or card property is unknown, set `exact=False`; never guess.

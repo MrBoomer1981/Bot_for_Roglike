@@ -1112,6 +1112,23 @@ last play never appears — `blind_beaten` on the closing entry is what a round-
 use instead. `stake_observed` is `true` exactly when the runner started the run — it passed the
 stake to `start` itself — and `false` only for an adopted run, whose stake the mod never sends.
 
+**`DecisionEntry.pack` and `.offered_tag` (improvement E1f)** break the attachment pattern of the
+three fields above, on purpose. `board`, `shelf` and `outlook` carry *computed* valuations that
+exist only on the branch that computes them, so they ride in on `Action`; `pack` and `offered_tag`
+are raw `GameState`, so `_entry` reads them straight from the state like `jokers` and
+`chips_scored`. The difference is not cosmetic: state-read fields land on **every** entry,
+including the ones where no `Action` was ever produced — and all four mod refusals in the deck
+rotation are pack handling, three of them inside `SMODS_BOOSTER_OPENED`, which is exactly where an
+`Action`-attached field would have been empty. `pack` carries each card's `kind` alongside its
+label because the defect it exists for is a disagreement by card *type*: after a Celestial pack the
+bot reached for `Smiley Face`, after a Buffoon pack for `Uranus`, and a list of labels would not
+have named that. `offered_tag` is the `tag_name` of whichever of Small/Big has status `SELECT` —
+the boss is skipped for the same reason `solver.skip.evaluate_skip` skips it, since `SELECT` on a
+boss means "play it", not "you may skip". **It is not the list of tags the run holds, and cannot be
+made into one:** the mod's `gamestate.lua` reads `G.GAME.round_resets.blind_tags` (what is offered)
+and never `G.GAME.tags` (what is held), so tag *ownership* is not observable through this API. C3
+in PLAN.md asserted the opposite and aimed a diagnostic at it; that claim is withdrawn there.
+
 **What the first journalled run taught (improvement B2).** Run 11 (ZODIAC, lost at ante 5) showed
 the journal explaining every shop decision and no gameplay decision at all: 19 of 98 entries carried
 a reason and all 19 were shop actions, while 31 plays, 7 discards, 12 blind selects, 5 pack picks

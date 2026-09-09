@@ -57,6 +57,7 @@ __all__ = [
     "DECKS",
     "STAKES",
     "DecisionEntry",
+    "PackCard",
     "RunReport",
     "StakeSummary",
     "play_run",
@@ -145,6 +146,21 @@ _RECONNECT_MAX_DELAY: Final[float] = 4.0
 
 
 @dataclass(frozen=True, slots=True)
+class PackCard:
+    """Одна карта открытого пака, как её видел бот (улучшение E1f).
+
+    Тип везётся вместе с именем, потому что расходились именно типы:
+    после Celestial-пака бот тянулся за `Smiley Face` (джокер), после
+    Buffoon-пака — за `Uranus` (планета). `evaluate_pack` типизирует пак
+    **по содержимому** `state.pack`, так что одного имени карты мало,
+    чтобы сказать, чьё содержимое ему подсунули."""
+
+    label: str
+    kind: str
+    """`JOKER`/`PLANET`/`TAROT`/... — то же поле, что у `ShopItem.kind`."""
+
+
+@dataclass(frozen=True, slots=True)
 class DecisionEntry:
     """Один шаг лога решений — что автопилот решил и в каком положении.
 
@@ -215,6 +231,29 @@ class DecisionEntry:
     (`ShopAdvice.held`) и больше нигде. Без этих чисел по журналу нельзя
     сказать ни законно ли отклонён размен, ни во что обошлась текучка
     джокеров — оба вопроса висели открытыми именно поэтому."""
+
+    pack: tuple[PackCard, ...] = ()
+    """Содержимое открытого пака на момент решения (улучшение E1f).
+
+    Читается прямо из `state.pack`, а не привозится на `Action`, — и это
+    сознательно. `board`/`shelf`/`outlook` везут **посчитанные** оценки,
+    которые существуют только на своей ветке; `pack` же сырое состояние,
+    как `jokers` и `chips_scored`. Взятое из состояния попадает в журнал
+    на **каждом** шаге — включая отказы мода и шаги без решения вовсе, а
+    все четыре отказа корпуса как раз в паках: три из них в
+    `SMODS_BOOSTER_OPENED`, и на них `Action` не доживает."""
+
+    offered_tag: str = ""
+    """Тег, который дают за скип выбираемого сейчас блайнда — `tag_name`
+    того из `small`/`big`, у кого статус `SELECT` (тот же поиск, что в
+    `solver.skip.evaluate_skip`). Пусто вне экрана выбора.
+
+    **Это не список взятых тегов, и заменить его им нельзя.** Игра держит
+    взятые теги в `G.GAME.tags`, но мод их не отдаёт: его `gamestate.lua`
+    читает только `G.GAME.round_resets.blind_tags`, то есть предложение, а
+    не владение. Поэтому «дошёл ли тег до пака» по журналу по-прежнему не
+    восстановить — см. разбор C3 в PLAN.md, где эта диагностика записана
+    как возможная, и это неверно."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -671,7 +710,20 @@ def _entry(
         discards_left=state.discards_left,
         jokers=tuple(joker.label or joker.key for joker in state.jokers),
         blind_beaten=True if state.phase == "ROUND_EVAL" else None,
+        pack=tuple(PackCard(label=item.label, kind=item.kind) for item in state.pack),
+        offered_tag=_offered_tag(state),
     )
+
+
+def _offered_tag(state: GameState) -> str:
+    """Тег за скип выбираемого блайнда. Босс не рассматривается: его не
+    скипнуть, тега у него не бывает, а статус `SELECT` там значит «играть»
+    — тот же порядок и та же причина, что в `solver.skip.evaluate_skip`."""
+    for key in ("small", "big"):
+        blind = state.blinds.get(key)
+        if blind is not None and blind.status == "SELECT":
+            return blind.tag_name
+    return ""
 
 
 def _finish(
@@ -811,6 +863,8 @@ def report_to_json(report: RunReport) -> dict[str, object]:
                     }
                     for место in entry.board
                 ],
+                "pack": [{"label": карта.label, "kind": карта.kind} for карта in entry.pack],
+                "offered_tag": entry.offered_tag,
             }
             for entry in report.decisions
         ],
