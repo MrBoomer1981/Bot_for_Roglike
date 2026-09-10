@@ -988,7 +988,18 @@ can't hurt); a joker as long as there's a free slot — **no** strictly-positive
 didn't fire in the sample, not because they're worthless. `skip_pack` is the fallback when nothing
 qualifies (no free slot, only unimplemented jokers, or an Arcana/Spectral/Standard pack —
 `evaluate_pack` returns empty since those need the consumable-mechanic layer), so the run declines
-rather than stalling — a deliberate small loss. On `SELECTING_HAND`, before the play/discard step
+rather than stalling — a deliberate small loss.
+
+**An *empty* `state.pack` is a different thing entirely and never reaches `_decide_pack_action`:
+`decide_action` returns `None` for it**, the same way it does for an undealt hand. The game
+switches to the pack phase immediately but creates the cards in a deferred event, so an empty pack
+means "not told yet", not "nothing to take" — and skipping into that window makes the mod call
+`G.FUNCS.skip_booster`, which nils the `booster_obj` the pending event is about to index, **killing
+the game process**. Eight crashes came from that one conflation, and it was reproduced deliberately;
+see C3 in the [improvement log](improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done).
+This is why the guard lives in `decide_action` rather than in the helper: `_decide_pack_action`
+keeps its non-optional `Action` return, and `ui/tui.py` — which treats `None` as an idle tick and
+re-polls every loop — is fixed by the same line. On `SELECTING_HAND`, before the play/discard step
 described above, `decide_action` now also checks `solver.consumables.evaluate_planet_consumables`
 (Phase 9.4's first slice) and uses whatever Planet card it finds — same non-conservative shape as
 `_decide_pack_action`, since a level-up still can't hurt regardless of context. **Tarot cards
@@ -1056,8 +1067,19 @@ next state until a terminal state — `GameState.won` (outcome `"won"`), `phase 
 (`"lost"`), or a stall (`"stuck"`). It is *mostly* not a polling loop: an action RPC usually returns
 the settled next state, so `game_state()` is re-polled only to wait out an animation phase
 (`HAND_PLAYED`/`DRAW_TO_HAND`/`NEW_ROUND`/`PLAY_TAROT`), the only phases where `decide_action`
-returning `None` is not a stall — **and after the three actions in `_RESETTLE_AFTER`, where the
-returned state provably is not settled.** That exception was paid for: `skip` and `next_round` are
+returning `None` is not a stall — **plus a pack-open phase whose `state.pack` is still empty, and
+after the three actions in `_RESETTLE_AFTER`, where the returned state provably is not settled.**
+
+`_wait_budget(phase, stall_limit)` is what answers "how many empty polls do we sit through here",
+and it exists because the two waits are not the same length. An animation clears in well under the
+`stall_limit` × 0.25 s the transient phases get; the cards of a freshly opened pack do not — the
+game defers creating them by `1.3*sqrt(GAMESPEED)`, so the ordinary budget of 0.75 s would declare
+a stall exactly where the right move is to wait. Pack phases therefore get `_PACK_FILL_POLLS` = 20
+(5 s). **That number is a watchdog ceiling, not the game's constant reconstructed**: `GAMESPEED` is
+not in anything the mod reports, so the real delay cannot be computed from this side at all — and
+a pack that never fills still ends the run as an honest stall rather than spinning to `max_steps`.
+The cost of getting this wrong was not a lost run but a dead game process; see C3 in the
+[improvement log](improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done). That exception was paid for: `skip` and `next_round` are
 the two sites where the game dispatches `new_blind_choice` and a held pack tag opens a booster
 nobody asked for (`game.lua:3294`, `functions/button_callbacks.lua:2776`), and `buy_pack` opens one
 the bot did ask for whose cards may not be in `G.pack_cards` yet. Deciding from the returned state

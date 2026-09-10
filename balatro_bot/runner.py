@@ -52,6 +52,7 @@ from balatro_bot.autopilot import (
     dispatch_action,
 )
 from balatro_bot.core.state import GameState
+from balatro_bot.solver.pack import PACK_OPEN_PHASES
 
 __all__ = [
     "DECKS",
@@ -130,6 +131,19 @@ _DEFAULT_STALL_LIMIT: Final[int] = 3
 
 #: Пауза перед повторным опросом на переходной фазе.
 _TRANSIENT_POLL_INTERVAL: Final[float] = 0.25
+
+#: Сколько пустых опросов подряд ждём, пока игра положит карты в открытый пак.
+#: Отдельно от `stall_limit`, потому что бюджет тут нужен другой: игра создаёт
+#: карты отложенным событием с задержкой `1.3*sqrt(GAMESPEED)` (пропатченный
+#: `card.lua`), а обычные три опроса — это всего 0.75 с, то есть ран объявил бы
+#: себя застрявшим ровно там, где надо подождать.
+#:
+#: Точную величину вычислить НЕЛЬЗЯ: `GAMESPEED` мод в состоянии не присылает.
+#: Поэтому это не игровая константа, а заведомо больший сторожевой потолок —
+#: 20 × 0.25 с = 5 с. Если пак не заполнился и за это время, ран честно
+#: фиксируется как затык, а не крутится до `max_steps`.
+_PACK_FILL_POLLS: Final[int] = 20
+
 
 #: Сколько всего секунд ждать возвращения моста, прежде чем признать ран
 #: провалившимся (вторая половина улучшения E2). Мост отваливается не
@@ -479,13 +493,14 @@ def _play_run(
 
         action = decide_action(state, include_discards=include_discards)
 
-        if action is None and state.phase in _TRANSIENT_PHASES:
+        бюджет = _wait_budget(state.phase, stall_limit)
+        if action is None and бюджет is not None:
             # Переходную фазу пережидаем — но не бесконечно: если мод завис
-            # на ней (анимация не заканчивается), после `stall_limit` пустых
+            # на ней (анимация не заканчивается), после `бюджет` пустых
             # опросов подряд честно сдаёмся, а не крутимся до `max_steps` по
-            # четверти секунды.
+            # четверти секунды. У пака бюджет свой, см. `_wait_budget`.
             transient_polls += 1
-            if transient_polls >= stall_limit:
+            if transient_polls >= бюджет:
                 return _finish(
                     deck,
                     stake,
@@ -707,6 +722,22 @@ def _bridge_alive(bridge: ModBridge) -> bool:
     except ModBridgeError:
         return False
     return True
+
+
+def _wait_budget(phase: str, stall_limit: int) -> int | None:
+    """Сколько пустых опросов подряд пережидаем на этой фазе.
+
+    `None` — не пережидаем вовсе: `None` от `decide_action` на такой фазе
+    означает незамкнутое решение, и это честный «застрял».
+
+    Фаза открытого пака получает свой, больший бюджет (`_PACK_FILL_POLLS`):
+    там `None` значит «карты ещё не приехали», а ждать их приходится дольше,
+    чем длится обычная анимация."""
+    if phase in PACK_OPEN_PHASES:
+        return _PACK_FILL_POLLS
+    if phase in _TRANSIENT_PHASES:
+        return stall_limit
+    return None
 
 
 def _resettle(bridge: ModBridge, state: GameState, *, sleep: Callable[[float], None]) -> GameState:

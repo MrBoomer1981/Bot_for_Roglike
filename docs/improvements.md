@@ -58,6 +58,7 @@ item 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 | **A20** | [The suite now refuses the impossible — done.](#a20-the-suite-now-refuses-the-impossible--done) |
 | **C2** | [The bot could not buy consumables at all, and that was the root of the loss pattern — done.](#c2-the-bot-could-not-buy-consumables-at-all-and-that-was-the-root-of-the-loss-pattern--done) |
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
+| **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 
 ## A1. Joker sell-replace — done.
 
@@ -1266,3 +1267,100 @@ the new behaviour was predicted and measured before the test was touched.
 **Tests** — `tests/test_autopilot.py::TestРероллКудаКластьНаходку`,
 `tests/test_shop.py::TestКандидатНаРазмен`, plus the rewritten reserve pair in
 `TestDecideActionРеролМагазина`.
+
+## C3. The autopilot was killing the game process by skipping a pack that did not exist yet — done.
+
+The crash half of C3. The other half — the wasted `select` after a pack-tag skip, and the
+`_RESETTLE_AFTER` re-poll that addressed it — shipped 2026-09-09 and is described in PLAN.md's
+C3 entry. That re-poll was marked "not yet confirmed live"; the live test below confirmed it was
+**not sufficient**, and this entry is what the remaining failure actually was.
+
+**The autopilot was not losing runs here. It was killing the game process.**
+
+Eight crashes across the mod's logs, spanning two rotations, all with one signature and one
+last request:
+
+```
+card.lua:2068: attempt to index global 'booster_obj' (a nil value)
+   ← BB.REQUEST :: pack({skip=true})
+```
+
+Eight for eight, no exceptions. In the last of them the crash came on the **first** `pack()`
+call of the session, so this was never wear from repeated retries — one skip at the wrong
+moment is enough.
+
+**Reproduced deliberately.** Previous write-ups of this defect class rested on retrospective
+correlation, which this log has been wrong about before. So it was tested prospectively: a
+15-minute live run on 2026-09-10 predicted the sequence in advance and hit it in 2.5 minutes.
+
+```
+09:02:55   skip()  →  gamestate()  →  pack({skip=true})
+           card.lua:2068: attempt to index global 'booster_obj' (a nil value)
+```
+
+**The mechanism, read out of the game's and the mod's own source rather than inferred:**
+
+1. The bot skips a blind for a pack tag (`Meteor`, `Buffoon`). The tag opens a booster
+   synchronously — already established in C3.
+2. The game sets `booster_obj = self.config.center` (`smods/lovely/booster.toml:34`) and
+   **defers creating the cards** into an event with `delay = 1.3*math.sqrt(G.SETTINGS.GAMESPEED)`
+   (patched `card.lua:2057`).
+3. Inside that window `state.pack` is empty — the cards do not exist yet.
+4. `decide_action` entered the pack branch on **phase alone**, and `_decide_pack_action` returned
+   `Action(kind="skip_pack")`; its docstring named "пак пуст" as a reason to skip.
+5. The mod runs `G.FUNCS.skip_booster({})` (`balatrobot/src/lua/endpoints/pack.lua:284`), which
+   sets **`booster_obj = nil`** (`smods/lovely/booster.toml:443`).
+6. The deferred event from step 2 fires, reaches `card.lua:2068` — `elseif
+   booster_obj.create_card and ...` — and indexes nil. The process dies.
+
+The mod's own guard cannot help: it checks the *container*, not the contents —
+`if not G.pack_cards or G.pack_cards.REMOVED` (`endpoints/pack.lua:114`). In this window the
+container already exists and the guard passes.
+
+**The defect was ours, and it is the one `CLAUDE.md` names first.** An empty `state.pack` means
+"the game has not said yet"; the code read it as "nothing worth taking". That is an unknown
+silently given a value.
+
+Measured across the journals that carry `pack` (E1f) — `runs/decks2` and `runs/test15`:
+
+| Decisions on a pack-open phase | With an empty `state.pack` | With a non-empty one |
+|---|---|---|
+| 20 | **5 — every one of them a skip, every one refused or fatal** | 15 — every one a real pick |
+
+Not one legitimate skip of an empty pack. Every single one was a shot into the race window.
+
+**Two things also looked like the fix and were not.** `BALATROBOT_FAST=1` does not help — the
+09:02:55 crash was already in a fast session, because the delay is expressed in terms of
+`GAMESPEED` itself. And the `_RESETTLE_AFTER` re-poll waits `_TRANSIENT_POLL_INTERVAL` = 0.25 s
+against the game's ~1.3 s, so it settles the *phase* but not the *contents*.
+
+**The fix — refuse to decide on an unknown, then wait long enough for it to become known.**
+
+`decide_action` now returns `None` on a pack-open phase with an empty `state.pack`, reusing the
+shape the same function already applies to an undealt hand (`if not state.hand: return None`).
+Putting it there rather than inside `_decide_pack_action` keeps that helper's return type
+`Action` and gives the live TUI the fix for free — `ui/tui.py` treats `None` as an idle tick and
+re-polls at the top of every loop.
+
+That alone would have turned a crash into a stall, because `None` on a non-transient phase is an
+immediate `stuck`, and the transient budget is `stall_limit`(3) × 0.25 s = **0.75 s** — shorter
+than the game's ~1.3 s. So `runner._wait_budget` now answers "how many empty polls do we sit
+through on this phase", giving pack phases `_PACK_FILL_POLLS` = 20 (5 s) and leaving every other
+phase exactly as it was.
+
+**The 5 s is deliberately not a reconstruction of the game's constant.** `GAMESPEED` is not in
+anything the mod reports, so `1.3*sqrt(GAMESPEED)` cannot be evaluated from our side at all. It
+is a watchdog ceiling, generous on purpose; a pack that never fills still ends the run as a
+stall rather than spinning to `max_steps`.
+
+**A test was pinning the crash.** `tests/test_autopilot.py::TestDecideAction::test_пустой_пак_скипается`
+asserted `Action(kind="skip_pack")` for exactly this state. It is inverted and renamed
+`test_пустой_пак_не_решается_а_ждёт`, carrying the reason in a comment so it is not "fixed" back.
+The neighbouring `test_неоценимый_пак_скипается_а_не_затыкается` stays green and is the point of
+the change: a **non-empty** pack that cannot be valued is still skipped, exactly as before.
+
+**Tests** — `tests/test_runner.py::TestОжиданиеЗаполненияПака` (an empty pack is waited out and
+the card taken, with no `skip_pack` issued; a pack that never fills is an honest stall; the
+ordinary transient budget is unchanged), `tests/test_tui.py::TestAutoplay::test_пустой_пак_не_трогается_вовсе`
+(the live loop had no empty-pack coverage at all).
+

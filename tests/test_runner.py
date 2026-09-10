@@ -1038,3 +1038,62 @@ class TestПереспросПослеСкипа:
         # Опрос не удался — работаем по тому, что вернул сам вызов.
         assert report.outcome == "lost"
         assert seen == [1, 2], seen
+
+
+class TestОжиданиеЗаполненияПака:
+    """C3, аварийная половина: пустой пак — это «карты ещё не приехали», и
+    ждать их надо дольше обычной анимации.
+
+    Раньше `decide_action` отдавал на пустом паке `skip_pack`, мод исполнял
+    его как `G.FUNCS.skip_booster`, тот обнулял `booster_obj`, и отложенное
+    событие создания карт роняло ПРОЦЕСС игры. Теперь решение — `None`, а
+    раннер обязан переждать; бюджет тут свой (`_PACK_FILL_POLLS`), потому что
+    обычных трёх опросов (0.75 с) не хватает на игровые ~1.3 с."""
+
+    _ПАК = "SMODS_BOOSTER_OPENED"
+
+    def _полный_пак(self) -> GameState:
+        return replace(
+            _state(self._ПАК),
+            pack=(ShopItem(key="c_mars", label="Mars", kind="PLANET", price=0),),
+        )
+
+    def test_пустой_пак_пережидается_и_карта_берётся(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Лента: пустой пак, потом заполненный. Раннер должен дождаться
+        # второго, а не решить по первому.
+        видел: list[int] = []
+
+        def решение(state: GameState, *, include_discards: bool = True) -> Action | None:
+            видел.append(len(state.pack))
+            if state.phase == self._ПАК and not state.pack:
+                return None
+            return Action(kind="pack", item_index=0, label="Mars")
+
+        monkeypatch.setattr(runner, "decide_action", решение)
+        monkeypatch.setattr(runner, "dispatch_action", lambda bridge, action: bridge._advance())
+        bridge = ScriptedBridge([_state(self._ПАК), self._полный_пак(), _state("GAME_OVER")])
+        паузы: list[float] = []
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=паузы.append)
+
+        assert report.outcome == "lost"
+        assert 0 in видел and 1 in видел, видел
+        assert паузы, "перед переопросом должна быть пауза"
+        # И ни одного скипа пака: именно он и ронял игру.
+        assert all(action.kind != "skip_pack" for action in bridge.actions), bridge.actions
+
+    def test_пак_не_заполнился_никогда_это_затык(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Ждать бесконечно тоже нельзя: если карты не приехали за бюджет,
+        # честный «застрял», а не крутёжка до max_steps.
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kwargs: None)
+        bridge = ScriptedBridge([_state(self._ПАК)])
+        report = play_run(bridge, deck="RED", stake="WHITE", max_steps=999, sleep=lambda _: None)
+
+        assert report.outcome == "stuck"
+        assert f"завис на фазе {self._ПАК}" in report.note, report.note
+
+    def test_обычная_переходная_фаза_бюджет_не_меняет(self) -> None:
+        # Правка не должна молча удлинять ожидание там, где его хватало:
+        # у пака бюджет свой, у анимации — прежний `stall_limit`.
+        assert runner._wait_budget(self._ПАК, 3) == runner._PACK_FILL_POLLS
+        assert runner._wait_budget("HAND_PLAYED", 3) == 3
+        assert runner._wait_budget("SELECTING_HAND", 3) is None

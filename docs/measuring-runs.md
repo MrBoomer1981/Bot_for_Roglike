@@ -120,18 +120,25 @@ fit whatever came out. The batch is the **deck rotation again** (the same shape 
 item, and PLAN.md item 9.8 says in as many words that the table is a pre-C2 baseline to be
 re-taken rather than reused. The deck and mode are the user's call and the user will say when.
 
-Three changes have landed since that corpus, so **this batch measures the combination, not any
-one of them** — C2 (Planets are bought off the shelf), A21/A22 (the reroll policy), and the
-pack-path re-poll below. Read the results in this order:
+Four changes have landed since that corpus, so **this batch measures the combination, not any
+one of them** — C2 (Planets are bought off the shelf), A21/A22 (the reroll policy), the pack-path
+re-poll below, and the C3 pack-wait of 2026-09-10. Read the results in this order:
 
-1. **Did the pack re-poll work?** Count failed actions. In the pre-fix rotation there were 6 in
-   3 121 decisions and *all six were pack handling*. If the class is gone, `_RESETTLE_AFTER` did
-   its job; if the two "Card index out of range" refusals survive, see question 2.
-2. **Does an abandoned tag pack persist, or did it merely lag?** This is the one question the old
-   journal could not answer and `pack` now can. Find each decision where `pack` holds a card whose
-   `kind` does not match the pack the bot just bought, and check whether it survives the re-poll.
-   Persistence means the re-poll cannot help and the bot must instead refuse contradictory
-   contents; lag means the fix is complete. **Do not skip to a fix before this is counted.**
+1. ~~**Did the pack re-poll work?**~~ **Answered on 2026-09-10 without waiting for a batch, and the
+   answer was no.** The attempt to run this rotation crashed the game outright, eight times, and
+   the cause was the bot skipping a pack whose cards the game had not created yet — see
+   [C3](improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done).
+   The re-poll settles the *phase* but not the *contents*, so it could not have fixed this class.
+   What replaces the question: **count failed actions and crashes.** Any `booster_obj` crash in
+   `logs/*/12346.log`, or any `pack({skip=true})` issued against an empty `pack`, means the
+   2026-09-10 fix did not hold.
+2. ~~**Does an abandoned tag pack persist, or did it merely lag?**~~ **It lagged.** The pack is
+   empty because the game defers creating the cards by `1.3*sqrt(GAMESPEED)`; it fills on its own
+   if the bot waits instead of acting. Measured 20 pack-phase decisions: the 5 with an empty
+   `pack` were all inside that window, the 15 with a non-empty one were all real picks. The
+   question that replaces it: **does the bot now actually collect tag packs?** After a skip for a
+   `Meteor`/`Buffoon` tag, the journal should show `взял из пака`, not a refusal — that is the
+   half of C3 that was about forfeited blind rewards, and it has never once been observed working.
 3. **Re-take the loss table** — median share of the requirement reached, share of losses under
    half, discards and money left at the loss. That is the measurement that re-ranks everything
    below C3, and until it exists nothing in the open list is ranked on current evidence.

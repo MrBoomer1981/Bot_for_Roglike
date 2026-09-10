@@ -90,10 +90,16 @@ class TestDecideAction:
         )
         assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
 
-    def test_пустой_пак_скипается(self) -> None:
+    def test_пустой_пак_не_решается_а_ждёт(self) -> None:
+        # НЕ «skip_pack». Раньше было именно так, и этот тест закреплял
+        # падение: игра переключает фазу сразу, а карты пака кладёт отложенным
+        # событием, поэтому пустой пак — это «ещё не приехало». Скип в это
+        # окно обнуляет `booster_obj` внутри игры, и отложенное событие роняет
+        # ПРОЦЕСС игры (восемь падений в логах мода, у всех последний запрос
+        # `pack({skip=true})`; воспроизведено намеренно). Разбор — C3.
         state = build_state("AH KH QH JH 9H")
         state = replace(state, phase="SMODS_BOOSTER_OPENED", pack=())
-        assert _без_повода(decide_action(state)) == Action(kind="skip_pack")
+        assert decide_action(state) is None
 
     def test_пустая_рука_ничего_не_решает(self) -> None:
         state = build_state("AH KH QH JH 9H")

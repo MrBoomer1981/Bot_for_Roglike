@@ -666,6 +666,7 @@ label.
 | **A20** | [The suite now refuses the impossible — done.](docs/improvements.md#a20-the-suite-now-refuses-the-impossible--done) |
 | **C2** | [The bot could not buy consumables at all, and that was the root of the loss pattern — done.](docs/improvements.md#c2-the-bot-could-not-buy-consumables-at-all-and-that-was-the-root-of-the-loss-pattern--done) |
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](docs/improvements.md#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
+| **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](docs/improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 
 #### Open, ranked — the next work
 
@@ -710,7 +711,14 @@ Everything in the index above is done. What follows is not, and is ordered by wh
   journals. Counting losses whose **final round spent no discard at all**: **12 of 30 (40 %)**.
   Still a lot. Still not the thing that decided those runs.
 
-- **C3. The bot skips blinds to buy pack tags and then does not collect the pack.** Found from a
+- **C3. The bot skips blinds to buy pack tags and then does not collect the pack.**
+  **Closed 2026-09-10** — the write-up is [C3 in the improvement log](docs/improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done).
+  The reason the pack was never collected turned out to be that the bot **skipped it before
+  the game had created its cards**, and that skip killed the game process outright (eight
+  crashes, reproduced deliberately on 2026-09-10). The re-poll shipped below settles the
+  *phase* but not the *contents*, which is why it was not enough. Everything from here down
+  is the original diagnosis, kept because the mechanism it establishes is what the fix rests
+  on. Found from a
   run that ended in `error` during the second rotation, then measured across the journals present
   at the time — 33 of the rotation's eventual 35 (corpus above).
 

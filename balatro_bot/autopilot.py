@@ -1463,9 +1463,14 @@ def _decide_pack_action(state: GameState) -> Action:
     слот в ранней игре бьёт пустой, а поздней (слоты кончились) `has_slot`
     сам отсечёт. Только `None` (джокер не реализован) пропускаем.
 
-    `skip_pack` — если брать нечего: пак пуст, только нереализованные
-    джокеры, нет свободного слота, либо это Arcana/Spectral/Standard
-    (`evaluate_pack` тогда возвращает пусто). Нужен, чтобы ран не застревал."""
+    `skip_pack` — если брать нечего: только нереализованные джокеры, нет
+    свободного слота, либо это Arcana/Spectral/Standard (`evaluate_pack`
+    тогда возвращает пусто). Нужен, чтобы ран не застревал.
+
+    Пустой `state.pack` сюда **не доходит**: его отсеивает `decide_action`,
+    потому что пустой пак значит «карты ещё не созданы», и скип в это окно
+    роняет игру (C3). Так что «пусто» здесь всегда означает «оценивать
+    нечего», а не «ещё не приехало»."""
     has_slot = state.joker_slots is None or len(state.jokers) < state.joker_slots
     for offer in evaluate_pack(state):
         if offer.expected_uplift is None:
@@ -1647,6 +1652,15 @@ def decide_action(state: GameState, *, include_discards: bool = True) -> Action 
         return _decide_shop_action(state)
 
     if state.phase in PACK_OPEN_PHASES:
+        if not state.pack:
+            # Пустой пак — это «игра ещё не создала карты», а НЕ «брать нечего».
+            # Фазу игра переключает сразу, а карты кладёт отложенным событием
+            # (`card.lua`, задержка `1.3*sqrt(GAMESPEED)`). Скип в это окно
+            # исполняется как `G.FUNCS.skip_booster`, тот обнуляет `booster_obj`,
+            # и отложенное событие падает на nil — **процесс игры умирает**.
+            # Восемь падений в логах мода, у всех последний запрос один и тот
+            # же. Разбор — C3 в PLAN.md. Тот же приём, что у пустой руки ниже.
+            return None
         # Тип пака решается по содержимому: Celestial/Buffoon оцениваются,
         # Arcana/Spectral/Standard — `skip_pack` внутри (см. `_decide_pack_action`).
         return _decide_pack_action(state)

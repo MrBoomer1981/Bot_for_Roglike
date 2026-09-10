@@ -445,3 +445,20 @@ class TestAutoplay:
         assert pack_call["params"] == {"skip": True}
         out = capsys.readouterr().out
         assert "скипнул пак" in out
+
+    def test_пустой_пак_не_трогается_вовсе(
+        self, bridge: ModBridge, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        # Пустой пак — это «игра ещё не создала карты», и живой режим обязан
+        # просто пропустить такт. Скип в это окно роняет ПРОЦЕСС игры (C3):
+        # мод исполняет его как `G.FUNCS.skip_booster`, тот обнуляет
+        # `booster_obj`, и отложенное событие создания карт падает на nil.
+        state = sample_state()
+        state["state"] = "PLANET_PACK"
+        state["pack"] = {"count": 0, "limit": 3, "cards": []}
+        FakeMod.state = state
+
+        tui.autoplay(bridge, iterations=1, sleep=lambda _: None, key_reader=lambda: None)
+        методы = [call["method"] for call in FakeMod.calls]
+        assert "pack" not in методы, методы
+        assert "скипнул пак" not in capsys.readouterr().out
