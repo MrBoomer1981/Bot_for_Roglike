@@ -58,6 +58,7 @@ Each decision entry holds:
 | `board` | every held joker with its measured `contribution` and `sell_value` (**E1b**) |
 | `pack` | the open pack's cards, each with `label` **and** `kind` (**E1f**) |
 | `offered_tag` | the tag on offer for skipping the selectable blind (**E1f**) |
+| `blind_name`, `blind_kind` | the current blind's name and `SMALL`/`BIG`/`BOSS` (**E5**) |
 
 Those last five exist because a question could not be answered without them. `outlook` was
 added when a run stopped discarding and the journal could not say whether the discard had been
@@ -145,7 +146,14 @@ re-poll below, and the C3 pack-wait of 2026-09-10. Read the results in this orde
 4. **B3, now that `outlook` carries `best_play`/`best_discard`.** Per discard: what it gave up
    against what it got. Per zero-discard round: whether a discard was available and which guard
    rejected it. No discard threshold moves before this count exists.
-5. **C3's arrival rate**, which needed `pack` to be countable at all: a `SMODS_BOOSTER_OPENED`
+5. **Which bosses break the promised lower bound**, now that `blind_name` exists (**E5**).
+   The bound is violated in **32 of 32** moves that claim one, median overshoot 1.33×, and the
+   eight severe cases all landed on boss blinds that the journal could not name. Count the
+   violations per boss and per play size. The signature points at `The Psychic` (no plays under
+   5 cards) — seven of eight severe cases were 1–4 card plays — but that is a **guess**, and the
+   whole point of the field is that it no longer has to be one. **No fix to the bound before
+   this count exists.**
+6. **C3's arrival rate**, which needed `pack` to be countable at all: a `SMODS_BOOSTER_OPENED`
    entry alone never said *which* pack it belonged to, so "the tag's pack reached the bot" could
    not be separated from "a bought pack was opened".
 

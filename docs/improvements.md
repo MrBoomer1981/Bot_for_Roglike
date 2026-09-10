@@ -61,6 +61,7 @@ item 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 | **E3** | [A dead game destroyed the evidence of its own death — done.](#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
 | **E4** | [A timeout is not a refusal, and retrying one fired a second action into a live first — done.](#e4-a-timeout-is-not-a-refusal-and-retrying-one-fired-a-second-action-into-a-live-first--done) |
+| **E5** | [The journal could not say which boss was standing — done.](#e5-the-journal-could-not-say-which-boss-was-standing--done) |
 
 ## A1. Joker sell-replace — done.
 
@@ -1524,3 +1525,52 @@ the phase and carries the prefix, the journal is still written, and — the guar
 positive tests were confirmed to fail against a deliberately reintroduced defect;
 `TestПаузаПередПовтором` stayed green throughout, which is what proves the branch took only its
 own case.
+
+## E5. The journal could not say which boss was standing — done.
+
+Not a fix: an enabling measurement, in the shape of E1b/E1e/E1f — a field is added when a
+question cannot be answered without it. What it enables is the largest **gameplay** defect found
+so far, and the reason that defect is still open.
+
+**The defect it serves.** The autopilot writes "гарантированный ход: нижний предел N уже
+перекрывает остаток M" into its reason line and treats the blind as closed on that basis. The
+actual gain comes in **below N** — not occasionally but in **32 of 32** such moves across two
+independent corpora (24/24 in `runs/decks`, 8/8 in `runs/decks2`), median overshoot **1.33×** and
+**1.39×**. Two separate samples agreeing that closely is a bias, not spread: the quantity called
+a lower bound is an optimistic point estimate wearing the wrong label.
+
+Eight of those are severe (≥10× overshoot) and one run died entirely of them — five consecutive
+moves promising a single card would close a 605–620 remainder, each returning 0–5, the run ending
+at 3395 of 4000 with the joker board unchanged throughout.
+
+**Why it could not be diagnosed.** Every severe case landed on a requirement of 4000 / 10000 /
+22000 — boss blinds at antes 3/4/5 — and the journal did not record **which** boss. The signature
+resembles `The Psychic` ("no plays of fewer than 5 cards"): seven of the eight were 1–4 card
+plays, and six had `Half Joker` on the board, which pays mult for hands of ≤3 cards. But that is
+a guess, and `solver/play.py`'s legality filter keys on `blind.name`, so it could only ever be
+checked by re-reading the code — never against what actually happened.
+
+**The data was free all along.** A live snapshot on `SELECTING_HAND`
+(`tests/golden/20260820-104835-boss-goad-debuffed-spade-trips.json`) carries `status='CURRENT'`,
+`name='The Goad'`, `type='BOSS'`. `_parse_blind` already assembles it into `GameState.blind`;
+nothing needed computing, only recording.
+
+`DecisionEntry` gains `blind_name` and `blind_kind`, filled in `_entry` from `state.blind` —
+**not** attached to `Action`, for exactly the reason `pack` is not: state read in `_entry` lands
+on **every** entry, including the mod refusals where no `Action` survives. `blind_kind` is
+separate from the name because "was this a boss?" is asked more often than "which one?", and the
+answer should not require a lookup in `core/bosses.py`. Both are empty on `BLIND_SELECT` and
+`SHOP`, where there is no current blind at all — an honest empty, not a gap.
+
+`tools/analyze_runs.py`'s X11 check now names the blind per hit and prints a per-boss tally,
+because a field that is recorded and never read is not an improvement. On corpora predating this
+change it says **"нет данных"** rather than showing an empty zero: those are different claims.
+
+**What this deliberately does not do: it does not fix the bound.** The 32-of-32 figure stands
+unexplained, and the mechanism will not be guessed at from the code — the next batch will collect
+the attribution, and the fix follows the evidence rather than preceding it.
+
+**Tests** — `tests/test_runner.py::TestИмениБлайндаВЖурнале`: the fields reach the entry and the
+JSON, they are empty where there is no current blind, and they are present on a **refused**
+decision, which is the property that justifies filling them in `_entry`. Three of the four were
+confirmed to fail with the fill removed; the fourth is the empty-case test and correctly does not.

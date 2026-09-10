@@ -669,6 +669,7 @@ label.
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](docs/improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 | **E3** | [A dead game destroyed the evidence of its own death — done.](docs/improvements.md#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
 | **E4** | [A timeout is not a refusal, and retrying one fired a second action into a live first — done.](docs/improvements.md#e4-a-timeout-is-not-a-refusal-and-retrying-one-fired-a-second-action-into-a-live-first--done) |
+| **E5** | [The journal could not say which boss was standing — done.](docs/improvements.md#e5-the-journal-could-not-say-which-boss-was-standing--done) |
 
 #### Open, ranked — the next work
 

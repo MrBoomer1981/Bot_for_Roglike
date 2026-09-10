@@ -432,6 +432,9 @@ def section_anomalies(corpus: Corpus) -> list[Finding]:
     full_board_roll = Finding("X9", "реролл при полной доске (сигнатура A22)")
     bad_outcome = Finding("X10", "ран кончился не игрой (stuck/error)")
     broken_floor = Finding("X11", "факт ниже заявленного «нижнего предела» хода")
+    #: Нарушения предела по блайндам — тот самый счёт, ради которого заведено
+    #: `blind_name` (E5). Пусто на старых журналах, где поля нет.
+    floor_by_blind: Counter[str] = Counter()
 
     for run in corpus.runs:
         tag = run.path.name[:26]
@@ -490,11 +493,15 @@ def section_anomalies(corpus: Corpus) -> list[Finding]:
                 promise = FLOOR_PROMISE.search(str(first.get("reason") or ""))
                 if promise is not None and gained < int(promise.group(1)):
                     floor = int(promise.group(1))
+                    блайнд = str(first.get("blind_name") or "")
                     broken_floor.hits.append(
                         f"{where} шаг {first.get('step')}: обещано >={floor}, "
                         f"получено {gained} ({floor / max(gained, 1):.0f}x) "
                         f"| {str(first.get('action'))[:30]}"
+                        + (f"  [{блайнд}]" if блайнд else "")
                     )
+                    if блайнд:
+                        floor_by_blind[блайнд] += 1
 
     found = [
         f
@@ -513,6 +520,17 @@ def section_anomalies(corpus: Corpus) -> list[Finding]:
             "X7": "база runs/decks: 6 = 0.17 на ран",
         }
         finding.report(len(corpus.runs), notes.get(finding.code, ""))
+
+    if broken_floor.hits:
+        print("\n  X11 по блайндам — на каких боссах предел не держится:")
+        if not corpus.has_field("blind_name"):
+            print("    НЕТ ДАННЫХ: поля `blind_name` в корпусе нет (журналы старше E5).")
+            print("    Приписать расхождение конкретному боссу нельзя — это не ноль.")
+        elif not floor_by_blind:
+            print("    все нарушения пришлись на записи без текущего блайнда")
+        else:
+            for имя, счёт in floor_by_blind.most_common():
+                print(f"    {имя:<24} {счёт}")
     return found
 
 

@@ -285,6 +285,22 @@ class DecisionEntry:
     все четыре отказа корпуса как раз в паках: три из них в
     `SMODS_BOOSTER_OPENED`, и на них `Action` не доживает."""
 
+    blind_name: str = ""
+    """Имя текущего блайнда (`The Psychic`, `The Goad`, ...) — пустое там, где
+    текущего блайнда нет вовсе (`BLIND_SELECT`, `SHOP`), и это не пропуск.
+
+    Заведено потому, что без него **нельзя поставить диагноз**. Прогноз солвера
+    расходится с фактом систематически (32 случая из 32 по двум корпусам), и
+    все тяжёлые случаи пришлись на боссовые блайнды — а какой именно босс стоял,
+    журнал не говорил. Подпись похожа на `The Psychic`, но фильтр легальности
+    (`solver/play.py` сверяет `blind.name`) проверялся только перечитыванием
+    кода, никогда по факту."""
+
+    blind_kind: str = ""
+    """`SMALL`/`BIG`/`BOSS` — поле `type` мода. Отдельно от имени потому, что
+    «боссовый ли это блайнд» спрашивают чаще, чем «какой именно», и ответ не
+    должен требовать сверки со справочником `core/bosses.py`."""
+
     offered_tag: str = ""
     """Тег, который дают за скип выбираемого сейчас блайнда — `tag_name`
     того из `small`/`big`, у кого статус `SELECT` (тот же поиск, что в
@@ -827,6 +843,8 @@ def _entry(
         jokers=tuple(joker.label or joker.key for joker in state.jokers),
         blind_beaten=True if state.phase == "ROUND_EVAL" else None,
         pack=tuple(PackCard(label=item.label, kind=item.kind) for item in state.pack),
+        blind_name=state.blind.name if state.blind is not None else "",
+        blind_kind=state.blind.kind if state.blind is not None else "",
         offered_tag=_offered_tag(state),
     )
 
@@ -980,6 +998,8 @@ def report_to_json(report: RunReport) -> dict[str, object]:
                     for место in entry.board
                 ],
                 "pack": [{"label": карта.label, "kind": карта.kind} for карта in entry.pack],
+                "blind_name": entry.blind_name,
+                "blind_kind": entry.blind_kind,
                 "offered_tag": entry.offered_tag,
             }
             for entry in report.decisions

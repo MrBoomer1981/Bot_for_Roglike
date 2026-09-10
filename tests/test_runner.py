@@ -1236,3 +1236,71 @@ class TestТаймаутЭтоНеОтказ:
 
         assert len(попытки) > 1, "обычный отказ обязан повторяться (A19)"
         assert report.outcome == "stuck"
+
+
+class TestИмениБлайндаВЖурнале:
+    """Улучшение E5: имя и вид текущего блайнда.
+
+    Заведено под конкретный незакрытый вопрос: прогноз солвера расходится с
+    фактом систематически, и все тяжёлые случаи пришлись на боссовые блайнды,
+    а какой именно босс стоял — журнал не говорил. Проверяется здесь ровно
+    то, ради чего поле читается из состояния, а не привозится на `Action`:
+    оно обязано быть и на записи, до которой `Action` не доживает."""
+
+    def _блайнд(self, phase: str = "SELECTING_HAND") -> GameState:
+        return replace(
+            _state(phase),
+            blind=BlindInfo(
+                kind="BOSS",
+                name="The Psychic",
+                effect="нельзя играть меньше 5 карт",
+                required_score=4000,
+                status="CURRENT",
+            ),
+        )
+
+    def test_имя_и_вид_попадают_в_запись(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kw: Action(kind="play"))
+        monkeypatch.setattr(runner, "dispatch_action", lambda bridge, action: bridge._advance())
+        bridge = ScriptedBridge([self._блайнд(), _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        assert report.decisions[0].blind_name == "The Psychic"
+        assert report.decisions[0].blind_kind == "BOSS"
+
+    def test_поля_доезжают_до_json(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kw: Action(kind="play"))
+        monkeypatch.setattr(runner, "dispatch_action", lambda bridge, action: bridge._advance())
+        bridge = ScriptedBridge([self._блайнд(), _state("GAME_OVER")])
+        play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None, log_dir=tmp_path)
+
+        (файл,) = list(tmp_path.glob("*.json"))
+        решение = json.loads(файл.read_text(encoding="utf-8"))["decisions"][0]
+        assert решение["blind_name"] == "The Psychic"
+        assert решение["blind_kind"] == "BOSS"
+
+    def test_без_текущего_блайнда_поля_пусты(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # На выборе блайнда и в магазине текущего блайнда нет вовсе. Пусто —
+        # это честный ответ, а не пропуск: выдумывать тут нечего.
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kw: Action(kind="select"))
+        monkeypatch.setattr(runner, "dispatch_action", lambda bridge, action: bridge._advance())
+        bridge = ScriptedBridge([_state("BLIND_SELECT"), _state("GAME_OVER")])
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        assert report.decisions[0].blind_name == ""
+        assert report.decisions[0].blind_kind == ""
+
+    def test_снимок_есть_и_на_отказе_мода(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # То самое свойство, ради которого заполнение сидит в `_entry`:
+        # на отказе `Action` не доживает, а состояние всё равно записано.
+        def отказ(bridge: ModBridge, action: Action) -> GameState:
+            raise ModBridgeError("[-32002] игра ещё не готова")
+
+        monkeypatch.setattr(runner, "decide_action", lambda state, **kw: Action(kind="play"))
+        monkeypatch.setattr(runner, "dispatch_action", отказ)
+        monkeypatch.setattr(runner, "_bridge_alive", lambda bridge: True)
+        bridge = ScriptedBridge([self._блайнд()])
+        report = play_run(bridge, deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        assert report.decisions[0].rejected is True
+        assert report.decisions[0].blind_name == "The Psychic"
