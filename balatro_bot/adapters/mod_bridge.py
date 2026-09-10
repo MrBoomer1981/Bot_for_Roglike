@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 import re
 import urllib.error
@@ -28,6 +29,7 @@ from balatro_bot.core.state import BlindInfo, GameState, JokerCard, PokerHandInf
 __all__ = [
     "ACTION_TIMEOUT",
     "DEFAULT_PORT",
+    "PACK_TIMEOUT",
     "ModBridge",
     "ModBridgeError",
     "NotConnectedError",
@@ -46,6 +48,25 @@ DEFAULT_PORT = 12346
 #: запасом, всё равно `dispatch_action` в цикле ловит `TimedOutError` и не
 #: падает.
 ACTION_TIMEOUT: float = 90.0
+
+#: Свой потолок для `pack`. Девяносто секунд разумны для подсчёта очков, но не
+#: для выбора карты: там мод ждёт условие завершения, и если условие не наступит
+#: (после последнего выбора он ждёт `G.STATE == SHOP`, а пак, открытый тегом,
+#: возвращает в выбор блайнда — `end_consumeable` восстанавливает
+#: `G.GAME.PACK_INTERRUPT`), запрос висит всё это время, а ран идёт вслепую.
+#: Однажды это кончилось ответом через 95 372 мс, пришедшим в чужом раунде, и
+#: падением игры следом.
+#:
+#: Число — потолок с запасом от измеренного, а не игровая величина: по всем
+#: логам успешные ответы `pack` укладываются в 240–2628 мс, так что 20 с дают
+#: примерно восьмикратный запас. Выбор подпирается и формой распределения: за
+#: 38 878 ответов мода **между 10 и 90 с нет ни одного**, а за 90 с — ровно два
+#: (`pack` 95 372 мс и `select` 460 545 мс). Либо эндпоинт отвечает за секунды,
+#: либо его условие не выполнится никогда; 20 с лежат в этой пустоте.
+#:
+#: Оба числа здесь затем, чтобы потолок пересчитывали по новым замерам, а не
+#: угадывали заново.
+PACK_TIMEOUT: float = 20.0
 
 
 class ModBridgeError(RuntimeError):
@@ -542,6 +563,20 @@ class ModBridge:
                 f"мод не отвечает на {self.url}: {error}. "
                 "Игра запущена через `uvx balatrobot serve`?"
             ) from error
+        except (OSError, http.client.HTTPException) as error:
+            # Игра умерла ПОСРЕДИ запроса — соединение уже установлено, ответ
+            # оборвался. `urlopen` отдаёт это как `http.client.RemoteDisconnected`,
+            # а он `OSError` (через `ConnectionResetError`), но **не** `URLError`
+            # и не `TimeoutError`, поэтому мимо ветки выше проходил насквозь.
+            # Ценой был не только вылет наружу: `runner` ловит `ModBridgeError`,
+            # так что необработанное исключение уносило с собой и запись журнала
+            # рана — того самого, который объясняет падение, — и остановку пакета
+            # по мёртвому мосту. Ловим весь транспорт, а не перечисленные типы:
+            # список типов тут уже ошибался (см. `TimeoutError` выше).
+            raise NotConnectedError(
+                f"мод оборвал соединение на «{method}»: {error}. "
+                "Похоже, игра упала — посмотри logs/<метка>/12346.log."
+            ) from error
         except json.JSONDecodeError as error:
             raise ModBridgeError(f"мод вернул не JSON: {error}") from error
 
@@ -666,7 +701,7 @@ class ModBridge:
             params["card"] = card
         if skip is not None:
             params["skip"] = skip
-        return parse_game_state(self.call("pack", params, timeout=ACTION_TIMEOUT))
+        return parse_game_state(self.call("pack", params, timeout=PACK_TIMEOUT))
 
     def reroll(self) -> GameState:
         """Перекатить карты в витрине магазина за деньги (`openrpc.json`'s

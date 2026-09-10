@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import http.client
 import json
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -1097,3 +1098,58 @@ class TestОжиданиеЗаполненияПака:
         assert runner._wait_budget(self._ПАК, 3) == runner._PACK_FILL_POLLS
         assert runner._wait_budget("HAND_PLAYED", 3) == 3
         assert runner._wait_budget("SELECTING_HAND", 3) is None
+
+
+class TestСмертьИгрыНеТеряетЖурнал:
+    """Главный регресс по вылетам: игра умирает посреди запроса, и раньше это
+    улетало наружу необработанным `RemoteDisconnected`.
+
+    Цена была не в самом исключении, а в том, что оно уносило: журнал рана —
+    того единственного, который объясняет падение, — не записывался вовсе,
+    `run_batch` не доходил до остановки пакета по мёртвому мосту, а наружу
+    летела трасса. Теперь мост отдаёт `NotConnectedError`, то есть обычный
+    `ModBridgeError`, и вся уже существующая машинерия отрабатывает."""
+
+    def _мост(self) -> ScriptedBridge:
+        return ScriptedBridge([_state("BLIND_SELECT"), _state("SELECTING_HAND")])
+
+    def test_журнал_пишется_даже_когда_игра_умерла(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        # Сквозной, через НАСТОЯЩИЙ `ModBridge`: отображение транспортного
+        # сбоя живёт в `ModBridge.call`, и подмена `dispatch_action` его бы
+        # обошла. Рвём сам транспорт — так же, как это делает умирающая игра.
+        def boom(*_a: object, **_kw: object) -> object:
+            raise http.client.RemoteDisconnected("обрыв без ответа")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        # Без ожидания возврата моста: он не вернётся, игра мертва.
+        monkeypatch.setattr(runner, "_reconnect", lambda bridge, *, sleep: None)
+
+        report = play_run(
+            ModBridge(port=1, timeout=0.1),
+            deck="RED",
+            stake="WHITE",
+            sleep=lambda _: None,
+            log_dir=tmp_path,
+        )
+
+        # Раньше `RemoteDisconnected` улетал мимо `except ModBridgeError`, и
+        # журнала не оставалось вовсе — терялся ровно тот ран, ради которого
+        # его и заводили.
+        assert report.outcome == "error"
+        (файл,) = list(tmp_path.glob("*.json"))
+        данные = json.loads(файл.read_text(encoding="utf-8"))
+        assert данные["deck"] == "RED"
+        assert данные["outcome"] == "error"
+        assert "оборвал соединение" in (данные["note"] or "")
+
+    def test_обрыв_не_улетает_исключением_наружу(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Через настоящий `ModBridge.call`, а не подменой `dispatch_action`:
+        # проверяем именно отображение транспортного сбоя в `ModBridgeError`.
+        def boom(*_a: object, **_kw: object) -> object:
+            raise http.client.RemoteDisconnected("обрыв")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(ModBridgeError):
+            ModBridge(port=1, timeout=1.0).game_state()

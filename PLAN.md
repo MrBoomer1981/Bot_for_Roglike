@@ -667,6 +667,7 @@ label.
 | **C2** | [The bot could not buy consumables at all, and that was the root of the loss pattern — done.](docs/improvements.md#c2-the-bot-could-not-buy-consumables-at-all-and-that-was-the-root-of-the-loss-pattern--done) |
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](docs/improvements.md#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](docs/improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
+| **E3** | [A dead game destroyed the evidence of its own death — done.](docs/improvements.md#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
 
 #### Open, ranked — the next work
 

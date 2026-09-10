@@ -8,6 +8,7 @@
 
 from __future__ import annotations
 
+import http.client
 import urllib.error
 from collections.abc import Mapping
 
@@ -15,6 +16,7 @@ import pytest
 
 from balatro_bot.adapters.mod_bridge import (
     ACTION_TIMEOUT,
+    PACK_TIMEOUT,
     ModBridge,
     NotConnectedError,
     RpcError,
@@ -643,6 +645,25 @@ class TestКлиент:
         assert seen[0] == bridge.timeout  # game_state — базовый
         assert seen[1] == ACTION_TIMEOUT  # play — увеличенный
 
+    def test_у_пака_свой_потолок_короче_общего(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `pack` ждёт не анимацию, а условие завершения внутри мода, и это
+        # условие наблюдалось невыполнимым: запрос висел 95 с, а ран всё это
+        # время шёл вслепую. Отдельный, куда более короткий потолок превращает
+        # зависание в быструю ошибку, которую цикл умеет пережить (A19).
+        real_urlopen = urllib.request.urlopen
+        seen: list[float] = []
+
+        def spy(request: object, *, timeout: float = 0.0) -> object:
+            seen.append(timeout)
+            return real_urlopen(request, timeout=timeout)  # type: ignore[arg-type]
+
+        monkeypatch.setattr("urllib.request.urlopen", spy)
+        bridge.open_pack(skip=True)
+        assert seen[0] == PACK_TIMEOUT
+        assert PACK_TIMEOUT < ACTION_TIMEOUT
+
     def test_таймаут_чтения_становится_timedouterror(
         self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -667,6 +688,45 @@ class TestКлиент:
 
 
 class TestНетСоединения:
+    def test_обрыв_посреди_запроса_становится_notconnectederror(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Игра, умершая ПОСРЕДИ запроса, отдаёт `RemoteDisconnected`. Он
+        # `OSError`, но не `URLError` и не `TimeoutError`, поэтому проходил
+        # мимо перехвата насквозь — и уносил с собой запись журнала рана и
+        # остановку пакета, потому что `runner` ловит только `ModBridgeError`.
+        def boom(*_a: object, **_kw: object) -> object:
+            raise http.client.RemoteDisconnected("обрыв без ответа")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(NotConnectedError, match="оборвал соединение"):
+            bridge.game_state()
+
+    def test_любой_транспортный_сбой_тоже_notconnectederror(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Ловим весь транспорт, а не перечень типов: перечень тут ошибался уже
+        # дважды (сперва голый `TimeoutError`, потом `RemoteDisconnected`).
+        def boom(*_a: object, **_kw: object) -> object:
+            raise OSError("сломанный канал")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(NotConnectedError):
+            bridge.game_state()
+
+    def test_таймаут_не_перехвачен_новой_веткой(
+        self, bridge: ModBridge, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Регрессия на ПОРЯДОК веток: `TimeoutError` — тоже `OSError`, и если
+        # новая ветка встанет раньше, таймаут потеряет свой тип и подсказку
+        # про BALATROBOT_FAST.
+        def boom(*_a: object, **_kw: object) -> object:
+            raise TimeoutError("timed out")
+
+        monkeypatch.setattr("urllib.request.urlopen", boom)
+        with pytest.raises(TimedOutError, match="BALATROBOT_FAST"):
+            bridge.game_state()
+
     def test_понятная_ошибка_если_игра_не_запущена(self) -> None:
         # Порт, на котором заведомо никто не слушает.
         bridge = ModBridge(port=1, timeout=1.0)

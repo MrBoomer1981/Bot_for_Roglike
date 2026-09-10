@@ -59,6 +59,7 @@ item 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 | **C2** | [The bot could not buy consumables at all, and that was the root of the loss pattern — done.](#c2-the-bot-could-not-buy-consumables-at-all-and-that-was-the-root-of-the-loss-pattern--done) |
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
+| **E3** | [A dead game destroyed the evidence of its own death — done.](#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
 
 ## A1. Joker sell-replace — done.
 
@@ -1363,4 +1364,92 @@ the change: a **non-empty** pack that cannot be valued is still skipped, exactly
 the card taken, with no `skip_pack` issued; a pack that never fills is an honest stall; the
 ordinary transient budget is unchanged), `tests/test_tui.py::TestAutoplay::test_пустой_пак_не_трогается_вовсе`
 (the live loop had no empty-pack coverage at all).
+## E3. A dead game destroyed the evidence of its own death — done.
 
+E1a promised that the run journal "is written on **every** exit — the crash and stall paths are
+exactly the ones it exists for". That promise was not held, and the reason sat one layer below
+everything that was built on it.
+
+`adapters/mod_bridge.py` mapped transport failures to `ModBridgeError` by catching
+`(TimeoutError, urllib.error.URLError)`. When the game dies **mid-request** — connection already
+established, response cut off — `urlopen` raises `http.client.RemoteDisconnected`, and its
+ancestry is:
+
+```
+RemoteDisconnected → ConnectionResetError → ConnectionError → OSError
+                   → BadStatusLine → HTTPException
+```
+
+An `OSError`, but neither a `URLError` nor a `TimeoutError`. So it went straight through the
+`except` clause, and everything downstream that keys on `ModBridgeError` was bypassed at once:
+
+- `_play_run`'s dispatch guard never ran, so the run never reached a `RunReport`;
+- **the journal was not written at all** — the one run that could explain the crash was the one
+  run lost;
+- `run_batch`'s E2 halt (stop the batch when the bridge is dead) was never reached;
+- the CLI exited with a Python traceback.
+
+Observed exactly so on 2026-09-10: `http.client.RemoteDisconnected: Remote end closed connection
+without response`, the batch script printing `!!! BLUE код 1`, and no journal for that run.
+
+**The list of exception types had already been wrong once.** The neighbouring test carries the
+scar: `test_таймаут_чтения_становится_timedouterror`, with the comment "раньше он проходил мимо
+`call()` и ронял весь цикл" — the same defect, one type earlier. So the fix is not "add
+`RemoteDisconnected`" but **catch the whole transport**: `(OSError, http.client.HTTPException)`.
+The pre-existing `(TimeoutError, urllib.error.URLError)` clause stays **first**, because
+`TimeoutError` is itself an `OSError` and must keep producing `TimedOutError` with its
+`BALATROBOT_FAST` hint; a regression test now pins that ordering, since getting it wrong is
+silent.
+
+**A second, smaller change rides along: `pack` gets its own timeout.** `ACTION_TIMEOUT` = 90 s is
+right for a long scoring animation, but `pack` does not wait on an animation — it waits on a
+completion *condition* inside the mod, and that condition was observed never being satisfied.
+In the `game.lua:3259 field 'shop' (nil)` crash the log shows a `pack` request hanging for
+**95 372 ms** while the run carried on blind, the stale response finally landing in a different
+round, and the game dying immediately after. The mechanism is consistent with the mod's source
+(after the last pick it waits for `G.STATE == SHOP`, which a tag-opened pack never reaches,
+since that returns to blind selection) — but **this is a single observation and is recorded as
+one**. What is fixed is the consequence, not the presumed cause: ninety seconds of silent
+desynchronisation is unacceptable whatever produced it.
+
+`PACK_TIMEOUT` = 20 s — a ceiling with margin over measurement, not a reconstruction of a game
+constant. Successful `pack` responses across every log fall in **240–2628 ms**, so 20 s leaves
+roughly eight-fold headroom. The shape of the distribution supports the choice independently:
+across **38 878** mod responses there is **nothing at all between 10 s and 90 s**, and exactly
+two above 90 s (`pack` 95 372 ms, `select` 460 545 ms). An endpoint either settles in seconds or
+its predicate is never satisfied; 20 s sits in that empty band.
+
+**A correction to an earlier version of this entry.** It claimed `GAMESPEED` is unknowable
+because the mod does not report it. Not reporting it is true; unknowable is not — **we set it**:
+`settings.lua` reads `BALATROBOT_GAMESPEED` (default **4**), and `BALATROBOT_FAST=1` sets **10**.
+The pack-fill window is therefore computable, `(0.4 + 1.3·√GAMESPEED)/GAMESPEED` real seconds —
+**1.70 s at 1, 0.75 s at the default 4, 0.45 s at FAST's 10**. Two consequences. The "~1.3 s"
+quoted for C3 is a `TOTAL`-clock figure, not real seconds. And "`BALATROBOT_FAST` does not help"
+was wrong in its reasoning even though right in its effect: fast mode *does* narrow the window,
+from 0.75 s to 0.45 s — just never below the 0.25 s pause that was racing it. The figure is a
+**floor, not a bound**: a blocking event ahead in the queue can extend it arbitrarily, which is
+why the wait is bounded by a poll budget rather than by this arithmetic. Recovery needs nothing new: `TimedOutError` is a `ModBridgeError`, so the refusal
+branch with its pause and re-poll (**A19**) already handles it, bounded by `stall_limit`.
+
+**What this deliberately does not do, and how sound that refusal actually is.** Re-polling after
+*every* action was considered and not done. The cost is real — ~18 s per run over a median of 86
+decisions — and none of the three crash instances would have been prevented by it: #1 needed a
+*content* precondition (an empty pack), #2 happened with `next_round` **already** in the re-poll
+list, and #3's mechanism is unknown.
+
+But the supporting audit was weaker than first claimed, and that is worth stating plainly. "Of 15
+pack picks, 0 mismatched" compared the card the bot **named** against the bot's **own snapshot** —
+self-consistent by construction, and therefore no test of whether the *index* it sent resolved to
+the card it meant. The independent oracle exists: the mod logs `Pack: selecting <set> '<name>'`
+for every pick. It cannot be joined to the journal today because `DecisionEntry` carries no
+timestamp, so the two can only be aligned by order. **The stale-index hypothesis is therefore not
+disproven — it is untested**, and the honest reason for not re-polling everywhere is the cost
+against three instances none of which it explains, not a clean bill of health.
+
+**Tests** — `tests/test_mod_bridge.py::TestНетСоединения` (a `RemoteDisconnected` and a bare
+`OSError` both become `NotConnectedError`; a `TimeoutError` still becomes `TimedOutError`, which
+pins the clause order), `TestТаймауты::test_у_пака_свой_потолок_короче_общего`, and
+`tests/test_runner.py::TestСмертьИгрыНеТеряетЖурнал` — the last driven end-to-end through a real
+`ModBridge` with a broken transport, because patching `dispatch_action` would bypass the very
+mapping under test. All four were confirmed to fail against a deliberately narrowed clause
+before being accepted.

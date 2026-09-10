@@ -770,6 +770,29 @@ through this client's honest game-action methods
 (`select`/`skip`/`play`/`discard`/`buy`/`sell`/`reroll`/`use`/`rearrange`/`start`/`menu`/`open_pack`/...)
 — the mod's cheat-class methods (`set`/`add`/`load`, which set money/ante/hands directly or spawn
 arbitrary cards) are deliberately never called outside test infrastructure (`tests/fake_mod.py`).
+
+**One invariant this client owes everything above it: nothing escapes `_call` that is not a
+`ModBridgeError`.** It is load-bearing far beyond politeness — `runner.py` keys its whole
+recovery on that type, and an exception slipping past takes the run journal down with it, on
+precisely the crash path the journal exists for (E1a's "written on every exit"). The clause has
+been too narrow twice: first a bare `TimeoutError` (not a `URLError`), then
+`http.client.RemoteDisconnected`, raised when the game dies mid-response — an `OSError` via
+`ConnectionResetError`, yet neither a `URLError` nor a `TimeoutError`. So the catch is now the
+whole transport, `(OSError, http.client.HTTPException)`, rather than an enumeration that keeps
+being wrong; **do not narrow it back to named types.** Order matters and is pinned by a test:
+`TimeoutError` is itself an `OSError`, so its clause must stay first or timeouts lose their type
+and their `BALATROBOT_FAST` hint.
+
+Timeouts are per-method rather than global. `ACTION_TIMEOUT` (90 s) suits actions that wait on a
+scoring animation; `open_pack` instead uses `PACK_TIMEOUT` (20 s), because it waits on a
+completion *condition* inside the mod which was once observed never being satisfied — a single
+`pack` request hung for 95 s while the run continued blind. The 20 s is a ceiling with margin
+over measurement (successful pack responses span 240–2628 ms) and sits in an empty band: across
+38 878 mod responses nothing at all falls between 10 s and 90 s. `GAMESPEED` is **not** reported
+by the mod but is nonetheless ours — `settings.lua` reads `BALATROBOT_GAMESPEED` (default 4;
+`BALATROBOT_FAST=1` → 10) — so delays expressed in it can be computed rather than guessed; do not
+repeat the earlier claim that they cannot. Full write-up — E3 in the
+[improvement log](improvements.md#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done).
 `start(deck, stake, seed=None)` and `menu()` were added for `runner.py` (Phase 9.7) — `start`
 returns state already at `BLIND_SELECT`; `parse_game_state` now also reads the mod's `won` flag into
 `GameState.won`, the one thing that distinguishes a won run from a `GAME_OVER` loss. `sell(*,
