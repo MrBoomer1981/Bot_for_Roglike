@@ -40,7 +40,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Final, Literal
 
-from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
+from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError, TimedOutError
 from balatro_bot.autopilot import (
     Action,
     BoardEntry,
@@ -144,6 +144,10 @@ _TRANSIENT_POLL_INTERVAL: Final[float] = 0.25
 #: фиксируется как затык, а не крутится до `max_steps`.
 _PACK_FILL_POLLS: Final[int] = 20
 
+#: Начало причины, по которой ран остановлен зависшим действием. Префикс
+#: стабилен намеренно: без него разбор журналов не отличит зависание от смерти
+#: моста — оба кончаются исходом `error`, и разница живёт только в тексте.
+_HUNG_PREFIX: Final[str] = "зависло действие"
 
 #: Сколько всего секунд ждать возвращения моста, прежде чем признать ран
 #: провалившимся (вторая половина улучшения E2). Мост отваливается не
@@ -555,6 +559,43 @@ def _play_run(
 
         try:
             new_state = dispatch_action(bridge, action)
+        except TimedOutError as error:
+            # Таймаут — НЕ отказ, и лечится он противоположным образом.
+            # Отказ значит «мод не принял действие», и повтор после паузы
+            # уместен (улучшение A19). Таймаут значит «действие всё ещё
+            # выполняется внутри игры»: мод ждёт условие завершения, которое
+            # может не наступить никогда (наблюдалось дважды — `pack` 95 372 мс
+            # и `select` 460 545 мс). Повторять такое — слать второе действие
+            # поверх незакрытого первого, то есть ровно та форма «действие в
+            # чужое окно», от которой игра и умирала.
+            #
+            # Что разделение опирается на замеры, а не на вкус: за 38 888
+            # ответов мода в полосе 10–90 с нет НИ ОДНОГО, за 90 с — ровно два,
+            # а максимум законного ответа 9192 мс. Промежуточного режима
+            # «долго, но живо» у эндпоинтов просто нет.
+            entry = _entry(
+                step,
+                state,
+                f"{describe_action(action)} — {_HUNG_PREFIX}: {error}",
+                True,
+                action,
+            )
+            decisions.append(entry)
+            if on_step is not None:
+                on_step(state, entry)
+            return _finish(
+                deck,
+                stake,
+                seed,
+                "error",
+                state,
+                decisions,
+                note=(
+                    f"{_HUNG_PREFIX}: {describe_action(action)} на фазе "
+                    f"{state.phase}; повтор не делаем — оно ещё внутри игры"
+                ),
+                adopted=adopted,
+            )
         except ModBridgeError as error:
             # E2: «мод отказал в действии» и «моста больше нет» приходят
             # одним типом исключения, а лечатся по-разному: первое — это

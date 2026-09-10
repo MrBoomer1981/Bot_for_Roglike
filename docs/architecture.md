@@ -1102,7 +1102,19 @@ a stall exactly where the right move is to wait. Pack phases therefore get `_PAC
 not in anything the mod reports, so the real delay cannot be computed from this side at all — and
 a pack that never fills still ends the run as an honest stall rather than spinning to `max_steps`.
 The cost of getting this wrong was not a lost run but a dead game process; see C3 in the
-[improvement log](improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done). That exception was paid for: `skip` and `next_round` are
+[improvement log](improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done).
+
+**A refusal is retried; a hang never is** — the two arrive as the same exception family and mean
+opposite things. `ModBridgeError` from a mod refusal means "the action was not accepted", and
+A19's pause-and-retry is correct for it. `TimedOutError` means "the action is still running
+inside the game": the mod is waiting on a completion predicate that may never be satisfied, so a
+retry sends a second action on top of a live first — the same hazard C3 was about, reached
+through the error path. `_play_run` therefore catches `TimedOutError` **before** the general
+clause and ends the run rather than retrying, with a reason line under the stable
+`_HUNG_PREFIX` so hangs stay countable against dead-bridge errors, which share the `error`
+outcome. The separation is safe to make because the response-time distribution is bimodal:
+across 38 888 mod responses nothing lands between 10 s and 90 s. Write-up — E4 in the
+[improvement log](improvements.md#e4-a-timeout-is-not-a-refusal-and-retrying-one-fired-a-second-action-into-a-live-first--done). That exception was paid for: `skip` and `next_round` are
 the two sites where the game dispatches `new_blind_choice` and a held pack tag opens a booster
 nobody asked for (`game.lua:3294`, `functions/button_callbacks.lua:2776`), and `buy_pack` opens one
 the bot did ask for whose cards may not be in `G.pack_cards` yet. Deciding from the returned state

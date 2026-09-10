@@ -60,6 +60,7 @@ item 9.8 — that index is what keeps citations like "§9.8 A12" resolving.
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 | **E3** | [A dead game destroyed the evidence of its own death — done.](#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
+| **E4** | [A timeout is not a refusal, and retrying one fired a second action into a live first — done.](#e4-a-timeout-is-not-a-refusal-and-retrying-one-fired-a-second-action-into-a-live-first--done) |
 
 ## A1. Joker sell-replace — done.
 
@@ -1364,6 +1365,7 @@ the change: a **non-empty** pack that cannot be valued is still skipped, exactly
 the card taken, with no `skip_pack` issued; a pack that never fills is an honest stall; the
 ordinary transient budget is unchanged), `tests/test_tui.py::TestAutoplay::test_пустой_пак_не_трогается_вовсе`
 (the live loop had no empty-pack coverage at all).
+
 ## E3. A dead game destroyed the evidence of its own death — done.
 
 E1a promised that the run journal "is written on **every** exit — the crash and stall paths are
@@ -1453,3 +1455,72 @@ pins the clause order), `TestТаймауты::test_у_пака_свой_пот�
 `ModBridge` with a broken transport, because patching `dispatch_action` would bypass the very
 mapping under test. All four were confirmed to fail against a deliberately narrowed clause
 before being accepted.
+
+## E4. A timeout is not a refusal, and retrying one fired a second action into a live first — done.
+
+Found by auditing the E3/C3 fixes for reliability rather than by a live run, on a direct ask to
+be sure a run cannot fall. The audit ran a failure scenario through the real runner:
+
+```
+pack hangs → outcome stuck, actions sent: ['pack', 'pack', 'pack']
+```
+
+Three `pack` calls, **each one issued while the previous was still executing inside the game**.
+That is the same "act into someone else's window" shape that killed the game in C3, arrived at
+through the *error* path rather than the *state* path — which is why every state-side fix missed
+it.
+
+`TimedOutError` was not mentioned in `runner.py` at all, so it fell into the general
+`except ModBridgeError` after `dispatch_action`. That branch is right for what it was written
+for (**A19**): a mod refusal usually means "not yet", so pause and try again. But the two errors
+mean opposite things:
+
+| | meaning | correct response |
+|---|---|---|
+| refusal | the mod did **not** accept the action | pause, re-poll, retry (A19) |
+| timeout | the action is **still running inside the game** | never retry |
+
+Cost before the fix, at `stall_limit = 3`: a hung `pack` burned 60 s and left up to three
+pending actions in the game; anything else burned **270 s**. Both hangs are real —
+`pack` 95 372 ms and `select` 460 545 ms — and the first ended with the game dead: its response
+arrived 95 s late in a different round, and the next `next_round` took the process down with
+`game.lua:3259 field 'shop' (nil)`.
+
+**The split rests on the shape of the data, not on taste.** Recomputed over every mod log:
+**38 888 responses**; in the 10–90 s band there are **exactly zero**; at or above 90 s there are
+**exactly two**; the largest legitimate response is **9192 ms** (`play`). An endpoint either
+settles in seconds or its completion predicate is never satisfied — there is no "slow but
+alive" regime to confuse with a hang.
+
+| method | n | p50 | p90 | max |
+|---|---|---|---|---|
+| `gamestate` | 30 901 | 2 ms | 2 ms | 48 ms |
+| `play` | 2207 | 5166 ms | 6718 ms | 9192 ms |
+| `select` | 1012 | 1316 ms | 1484 ms | **460 545 ms** |
+| `pack` | 195 | 1919 ms | 2563 ms | **95 372 ms** |
+
+**The fix.** A dedicated `except TimedOutError` ahead of the general one: record the decision as
+hung, do **not** retry, do not touch `stall`, and end the run through the existing `_finish`
+with outcome `error`. The reason line starts with a stable prefix (`зависло действие`) so a
+hang stays *countable* — without it `tools/analyze_runs.py` cannot separate a hang from a dead
+bridge, since both surface as `error`.
+
+The batch deliberately does **not** halt: the bridge is alive, and the next run opens with
+`menu()` + `start()`, which resets the game. If a hang turns out to survive that reset, halting
+becomes necessary — recorded here so the next reader knows it was a decision, not an oversight.
+
+**`ACTION_TIMEOUT`: 90 s → 45 s**, secondary but measured. The hazard was the retry, not the
+duration; the duration was merely 90 wasted seconds per hang, justified by nothing. 45 s sits
+inside the empty 10–90 s band and halves the loss. Not 30 s, even though the 9192 ms maximum
+would allow it: those measurements were taken at `GAMESPEED` ≥ 4 (the mod's default is 4,
+`BALATROBOT_FAST=1` gives 10), and at `GAMESPEED=1` the same animation stretches roughly
+fourfold to ~37 s. The timeout is **not** scaled by `BALATROBOT_GAMESPEED` automatically: that
+variable records what we asked for, and a hand-launched game may differ.
+
+**Tests** — `tests/test_runner.py::TestТаймаутЭтоНеОтказ`: the hung action is dispatched
+**exactly once** (the direct regression on the three-`pack` probe), the note names the action and
+the phase and carries the prefix, the journal is still written, and — the guard that matters most
+— an ordinary refusal **still** retries, so the new branch cannot quietly kill A19. All three
+positive tests were confirmed to fail against a deliberately reintroduced defect;
+`TestПаузаПередПовтором` stayed green throughout, which is what proves the branch took only its
+own case.

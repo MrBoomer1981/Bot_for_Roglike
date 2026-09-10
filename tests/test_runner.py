@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 
 from balatro_bot import runner
-from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError
+from balatro_bot.adapters.mod_bridge import ModBridge, ModBridgeError, TimedOutError
 from balatro_bot.autopilot import Action, BoardEntry, HandOutlook
 from balatro_bot.core.state import BlindInfo, GameState, JokerCard, ShopItem
 from balatro_bot.runner import (
@@ -1153,3 +1153,86 @@ class TestСмертьИгрыНеТеряетЖурнал:
         monkeypatch.setattr("urllib.request.urlopen", boom)
         with pytest.raises(ModBridgeError):
             ModBridge(port=1, timeout=1.0).game_state()
+
+
+class TestТаймаутЭтоНеОтказ:
+    """Отказ и зависание лечатся противоположным образом, и раньше раннер их
+    не различал.
+
+    Отказ значит «мод не принял действие» — повтор после паузы уместен и
+    закрыт улучшением A19. Таймаут значит «действие всё ещё выполняется
+    внутри игры»: мод ждёт условие завершения, которое может не наступить
+    никогда. Наблюдалось дважды — `pack` 95 372 мс и `select` 460 545 мс,
+    и первое кончилось падением процесса игры. Повтор в этом случае шлёт
+    второе действие поверх незакрытого первого.
+
+    Прогон, которым дефект был найден, отправлял `['pack', 'pack', 'pack']`;
+    здесь пиним, что уходит ровно одно."""
+
+    _ПАК = "SMODS_BOOSTER_OPENED"
+
+    def _мост(self) -> ScriptedBridge:
+        return ScriptedBridge([_state(self._ПАК), _state("SELECTING_HAND")])
+
+    def _зависает(self, отправлено: list[Action]) -> Callable[..., GameState]:
+        def f(bridge: ModBridge, action: Action) -> GameState:
+            отправлено.append(action)
+            raise TimedOutError("мод не ответил за 20 с на «pack».")
+
+        return f
+
+    def test_зависшее_действие_не_повторяется(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        отправлено: list[Action] = []
+        monkeypatch.setattr(
+            runner, "decide_action", lambda state, **kw: Action(kind="pack", item_index=0)
+        )
+        monkeypatch.setattr(runner, "dispatch_action", self._зависает(отправлено))
+        report = play_run(self._мост(), deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        assert len(отправлено) == 1, отправлено
+        assert report.outcome == "error"
+
+    def test_зависание_называет_действие_и_фазу(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(
+            runner, "decide_action", lambda state, **kw: Action(kind="pack", item_index=0)
+        )
+        monkeypatch.setattr(runner, "dispatch_action", self._зависает([]))
+        report = play_run(self._мост(), deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        # Префикс стабилен нарочно: без него разбор журналов не отличит
+        # зависание от смерти моста — оба дают исход `error`.
+        assert report.note.startswith(runner._HUNG_PREFIX)
+        assert self._ПАК in report.note
+
+    def test_журнал_пишется_при_зависании(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        monkeypatch.setattr(
+            runner, "decide_action", lambda state, **kw: Action(kind="pack", item_index=0)
+        )
+        monkeypatch.setattr(runner, "dispatch_action", self._зависает([]))
+        play_run(self._мост(), deck="RED", stake="WHITE", sleep=lambda _: None, log_dir=tmp_path)
+
+        (файл,) = list(tmp_path.glob("*.json"))
+        данные = json.loads(файл.read_text(encoding="utf-8"))
+        assert данные["outcome"] == "error"
+        assert данные["decisions"][-1]["rejected"] is True
+
+    def test_обычный_отказ_всё_ещё_повторяется(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Страховка от перехвата лишнего: если новая ветка заберёт себе и
+        # обычный отказ, она тихо убьёт A19 — там повтор как раз нужен.
+        попытки: list[Action] = []
+
+        def отказ(bridge: ModBridge, action: Action) -> GameState:
+            попытки.append(action)
+            raise ModBridgeError("[-32002] игра ещё не готова")
+
+        monkeypatch.setattr(
+            runner, "decide_action", lambda state, **kw: Action(kind="pack", item_index=0)
+        )
+        monkeypatch.setattr(runner, "dispatch_action", отказ)
+        monkeypatch.setattr(runner, "_bridge_alive", lambda bridge: True)
+        report = play_run(self._мост(), deck="RED", stake="WHITE", sleep=lambda _: None)
+
+        assert len(попытки) > 1, "обычный отказ обязан повторяться (A19)"
+        assert report.outcome == "stuck"

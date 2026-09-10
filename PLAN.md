@@ -668,6 +668,7 @@ label.
 | **A21 + A22** | [The reroll policy was wrong in both directions at once — done.](docs/improvements.md#a21--a22-the-reroll-policy-was-wrong-in-both-directions-at-once--done) |
 | **C3** | [The autopilot was killing the game process by skipping a pack that did not exist yet — done.](docs/improvements.md#c3-the-autopilot-was-killing-the-game-process-by-skipping-a-pack-that-did-not-exist-yet--done) |
 | **E3** | [A dead game destroyed the evidence of its own death — done.](docs/improvements.md#e3-a-dead-game-destroyed-the-evidence-of-its-own-death--done) |
+| **E4** | [A timeout is not a refusal, and retrying one fired a second action into a live first — done.](docs/improvements.md#e4-a-timeout-is-not-a-refusal-and-retrying-one-fired-a-second-action-into-a-live-first--done) |
 
 #### Open, ranked — the next work
 
