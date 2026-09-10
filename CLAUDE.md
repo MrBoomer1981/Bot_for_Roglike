@@ -52,7 +52,7 @@ uv run pytest
 uv run pytest tests/test_scoring.py -v   # single file
 uv run pytest -k scoring                  # by pattern
 uv run pytest "tests/test_scoring.py::TestОснова::test_пара" -v     # a single test (tests live in classes)
-# ~1130 tests, no CI — ruff + mypy + pytest run locally are the only gate
+# ~1140 tests, no CI — ruff + mypy + pytest run locally are the only gate
 
 # Lint & type-check
 uv run ruff check balatro_bot tests
@@ -160,6 +160,13 @@ entry for a module before changing it: most record a deliberate refusal (a numbe
 project will not guess, a value it will not fold into another) that the code alone doesn't
 explain. Keep it in lockstep with the code the same way `PLAN.md` is kept in lockstep with
 the plan.
+
+Both `docs/architecture.md` and `docs/improvements.md` are ~100 KB — do not read either
+whole. Each opens with an `## Index` (module list / label table) that links to every entry:
+grep the index, then read only the section you need. Three modules in the map above
+deliberately have no architecture entry — `adapters/manual.py`, `ui/tui.py` and `cli.py` —
+because they are thin enough that the code documents itself; that omission is recorded in the
+index, so don't go hunting for a missing note.
 
 The rest of `docs/`, all still normative:
 
